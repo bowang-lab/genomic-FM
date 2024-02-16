@@ -1,0 +1,19 @@
+# Specify the version constraint for setuptools
+setuptools<58
+
+# Basic libraries for handling VCF files
+pyvcf
+
+# Other useful libraries for data handling and analysis
+pandas
+numpy
+scipy
+
+# Optional: Biopython for additional bioinformatics tools
+biopython
+
+# kipoiseq
+kipoiseq
+
+# pyfaidx
+pyfaidx
