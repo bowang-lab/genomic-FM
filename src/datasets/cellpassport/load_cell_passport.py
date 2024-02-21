@@ -143,3 +143,39 @@ def read_vcf(vcf_file_path, num_records=5, all_records=False, selected_info_fiel
         raise FileNotFoundError(f"File not found: {vcf_file_path}")
     except Exception as e:
         raise ValueError(f"Error reading VCF file: {e}")
+
+
+def load_cell_line_annotations(url="https://cog.sanger.ac.uk/cmp/download/model_list_latest.csv.gz"):
+    # Create the directory if it does not exist
+    os.makedirs('./root/data/', exist_ok=True)
+
+    # Path for the downloaded file
+    file_path = './root/data/model_list_latest.csv.gz'
+
+    # Check if the file already exists
+    if not os.path.exists(file_path):
+        # Download the file
+        print(f"Downloading model_list_latest.csv.gz...")
+        response = requests.get(url)
+        with open(file_path, 'wb') as f:
+            f.write(response.content)
+    else:
+        print("model_list_latest.csv.gz already exists.")
+
+    # unzip the file
+    with gzip.open(file_path, 'rb') as f_in:
+        with open(file_path[:-3], 'wb') as f_out:
+            f_out.write(f_in.read())
+        print("Unzipped model_list_latest.csv.gz")
+
+    # load the csv file
+    import pandas as pd
+    df = pd.read_csv(file_path[:-3])
+    return df
+
+def extract_cell_line_annotation_from_vcf_file(vcf_file_path):
+    df = load_cell_line_annotations()
+    file_name = vcf_file_path.split('/')[-1].split('.')[0]
+    model_id = file_name.split('_')[0]
+    print(model_id)
+    return df[df['model_id'] == model_id]
