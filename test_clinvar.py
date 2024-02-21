@@ -1,6 +1,7 @@
 # Import necessary functions from the modules
 from src.datasets.clinvar.load_clinvar import download_file, read_vcf
 from src.datasets.clinvar.filter_record import filter_records
+from src.sequence_extractor import GenomeSequenceExtractor
 
 # Download the ClinVar VCF file and store the path to the downloaded file
 clinvar_vcf_path = download_file()
@@ -17,27 +18,15 @@ def non_SNP_variant(record):
 # Apply the filter function to the list of records
 filtered_records = filter_records(res, lambda record: non_SNP_variant(record))
 
-# Import the necessary functions for sequence extraction
-from src.datasets.clinvar.extract_seq import extract_sequence
-import kipoiseq
-
 # Select the first record from the filtered records
 record = filtered_records[0]
 print(record)
-chr = record['Chromosome']
-pos = record['Position']
-ref = record['Reference Base']
-alt = record['Alternate Base'][0]
-id = record['ID']
 
-# Set the length of the sequence to be extracted
-SEQUENCE_LENGTH = 1024
+SEQUENCE_LENGTH = 20
+genome_extractor = GenomeSequenceExtractor()
+# Extract sequences
+reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
 
-# Create a Variant object using kipoiseq, which represents the genetic variant
-variant = kipoiseq.Variant(f"chr{chr}", pos, ref, alt, id=f'rs{id}')
-
-# Extract the reference and alternate sequences surrounding the variant
-reference, alternate = extract_sequence(variant, sequence_length=SEQUENCE_LENGTH)
 
 # Print the extracted reference and alternate sequences
 print(f"Reference sequence: {reference}")

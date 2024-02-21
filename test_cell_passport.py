@@ -1,7 +1,7 @@
 # Import necessary functions from the modules
 from src.datasets.cellpassport.load_cell_passport import download_and_extract_cell_passport_file, read_vcf
 from src.datasets.clinvar.extract_seq import extract_sequence
-import kipoiseq
+from src.sequence_extractor import GenomeSequenceExtractor
 
 # # Download the CellPassport VCF file and store the paths to the extracted files
 cell_passport_files = download_and_extract_cell_passport_file()
@@ -15,22 +15,13 @@ records = read_vcf(cell_passport_files[1], num_records=100)
 #--------------------------
 
 record = records[0]
-
-chr = record['Chromosome']
-pos = record['Position']
-ref = record['Reference Base']
-alt = record['Alternate Base'][0]
-id = record['ID']
-
 print(record)
 # Set the length of the sequence to be extracted
 SEQUENCE_LENGTH = 20
+genome_extractor = GenomeSequenceExtractor()
+# Extract sequences
+reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
 
-# Create a Variant object using kipoiseq, which represents the genetic variant
-variant = kipoiseq.Variant(chr, pos, ref, alt, id=f'rs{id}')
-
-# Extract the reference and alternate sequences surrounding the variant
-reference, alternate = extract_sequence(variant, sequence_length=SEQUENCE_LENGTH)
 
 # Print the extracted reference and alternate sequences
 print(f"Reference sequence: {reference}")
