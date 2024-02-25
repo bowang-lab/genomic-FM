@@ -69,7 +69,7 @@ def download_and_extract_cell_passport_file(url="https://cog.sanger.ac.uk/cmp/do
 
     if vcf_files:
         print("VCF files processed successfully.")
-        return vcf_files
+        return vcf_files[1:]
     else:
         print("No VCF files found.")
         return []

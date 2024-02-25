@@ -6,6 +6,7 @@ import pyfaidx
 import requests
 import gzip
 
+
 class GenomeSequenceExtractor:
     def __init__(self, fasta_file='./root/data/hg38.fa'):
         self.fasta_file = fasta_file
@@ -62,7 +63,6 @@ class GenomeSequenceExtractor:
 
         # Create a Variant object using kipoiseq, which represents the genetic variant
         variant = kipoiseq.Variant(f"chr{chr}", pos, ref, alt, id=f'rs{variant_id}')
-
         # Extract the reference and alternate sequences surrounding the variant
         return self.extract_sequence(variant, sequence_length=sequence_length)
 
