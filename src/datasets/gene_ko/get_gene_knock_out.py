@@ -2,11 +2,22 @@ from .load_gene_position_gtf import CustomAnchoredGTFDl
 from .load_fitness_matrix import read_tsv_file, download_fitness_scores
 from src.sequence_extractor import FastaStringExtractor
 from kipoiseq import Interval
+import pandas as pd
+import os
 
 
 def create_fitness_scores_dataframe(fitness_url="https://cog.sanger.ac.uk/cmp/download/Project_Score2_fitness_scores_Sanger_v2_Broad_21Q2_20240111.zip"):
+    # check if the file already exists
+    if os.path.exists('root/data/fitness_scores.csv'):
+        return pd.read_csv('root/data/fitness_scores.csv')
+    # Download the annotation and fitness scores
+    print("Loading the gene annotations from the GTF file...")
     dl = CustomAnchoredGTFDl(num_upstream=1, num_downstream=1)
+    print("Gene annotations loaded.")
+    print("Downloading the fitness scores...")
     tsv_path = download_fitness_scores(fitness_url)
+    print("Fitness scores downloaded.")
+    print("Produce annotations for the fitness scores...")
     fitness_scores = read_tsv_file(tsv_path)
     print(tsv_path)
     print(fitness_scores.head())
@@ -15,6 +26,8 @@ def create_fitness_scores_dataframe(fitness_url="https://cog.sanger.ac.uk/cmp/do
     gene_position = get_chroms_pos(dl)
     map_gene_position_to_dataframe(fitness_scores, gene_position)
     fitness_scores = fitness_scores[fitness_scores['chr'].notna() & fitness_scores['anchor_pos'].notna()]
+    # Save the chached dataframe
+    fitness_scores.to_csv('root/data/fitness_scores.csv', index=False)
     return fitness_scores
 
 

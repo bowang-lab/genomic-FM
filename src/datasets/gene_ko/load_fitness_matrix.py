@@ -41,7 +41,9 @@ def download_fitness_scores(fitness_url="https://cog.sanger.ac.uk/cmp/download/P
         # Check if the file already exists
         if os.path.exists(file_path):
             print("File already exists.")
-            return file_path  # Returning the path of the existing file
+            return os.path.join(subdirectory,
+                           'Project_Score_fitness_scores_Sanger_v2_Broad_21Q2_20240111',
+                           'Project_score_combined_Sanger_v2_Broad_21Q2_fitness_scores_scaled_bayesian_factors_20240111.tsv')
 
         # Send a HTTP request to the URL of the file, stream = True prevents the file from
         # being downloaded immediately
