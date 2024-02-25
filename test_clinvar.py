@@ -22,6 +22,7 @@ filtered_records = filter_records(res, lambda record: non_SNP_variant(record))
 record = filtered_records[0]
 print(record)
 
+
 SEQUENCE_LENGTH = 20
 genome_extractor = GenomeSequenceExtractor()
 # Extract sequences
