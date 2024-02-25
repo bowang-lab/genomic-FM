@@ -46,7 +46,8 @@ def run_bash_commands_fasta(fasta_file):
     except Exception as e:
         print(f"An error occurred: {e}")
 
- def run_bash_commands_gtf(gtf_file):
+
+def run_bash_commands_gtf(gtf_file):
     try:
         # Create directory
         os.makedirs('./root/data', exist_ok=True)
@@ -79,7 +80,7 @@ class CustomAnchoredGTFDl(AnchoredGTFDl):
                  fasta_file="root/data/hg38.fa",
                  anchor='tss',
                  transform=None,
-                 interval_attrs=["gene_id", "Strand"],
+                 interval_attrs=["gene_name", "Strand", "anchor_pos", "Start", "End"],
                  use_strand=True):
         # download fasta file
         download_fasata_file(fasta_file)
