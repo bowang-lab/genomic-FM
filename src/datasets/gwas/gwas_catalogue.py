@@ -1,5 +1,40 @@
 import pandas as pd
 from pyfaidx import Fasta
+import os
+import subprocess
+import requests
+import sgkit as sg
+import numpy as np
+import scipy.sparse as sp_sparse
+
+def download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv',
+                  gwas_path='alternative'):
+    # Create the directory if it does not exist
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        print(f"{file_path} not found. Starting download...")
+
+        # URL for the file
+        url = f'https://www.ebi.ac.uk/gwas/api/search/downloads/{gwas_path}'
+
+        try:
+            # Download the file
+            response = requests.get(url)
+            with open(file_path, 'wb') as f:
+                f.write(response.content)
+
+            print(f"File downloaded and unzipped successfully: {file_path}")
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            raise
+
+    else:
+        print(f"File already exists: {file_path}")
+
+    return file_path
 
 def extract_variant_sequence(chromosome, position, fasta_path, flank_size=100):
     """
@@ -42,15 +77,14 @@ def get_unique_risk_snps(gwas_catalog):
 def extract_snp_details(gwas_catalog, snp):
     """
     Extracts details for a given SNP from the GWAS catalog, including the variant location,
-    the allele, its associated beta/odds ratio, all the diseases/traits it's associated with,
-    and the P-VALUE (TEXT) with an attempt to parse specific keywords.
+    the allele, its beta/odds ratio, maf, all the diseases/traits it's associated with.
 
     Parameters:
     - gwas_catalog (pd.DataFrame): The GWAS catalog dataframe.
     - snp (str): The SNP identifier.
 
     Returns:
-    - dict: A dictionary containing the SNP details with additional P-VALUE (TEXT) information.
+    - dict: A dictionary containing the SNP details.
     """
     # Filter the GWAS catalog for the specified SNP
     snp_info = gwas_catalog[gwas_catalog['SNPS'] == snp]
@@ -58,11 +92,12 @@ def extract_snp_details(gwas_catalog, snp):
     # Extract the relevant details with modified risk allele information
     snp_details = {
         "Location": snp_info['CHR_ID'].astype(str) + ':' + snp_info['CHR_POS'].astype(str),
-        "Associated Value": snp_info['OR or BETA'],
+        "Value": snp_info['OR or BETA'],
         "Value Type": snp_info['OR or BETA'].apply(lambda x: "Beta" if isinstance(x, float) and x < 1 else "Odds"),
-        "Diseases/Traits": snp_info['DISEASE/TRAIT'],
-        "Risk Allele": snp_info['STRONGEST SNP-RISK ALLELE'].apply(lambda x: x.split('-')[-1]),
-        "P-Value Text": snp_info['P-VALUE (TEXT)'].str.replace(r"[^a-zA-Z0-9\s]", "", regex=True)
+        "Traits": snp_info['DISEASE/TRAIT'],
+        "Allele": snp_info['STRONGEST SNP-RISK ALLELE'].apply(lambda x: x.split('-')[-1]),
+        "MAF": snp_info['RISK ALLELE FREQUENCY'],
+        "Subgroup": snp_info['P-VALUE (TEXT)'].str.replace(r"[^a-zA-Z0-9\s]", "", regex=True)
     }
     
     # Convert each column to a unique list
@@ -88,15 +123,19 @@ def get_risk_snps(gwas_catalog, trait, pvalue_text_filter=None):
     # Filter by trait
     filtered_data = gwas_catalog[gwas_catalog['DISEASE/TRAIT'].str.contains(trait, case=False, na=False)]
     
-    # If a P-VALUE (TEXT) filter is provided, apply it
+    # If a filter is provided, apply it
     if pvalue_text_filter:
         filtered_data = filtered_data[filtered_data['P-VALUE (TEXT)'].str.contains(pvalue_text_filter, case=False, na=False, regex=True)]
 
-    # Modify the STRONGEST SNP-RISK ALLELE to only keep the allele part after "-"
+    # Get allele 
     filtered_data['STRONGEST SNP-RISK ALLELE'] = filtered_data['STRONGEST SNP-RISK ALLELE'].apply(lambda x: x.split('-')[-1])
 
+    # Remove entries with missing allele
+    filtered_data['STRONGEST SNP-RISK ALLELE'].replace("?", pd.NA, inplace=True)
+    filtered_data.dropna(subset=['STRONGEST SNP-RISK ALLELE'], inplace=True)
+
     # Select and return the relevant columns
-    return filtered_data[['DISEASE/TRAIT', 'SNPS', 'STRONGEST SNP-RISK ALLELE', 'OR or BETA']]
+    return filtered_data[['DISEASE/TRAIT', 'SNPS', 'STRONGEST SNP-RISK ALLELE', 'RISK ALLELE FREQUENCY','OR or BETA']]
 
 def get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait):
     """
@@ -121,25 +160,3 @@ def get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait):
     result = merged_data[['DISEASE/TRAIT', 'EFO term', 'EFO URI', 'Parent term', 'Parent URI']]
     
     return result.drop_duplicates()
-
-
-# Load the GWAS catalog data
-gwas_catalog = pd.read_csv('/Users/vallijahsubasri/Documents/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv', sep='\t', low_memory=False)
-gwas_trait_mappings = pd.read_csv('/Users/vallijahsubasri/Documents/gwas_catalog_trait-mappings_r2024-03-01.tsv', sep='\t', low_memory=False)
-
-trait = "Testosterone levels"
-trait_mappings = get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait)
-print(trait_mappings)
-
-unique_risk_snps = get_unique_risk_snps(gwas_catalog)
-
-# Display the number of unique SNPs and the first few SNPs as a sample
-print(f"Total unique risk SNPs found: {len(unique_risk_snps)}")
-
-for rssnp in unique_risk_snps:
-    snp_details = extract_snp_details(gwas_catalog, rssnp)
-    print(snp_details)
-    risk_snps = get_risk_snps(gwas_catalog, trait, "men")
-    print(risk_snps)
-    break
-
