@@ -1,7 +1,5 @@
 import pandas as pd
-from pyfaidx import Fasta
 import os
-import subprocess
 import requests
 import sgkit as sg
 import numpy as np

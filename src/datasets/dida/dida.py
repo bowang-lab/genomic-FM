@@ -1,40 +1,40 @@
 import os
 import subprocess
 import requests
-import gzip
+import zipfile
 
-def download_file(file_path='./root/data/dida.zip',
-                  gz_path='10749489'):
+def download_file(dir_path='./root/data/dida',
+                  record_id='10749489'):
+    
     # Create the directory if it does not exist
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    os.makedirs(dir_path, exist_ok=True)
+    # Construct URL for accessing record metadata
+    metadata_url = f'https://zenodo.org/api/records/{record_id}'
 
-    # Check if the file exists
-    if not os.path.exists(file_path):
-        print(f"{file_path} not found. Starting download...")
+    # Make a request to get the record metadata
+    response = requests.get(metadata_url)
+    response.raise_for_status()  # Raises an HTTPError if the HTTP request returned an unsuccessful status code.
 
-        # URL for the file
-        url = f'https://zenodo.org/api/records/{gz_path}/files-archive'
+    # Parse response JSON
+    data = response.json()
 
-        try:
-            # Download the file
-            response = requests.get(url)
-            compressed_file_path = os.path.join(os.path.dirname(file_path), gz_path)
-            with open(compressed_file_path, 'wb') as f:
-                f.write(response.content)
+    # Iterate over all files in the record
+    for file_info in data['files']:
+        file_url = file_info['links']['self']
+        file_name = file_info['key']
+        file_path = os.path.join(dir_path, file_name)
 
-            # Unzip the file
-            with gzip.open(compressed_file_path, 'rb') as f_in:
-                with open(file_path, 'wb') as f_out:
-                    f_out.write(f_in.read())
+        if os.path.exists(file_path):
+            print(f"{file_name} already exists. Skipping download.")
+            continue
+        
+        print(f"Downloading {file_name}...")
+        # Stream download to handle large files
+        with requests.get(file_url, stream=True) as file_response:
+            file_response.raise_for_status()
+            with open(file_path, 'wb') as f:
+                for chunk in file_response.iter_content(chunk_size=8192):
+                    f.write(chunk)
 
+    print("All files have been downloaded.")
 
-            print(f"File downloaded and unzipped successfully: {file_path}")
-
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            raise
-
-    else:
-        print(f"File already exists: {file_path}")
-
-    return file_path
