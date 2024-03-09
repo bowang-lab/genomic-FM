@@ -6,6 +6,7 @@ import requests
 import sgkit as sg
 import numpy as np
 import scipy.sparse as sp_sparse
+import requests
 
 def download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv',
                   gwas_path='alternative'):
@@ -36,31 +37,6 @@ def download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r
 
     return file_path
 
-def extract_variant_sequence(chromosome, position, fasta_path, flank_size=100):
-    """
-    Extracts the sequence around a variant position from a reference genome.
-
-    Parameters:
-    - chromosome (str): The chromosome of the variant (e.g., '1').
-    - position (int): The position of the variant on the chromosome.
-    - fasta_path (str): Path to the reference genome in FASTA format.
-    - flank_size (int): Number of base pairs to include on each side of the variant.
-
-    Returns:
-    - str: Sequence around the variant.
-    """
-    # Load the reference genome
-    genome = Fasta(fasta_path)
-    
-    # Calculate start and end positions
-    start = max(1, position - flank_size)
-    end = position + flank_size
-    
-    # Extract the sequence
-    sequence = genome[f'chr{chromosome}'][start:end].seq
-    
-    return sequence
-
 def get_unique_risk_snps(gwas_catalog):
     """
     Extracts all unique risk SNPs from the GWAS catalog.
@@ -74,37 +50,49 @@ def get_unique_risk_snps(gwas_catalog):
     unique_snps = gwas_catalog['SNPS'].unique().tolist()
     return unique_snps
 
-def extract_snp_details(gwas_catalog, snp):
+def extract_snp_details(gwas_catalog, rssnp, trait=None):
     """
     Extracts details for a given SNP from the GWAS catalog, including the variant location,
-    the allele, its beta/odds ratio, maf, all the diseases/traits it's associated with.
+    the allele, its beta/odds ratio, MAF, and all the diseases/traits it's associated with.
+    An optional trait parameter allows filtering for a specific trait.
 
     Parameters:
     - gwas_catalog (pd.DataFrame): The GWAS catalog dataframe.
-    - snp (str): The SNP identifier.
+    - rssnp (str): The rsSNP identifier.
+    - trait (str, optional): The specific trait to filter for.
 
     Returns:
     - dict: A dictionary containing the SNP details.
     """
     # Filter the GWAS catalog for the specified SNP
-    snp_info = gwas_catalog[gwas_catalog['SNPS'] == snp]
+    snp_info = gwas_catalog[gwas_catalog['SNPS'] == rssnp]
     
-    # Extract the relevant details with modified risk allele information
-    snp_details = {
-        "Location": snp_info['CHR_ID'].astype(str) + ':' + snp_info['CHR_POS'].astype(str),
-        "Value": snp_info['OR or BETA'],
-        "Value Type": snp_info['OR or BETA'].apply(lambda x: "Beta" if isinstance(x, float) and x < 1 else "Odds"),
-        "Traits": snp_info['DISEASE/TRAIT'],
-        "Allele": snp_info['STRONGEST SNP-RISK ALLELE'].apply(lambda x: x.split('-')[-1]),
-        "MAF": snp_info['RISK ALLELE FREQUENCY'],
-        "Subgroup": snp_info['P-VALUE (TEXT)'].str.replace(r"[^a-zA-Z0-9\s]", "", regex=True)
-    }
+    # If a specific trait is provided, further filter the DataFrame
+    if trait is not None:
+        snp_info = snp_info[snp_info['DISEASE/TRAIT'].str.contains(trait, case=False, na=False)]
     
-    # Convert each column to a unique list
-    for key in snp_details:
-        snp_details[key] = snp_details[key].tolist()
+    ref, alt = get_alleles_ensembl(rssnp)
     
-    return snp_details
+    # Ensure there are SNP details to return
+    if not snp_info.empty:
+        # Extract the relevant details with modified risk allele information
+        snp_details = {
+            "rsSNP": rssnp,
+            "Chromosome": snp_info['CHR_ID'].astype(str).unique().tolist()[0],
+            "Position": snp_info['CHR_POS'].astype(str).unique().tolist()[0],
+            "Reference": ref,
+            "Alternate": alt,
+            "Value": snp_info['OR or BETA'].tolist(),
+            "Value Type": snp_info['OR or BETA'].apply(lambda x: "Beta" if isinstance(x, float) and x < 1 else "Odds").tolist(),
+            "Traits": snp_info['DISEASE/TRAIT'].tolist(),
+            "Risk Allele": snp_info['STRONGEST SNP-RISK ALLELE'].apply(lambda x: x.split('-')[-1]).tolist(),
+            "MAF": snp_info['RISK ALLELE FREQUENCY'].tolist(),
+            "Subgroup": snp_info['P-VALUE (TEXT)'].str.replace(r"[^a-zA-Z0-9\s]", "", regex=True).tolist()
+        }
+        return snp_details
+    else:
+        # Return a message or an empty dict if no details are found for the SNP (and possibly the trait)
+        return {"message": f"No details found for rsSNP: {rssnp} with trait filter: {trait}"}
 
 def get_risk_snps(gwas_catalog, trait, pvalue_text_filter=None):
     """
@@ -160,3 +148,35 @@ def get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait):
     result = merged_data[['DISEASE/TRAIT', 'EFO term', 'EFO URI', 'Parent term', 'Parent URI']]
     
     return result.drop_duplicates()
+
+def get_alleles_ensembl(rs_id):
+    server = "https://rest.ensembl.org"
+    ext = f"/variation/human/{rs_id}?content-type=application/json"
+    response = requests.get(server+ext)
+    if response.status_code == 200:
+        data = response.json()
+        mappings = data.get('mappings', [])
+        
+        # Initialize variables to hold ref and alt alleles
+        ref_allele = None
+        alt_alleles = []
+
+        # Process each mapping to extract ref and alt alleles
+        for mapping in mappings:
+            allele_string = mapping.get('allele_string')
+            if allele_string:
+                alleles = allele_string.split('/')
+                if len(alleles) == 2:
+                    # Assuming the first allele is the reference and the second is the alternate
+                    ref_allele = alleles[0]
+                    alt_alleles.append(alleles[1])
+
+        # Remove duplicate alleles in case there are multiple mappings with the same allele_string
+        alt_alleles = list(set(alt_alleles))
+        
+        return ref_allele, alt_alleles
+    else:
+        print(f"Failed to retrieve data for {rs_id}")
+        return None, []
+
+
