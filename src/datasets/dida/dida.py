@@ -2,6 +2,7 @@ import os
 import subprocess
 import requests
 import zipfile
+import pandas as pd
 
 def download_file(dir_path='./root/data/dida',
                   record_id='10749489'):
@@ -37,4 +38,33 @@ def download_file(dir_path='./root/data/dida',
                     f.write(chunk)
 
     print("All files have been downloaded.")
+
+# Define a function to parse GeneA and GeneB, find matching variants in variants_full, and collect the results
+def map_digenic_variants(digenic_variants, variants_full):
+    
+    # Ensure the Coordinate column in variants_full is correctly formatted
+    variants_full['Coordinate'] = variants_full['Chromosome'].astype(str) + ':' + \
+                                  variants_full['Genomic position'].astype(str) + ':' + \
+                                  variants_full['Ref allele'] + ':' + \
+                                  variants_full['Alt allele']
+    
+    # Split 'GeneA' and 'GeneB' into separate rows while keeping their original index
+    genes_expanded = digenic_variants.set_index('#Combination_id')[['GeneA', 'GeneB']].stack().reset_index()
+    genes_expanded.columns = ['#Combination_id', 'Gene', 'Coordinate']
+    
+    # Merge expanded digenic variants with the full variants on 'Coordinate'
+    merged_data = pd.merge(genes_expanded, variants_full, on='Coordinate', how='inner')
+    
+    # Rename and select relevant columns
+    mapped_variants = merged_data.rename(columns={
+        'ID': 'Variant_ID',
+        'Gene': 'Gene',
+        'Chromosome': 'Chromosome',
+        'Genomic position': 'Position',
+        'Ref allele': 'Ref allele',
+        'Alt allele': 'Alt allele'
+    }).loc[:, ['#Combination_id', 'Gene', 'Variant_ID', 'Coordinate', 'Chromosome', 'Position', 'Ref allele', 'Alt allele']]
+
+    return mapped_variants
+
 
