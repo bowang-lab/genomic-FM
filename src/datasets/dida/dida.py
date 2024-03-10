@@ -40,31 +40,44 @@ def download_file(dir_path='./root/data/dida',
     print("All files have been downloaded.")
 
 # Define a function to parse GeneA and GeneB, find matching variants in variants_full, and collect the results
-def map_digenic_variants(digenic_variants, variants_full):
+def map_digenic_variants(digenic_variants, variants):
     
     # Ensure the Coordinate column in variants_full is correctly formatted
-    variants_full['Coordinate'] = variants_full['Chromosome'].astype(str) + ':' + \
-                                  variants_full['Genomic position'].astype(str) + ':' + \
-                                  variants_full['Ref allele'] + ':' + \
-                                  variants_full['Alt allele']
+    variants['Coordinate'] = variants['Chromosome'].astype(str) + ':' + \
+                                  variants['Genomic position'].astype(str) + ':' + \
+                                  variants['Ref allele'] + ':' + \
+                                  variants['Alt allele']
     
-    # Split 'GeneA' and 'GeneB' into separate rows while keeping their original index
-    genes_expanded = digenic_variants.set_index('#Combination_id')[['GeneA', 'GeneB']].stack().reset_index()
-    genes_expanded.columns = ['#Combination_id', 'Gene', 'Coordinate']
-    
-    # Merge expanded digenic variants with the full variants on 'Coordinate'
-    merged_data = pd.merge(genes_expanded, variants_full, on='Coordinate', how='inner')
-    
-    # Rename and select relevant columns
-    mapped_variants = merged_data.rename(columns={
-        'ID': 'Variant_ID',
-        'Gene': 'Gene',
-        'Chromosome': 'Chromosome',
-        'Genomic position': 'Position',
-        'Ref allele': 'Ref allele',
-        'Alt allele': 'Alt allele'
-    }).loc[:, ['#Combination_id', 'Gene', 'Variant_ID', 'Coordinate', 'Chromosome', 'Position', 'Ref allele', 'Alt allele']]
+    mapped_variants = []
+    for index, row in digenic_variants.iterrows():
+        # Extract coordinates from GeneA and GeneB columns
+        for gene in ['GeneA', 'GeneB']:
+            coordinate = row[gene]
+            match = variants[variants['Coordinate'].str.contains(coordinate, na=False)]
+            if not match.empty:
+                mapped_variants.append({
+                    '#Combination_id': row['#Combination_id'],
+                    'Gene': gene,
+                    'Variant_ID': match['ID'].values[0],
+                    'Coordinate': match['Coordinate'].values[0],
+                    'Chromosome': match['Chromosome'].values[0],
+                    'Position': match['Genomic position'].values[0],
+                    'Ref allele': match['Ref allele'].values[0],
+                    'Alt allele': match['Alt allele'].values[0]
+                })
+    return pd.DataFrame(mapped_variants)
 
-    return mapped_variants
+def get_digenic_variants(digenic_variants):
+    """
+    Extracts all unique risk digenic variants from the DIDA.
+
+    Parameters:
+    - digenic_variants (pd.DataFrame): The DIDA dataframe.
+
+    Returns:
+    - list: A list of all unique digenic variants from DIDA.
+    """
+    unique_variants = digenic_variants['#Combination_id'].unique().tolist()
+    return unique_variants
 
 

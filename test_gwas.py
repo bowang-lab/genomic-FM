@@ -29,7 +29,7 @@ unique_risk_snps = get_unique_risk_snps(gwas_catalog)
 # Display the number of unique SNPs and the first few SNPs as a sample
 print(f"Total unique risk SNPs found: {len(unique_risk_snps)}")
 
-# Get rssnps associated with a trait
+# Get rsSNPs associated with a trait
 risk_snps = get_risk_snps(gwas_catalog, trait)
 print(risk_snps)
     
@@ -43,7 +43,7 @@ for index, row in risk_snps.iterrows():
     print(snp_details)
 
     record = {
-        'Chromosome': snp_details['Chromosome'],  # assuming the first record if multiple
+        'Chromosome': snp_details['Chromosome'], 
         'Position': int(snp_details['Position']),
         'Reference Base': snp_details['Reference'],  
         'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
