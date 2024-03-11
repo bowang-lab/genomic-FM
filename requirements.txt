@@ -17,3 +17,7 @@ kipoiseq
 
 # pyfaidx
 pyfaidx
+
+# sgkit
+sgkit
+
