@@ -2,7 +2,7 @@ import sgkit as sg
 import numpy as np
 import scipy.sparse as sp_sparse
 
-def calculate_LD_score(variant_ds, radius=100000, threshold=0.1):
+def calculate_ld_score(variant_ds, radius=100000, threshold=0.1):
     """
     Calculate the LD Score for a given variant within a specified genomic window.
 

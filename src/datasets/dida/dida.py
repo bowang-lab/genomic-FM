@@ -39,9 +39,10 @@ def download_file(dir_path='./root/data/dida',
 
     print("All files have been downloaded.")
 
-# Define a function to parse GeneA and GeneB, find matching variants in variants_full, and collect the results
 def map_digenic_variants(digenic_variants, variants):
-    
+    """
+    Function to parse GeneA and GeneB, find matching variants 
+    """
     # Ensure the Coordinate column in variants_full is correctly formatted
     variants['Coordinate'] = variants['Chromosome'].astype(str) + ':' + \
                                   variants['Genomic position'].astype(str) + ':' + \

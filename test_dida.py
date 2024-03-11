@@ -21,7 +21,7 @@ variant_ids = get_digenic_variants(mapped_variants)
 
 SEQUENCE_LENGTH = 20
 genome_extractor = GenomeSequenceExtractor()
-lo = LiftOver('hg19', 'hg38')
+
 
 for id in variant_ids[:10]:
     variant = mapped_variants[mapped_variants['#Combination_id'].str.contains(id, na=False)]
@@ -32,28 +32,26 @@ for id in variant_ids[:10]:
             # Perform the conversion
             chromosome="chr"+row['Chromosome']
             position=row['Position']
+
+            lo = LiftOver('hg19', 'hg38')
+            
             converted_coords = lo.convert_coordinate(chromosome,position)
 
             # Check if conversion was successful and print the result
             if converted_coords:
-                # converted_coords is a list of tuples, each tuple is (chromosome, position, strand, ...)
-                # Here, we take the first result [0] as an example
                 new_chrom, new_pos, _, _ = converted_coords[0]
-                print(f"Original: {chromosome}:{position}")
-                print(f"Converted: {new_chrom}:{new_pos}")
+
+                record = {
+                    'Chromosome': new_chrom, 
+                    'Position': new_pos,
+                    'Reference Base': row['Ref allele'],  
+                    'Alternate Base': row['Alt allele'],  
+                    'ID': row['#Combination_id']
+                }
+                reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
+                print(f"Reference sequence for {row['Gene']} : {reference}")
+                print(f"Alternate sequence for {row['Gene']} : {alternate}")
+
             else:
                 print("Conversion failed for the given coordinate.")
-
-            record = {
-                'Chromosome': new_chrom, 
-                'Position': new_pos,
-                'Reference Base': row['Ref allele'],  
-                'Alternate Base': row['Alt allele'],  
-                'ID': row['#Combination_id']
-            }
-            reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
-            print(f"Reference sequence for {row['Gene']} : {reference}")
-            print(f"Alternate sequence for {row['Gene']} : {alternate}")
-
-
 
