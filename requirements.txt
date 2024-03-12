@@ -21,3 +21,6 @@ pyfaidx
 # sgkit
 sgkit
 
+# pyliftover
+pyliftover
+
