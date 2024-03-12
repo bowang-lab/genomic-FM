@@ -7,16 +7,16 @@ import json
 from tokenizer.utils import load_sequences, plot_and_save_evaluation_results, calculate_token_statistics
 
 def main():
-    parser = argparse.ArgumentParser(description="Command line interface for tokenizer creation")
-    parser.add_argument("--tokenizer-name", type=str, required=True, help="Name of the tokenizer")
-    parser.add_argument("--tokenizer-type", type=str, required=True, help="Type of tokenizer")
-    parser.add_argument("--input-dir", type=str, required=True, help="Input directory")
+    parser = argparse.ArgumentParser(description="Command line interface for tokenizer creation.")
+    parser.add_argument("--tokenizer-name", type=str, required=True, help="Name of the tokenizer.")
+    parser.add_argument("--tokenizer-type", type=str, required=True, help="Type of tokenizer.")
+    parser.add_argument("--input-dir", type=str, required=True, help="Input directory containing fastas.")
     parser.add_argument("--output-dir", type=str, required=True, help="Output directory")
-    parser.add_argument("--evaluate-dir", type=str, required=True, help="Evaluation directory")
+    parser.add_argument("--evaluate-dir", type=str, required=True, help="Evaluation directory containing fastas.")
     parser.add_argument("--limit-files", type=int, default=10, help="Number of files to read in.")
-    parser.add_argument("--samples-per-file", type=int, default=100, help="Number of sequences to sample from each file")
-    parser.add_argument("--k", type=int, default=3, help="K-mer length")
-    parser.add_argument("--overlap", action='store_true', help="Generate overlapping k-mers (default)")
+    parser.add_argument("--samples-per-file", type=int, default=100, help="Number of sequences to sample from each file.")
+    parser.add_argument("--k", type=int, default=3, help="K-mer length.")
+    parser.add_argument("--overlap", action='store_true', help="Generate overlapping k-mers (default).")
 
     args = parser.parse_args()
 

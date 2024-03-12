@@ -9,23 +9,27 @@ import random
 import collections
 import seaborn as sns
 
+from typing import List, Optional
+from pathlib import Path
+import random
+
 def load_sequences(
-    input_dir: Optional[Path] = None, 
+    input_dir: Optional[Path] = None,
     cache_dir: Optional[Path] = None,
-    hf_dataset: Optional[str] = None, 
-    hf_dataset_config: Optional[str] = None, 
-    hf_dataset_split: str = "train", 
-    pattern: str = "*/*sequences.txt", 
-    samples_per_file: Optional[int] = None, 
+    hf_dataset: Optional[str] = None,
+    hf_dataset_config: Optional[str] = None,
+    hf_dataset_split: str = "train",
+    pattern: str = "*.fasta",
+    samples_per_file: Optional[int] = None,
     random_files: bool = False,
     limit_files: Optional[int] = None,
 ) -> List[str]:
     """
-    Loads sequences from text files located in the specified input directory.
+    Loads sequences from FASTA files located in the specified input directory.
 
     Parameters:
-    - input_dir (Path): Directory containing text files with sequences.
-    - pattern (str): Pattern to match the files. Default is "*sequences.txt".
+    - input_dir (Path): Directory containing FASTA files with sequences.
+    - pattern (str): Pattern to match the files. Default is "*.fasta".
     - limit_files (Optional[int]): Maximum number of files to read. If None, all files are read.
 
     Returns:
@@ -39,25 +43,32 @@ def load_sequences(
         sequences = [str(data["sequence"]) for data in dataset]
     elif input_dir:
         files = list(input_dir.glob(pattern))
-    
+
         # Randomly select files if random_files is True
-        if random_files and len(files) > limit_files:
+        if random_files and limit_files is not None and len(files) > limit_files:
             files = random.sample(files, limit_files)
-    
+
         file_count = 0
         for file_path in files:
             if limit_files is not None and file_count >= limit_files:
                 break
-    
+
             with open(file_path, 'r') as file:
-                file_sequences = [line.strip() for line in file if line.strip()]
-                # Randomly sample sequences if samples_per_file is specified
-                if samples_per_file and len(file_sequences) > samples_per_file:
-                    file_sequences = random.sample(file_sequences, samples_per_file)
-                sequences.extend(file_sequences)
-    
+                current_sequence = ""
+                for line in file:
+                    line = line.strip()
+                    if line.startswith(">"):
+                        if current_sequence:  # save the previous sequence if exists
+                            sequences.append(current_sequence)
+                            current_sequence = ""  # start a new sequence
+                    else:
+                        current_sequence += line.strip()
+                if current_sequence:  # make sure to add the last sequence in the file
+                    sequences.append(current_sequence)
+
             file_count += 1
     return sequences
+
 
 def plot_and_save_evaluation_results(evaluation_results, output_dir, name):
     output_dir = Path(output_dir)

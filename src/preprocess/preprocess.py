@@ -36,18 +36,18 @@ class Sequences:
         if padding_length > 0:
             sentence += "[PAD]" * padding_length
         return sentence
-        
+
     def to_list(self) -> List[str]:
         # Return the list of individual sequences
         return self.sentences
-        
+
     def append(self, sentence: str) -> None:
-        modified_sentence = self.remove_stop_codons(sentence)
-        modified_sentence = self.replace_n_with_unk(sentence)
+        modified_sentence = self.replace_n_with_unk(sentence) # Fix: Apply N to [UNK] replacement correctly
+        modified_sentence = self.remove_stop_codons(modified_sentence)
         if self.use_special_tokens:
             modified_sentence = self.apply_special_tokens(modified_sentence)
-            if self.max_length is not None:
-                modified_sentence = self.pad_sequence(modified_sentence)
+        if self.max_length is not None:
+            modified_sentence = self.pad_sequence(modified_sentence)
         self.sentences.append(modified_sentence)
 
     def to_text(self) -> str:
@@ -59,14 +59,17 @@ class Sequences:
         return json.dumps({"text": self.sentences, **self.metadata})
 
     def save_to_file(self, file_path: str, output_format: str) -> None:
-        # Save the sequences to a file in the specified format (txt or jsonl)
+        # Save the sequences to a file in the specified format (txt, jsonl, or fasta)
         with open(file_path, 'w') as f:
             if output_format == 'txt':
                 f.write(self.to_text())
             elif output_format == 'jsonl':
                 f.write(self.to_jsonl())
+            elif output_format == 'fasta':
+                for i, seq in enumerate(self.sentences):
+                    f.write(f">Sequence_{i}\n{seq}\n")
             else:
-                raise ValueError("Invalid output format. Choose 'txt' or 'jsonl'.")
+                raise ValueError("Invalid output format. Choose 'txt', 'jsonl', or 'fasta'.")
 
 def process_contig(reference_fasta, vcf_file, output_fasta, contig):
     # Process a single contig from a reference FASTA file and VCF file, saving the modified sequence to a new file
@@ -106,54 +109,47 @@ def process_contig(reference_fasta, vcf_file, output_fasta, contig):
 def extract_random_sequences(
     fasta_file: Path,
     output_file: Path,
-    output_format: str = 'txt',
+    output_format: str = 'fasta',
     desired_length: int = 1000,
     use_special_tokens: bool = True,
-    sentences_bounds: Tuple[int, int] = (10, 20),
-    lengths_bounds: Tuple[int, int] = (1000, 10000),
+    sentences_bounds: (int, int) = (10, 20),
+    lengths_bounds: (int, int) = (100, 1000),
 ):
+    # Ensure output_format is supported by the Sequences class
+    assert output_format in ['txt', 'jsonl', 'fasta'], "Invalid output format. Choose 'txt', 'jsonl', or 'fasta'."
 
-    assert isinstance(sentences_bounds, tuple) and len(sentences_bounds) == 2, "sentences_bounds must be a tuple with two integers"
-    assert isinstance(lengths_bounds, tuple) and len(lengths_bounds) == 2, "lengths_bounds must be a tuple with two integers"
-
-    
-    # Extracts sequences from a FASTA file and saves them to an output file in the specified format
-    sequence_record = next(SeqIO.parse(fasta_file, "fasta"))  # Reading the first sequence record from the FASTA file
+    sequence_record = next(SeqIO.parse(fasta_file, "fasta"))  # Reading the first sequence record
     chr_sequence = sequence_record.seq  # Storing the chromosome sequence
 
-    # Chromosome length
-    C = len(chr_sequence)
-
-    # Create a Sequences object to store sequences
     sequences = Sequences(use_special_tokens=use_special_tokens, max_length=desired_length)
 
-    # Generate sequences with random segments of the sequence
-    for _ in range(5):  # Looping a fixed number of times (10) to generate sequences
-        q = random.randint(0, 5000)  # random start position within a reasonable range
-        while q < C:
-            s = random.randint(*sentences_bounds)  # number of sequences
-            for _ in range(s):
-                l = random.randint(*lengths_bounds)  # length of each sentence
-                if q + l > C:
-                    l = C - q  # Adjust length if it exceeds the chromosome length
-                sequences.append(str(chr_sequence[q: q + l]).upper())  # Append the sequence segment to the sequences
-                q += l
-                if q >= C:  # end of sequence
-                    break
+    # Generate sequences with random segments
+    for _ in range(random.randint(*sentences_bounds)):  # Randomly choose how many sequences to generate within bounds
+        start_pos = random.randint(0, len(chr_sequence) - lengths_bounds[0])  # Ensure there's room for at least the min length
+        length = random.randint(*lengths_bounds)  # Choose a random length within bounds
+        end_pos = min(start_pos + length, len(chr_sequence))  # Ensure the segment does not exceed chromosome length
+        segment = str(chr_sequence[start_pos:end_pos]).upper()  # Extract the segment and convert to uppercase
+        
+        # Append the extracted segment to the Sequences object
+        sequences.append(segment)
 
-    # Save the sequences to the output file using the specified format
-    sequences.save_to_file(output_file, output_format)
+    # Save the processed sequences to the specified output file in the desired format
+    sequences.save_to_file(str(output_file), output_format)
 
 def extract_variant_sequences(
-    vcf_file, 
-    fasta_file, 
-    left_padding, 
-    right_padding, 
-    output_file,     
-    output_format: str = 'txt',
+    vcf_file: Path,
+    fasta_file: Path,
+    left_padding: int,
+    right_padding: int,
+    output_file: Path,
     use_special_tokens: bool = True,
 ):
-    # Extracts sequences from a FASTA file based on VCF records with specified padding, then saves to an output file
+    # Ensure paths are Path objects for consistency
+    vcf_file = Path(vcf_file)
+    fasta_file = Path(fasta_file)
+    output_file = Path(output_file)
+
+    # Extracts sequences from a FASTA file based on VCF records with specified padding, then saves to an output file in FASTA format
     # Using a context manager for reading FASTA file
     with open(fasta_file, "r") as fasta_handle:
         fasta_sequences = SeqIO.to_dict(SeqIO.parse(fasta_handle, "fasta"))
@@ -169,7 +165,7 @@ def extract_variant_sequences(
         for record in vcf_reader:
             chrom = record.CHROM
             pos = record.POS
-            
+
             if chrom in fasta_sequences:
                 # Extract the sequence for the chromosome
                 chrom_sequence = fasta_sequences[chrom].seq
@@ -182,8 +178,8 @@ def extract_variant_sequences(
                 seq_with_padding = chrom_sequence[start:end]
                 sequences.append(str(seq_with_padding))
 
-        # Save the sequences to the output file
-        sequences.save_to_file(output_file, output_format)
+        # Save the sequences to the output file in FASTA format
+        sequences.save_to_file(output_file, 'fasta')
 
 def index_vcf(vcf_filename):
     """
