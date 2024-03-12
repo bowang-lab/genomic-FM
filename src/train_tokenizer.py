@@ -1,10 +1,10 @@
-from bpe import BpeTokenizer
-from kmer import KmerTokenizer
-from unigram import UnigramTokenizer
+from tokenizer.bpe import BpeTokenizer
+from tokenizer.kmer import KmerTokenizer
+from tokenizer.unigram import UnigramTokenizer
 import argparse
 from pathlib import Path
 import json
-from utils import load_sequences, plot_and_save_evaluation_results, calculate_token_statistics
+from tokenizer.utils import load_sequences, plot_and_save_evaluation_results, calculate_token_statistics
 
 def main():
     parser = argparse.ArgumentParser(description="Command line interface for tokenizer creation")
