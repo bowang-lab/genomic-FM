@@ -94,9 +94,6 @@ def add_tokens_to_fasta_from_gtf(fasta_file, gtf_file, output_file):
                     token_end = f'<{feature_type}_end>'
                 tokens_to_insert.append((chrom, start, token_start))
                 tokens_to_insert.append((chrom, end + 1, token_end))
-            if count % 1000 == 0 and count != 0:
-                insert_tokens_and_reset()
-                break
     if tokens_to_insert:
         insert_tokens_and_reset()
 
