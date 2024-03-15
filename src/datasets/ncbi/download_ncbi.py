@@ -1,6 +1,28 @@
 import os
 import subprocess
 
+def download_species_nodes(output_dir):
+    """
+    Downloads the NCBI Taxonomy dump and extracts it to a specified directory.
+
+    Parameters:
+    - target_dir: The directory where the taxdump.tar.gz will be downloaded and extracted.
+    """
+    os.makedirs(target_dir, exist_ok=True)
+    url = "https://ftp.ncbi.nih.gov/pub/taxonomy/taxdump.tar.gz"
+    tar_gz_path = os.path.join(target_dir, "taxdump.tar.gz")
+
+    # Download the tar.gz file using wget
+    download_cmd = f"wget {url} -O {tar_gz_path}"
+    subprocess.run(download_cmd, shell=True, check=True)
+
+    # Extract the downloaded tar.gz file
+    extract_cmd = f"tar -xvzf {tar_gz_path} -C {output_dir}"
+    subprocess.run(extract_cmd, shell=True, check=True)
+
+    os.remove(tar_gz_path)
+
+
 def create_taxid_species_map(filepath):
     """
     Create a map from taxid to species name from the 'nodes.dmp' file.
@@ -21,7 +43,7 @@ def create_taxid_species_map(filepath):
 
     return species_to_taxid
 
-def download_genome(species, accession, output_dir):
+def download_species_genome(species, accession, output_dir):
     """
     Downloads genome data using NCBI's datasets tool, unzips the downloaded file,
     and then rehydrates it.

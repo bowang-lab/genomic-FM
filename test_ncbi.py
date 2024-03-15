@@ -1,16 +1,18 @@
 import argparse
 from get_accession import get_main_assembly_accession, search_species, fetch_species_details
-from src.datasets.ncbi.download_ncbi import create_taxid_species_map, download_genome
+from src.datasets.ncbi.download_ncbi import create_taxid_species_map, download_species_genome, download_species
 
 # Setup argparse
 parser = argparse.ArgumentParser(description="Download genome data for a given species.")
-parser.add_argument("--outdir", help="The output directory to save the data.")
+parser.add_argument("--outdir", default = './root/data',  help="The output directory to save the data.")
 parser.add_argument("--species", default=None, help="The species to download data for.")
 parser.add_argument("--get_latest", action='store_true', help="Retrieve latest accession for species.")
 parser.add_argument("--get_reference", action='store_true', help="Retrieve reference genome accession for species.")
 args = parser.parse_args()
 
 species = args.species
+
+download_species(args.outdir)
 
 if species:
     if args.get_reference:
@@ -26,7 +28,7 @@ if species:
         details = fetch_species_details(tax_id)
         print(f"Details for Taxonomy ID {tax_id}:")
         print(details)
-        download_genome(tax_id[0], accession, args.outdir)
+        download_species_genome(tax_id[0], accession, args.outdir)
     else:
         print("Taxid for the specified species could not be found.")
 else:
@@ -58,6 +60,6 @@ else:
             print(f"Details for Taxonomy ID {tax_id}:")
             details = fetch_species_details(tax_id)
             print(details)
-            download_genome(tax_id, accession, args.outdir)
+            download_species_genome(tax_id, accession, args.outdir)
         except Exception as e:
             print(f"Failed to fetch details for Species {species}: {e}")
