@@ -9,9 +9,53 @@ import random
 import collections
 import seaborn as sns
 
-from typing import List, Optional
 from pathlib import Path
+from typing import Generator, Optional
 import random
+
+def load_sequences_generator(
+    input_dir: Optional[Path] = None,
+    cache_dir: Optional[Path] = None,
+    hf_dataset: Optional[str] = None,
+    hf_dataset_config: Optional[str] = None,
+    hf_dataset_split: str = "train",
+    pattern: str = "*.fasta",
+    samples_per_file: Optional[int] = None,
+    random_files: bool = False,
+    limit_files: Optional[int] = None,
+) -> Generator[str, None, None]:
+    """
+    Optimized generator function to load sequences from FASTA files or Hugging Face datasets.
+    Yields sequences as they are loaded, improving memory efficiency for large datasets.
+    """
+    
+    if hf_dataset:
+        dataset = load_dataset(hf_dataset, hf_dataset_config, split=hf_dataset_split, cache_dir=cache_dir)
+        for data in dataset:
+            yield str(data["sequence"])
+    elif input_dir:
+        all_files = input_dir.glob('**/' + pattern)
+        files = list(all_files) if limit_files is not None or random_files else all_files
+
+        if random_files and limit_files is not None:
+            files = random.sample(files, min(limit_files, len(files)))
+        elif limit_files is not None:
+            files = files[:limit_files]
+
+        for file_path in files:
+            with open(file_path, 'r') as file:
+                current_sequence = ""
+                for line in file:
+                    line = line.strip()
+                    if line.startswith(">"):
+                        if current_sequence:  # Yield the previous sequence if exists
+                            yield current_sequence
+                            current_sequence = ""  # Reset for a new sequence
+                    else:
+                        current_sequence += line
+                if current_sequence:  # Yield the last sequence in the file
+                    yield current_sequence
+
 
 def load_sequences(
     input_dir: Optional[Path] = None,
@@ -19,7 +63,7 @@ def load_sequences(
     hf_dataset: Optional[str] = None,
     hf_dataset_config: Optional[str] = None,
     hf_dataset_split: str = "train",
-    pattern: str = "*.fasta",
+    pattern: str = "*.fna",
     samples_per_file: Optional[int] = None,
     random_files: bool = False,
     limit_files: Optional[int] = None,
@@ -42,8 +86,7 @@ def load_sequences(
         dataset = load_dataset(hf_dataset, hf_dataset_config, split=hf_dataset_split,cache_dir=cache_dir)
         sequences = [str(data["sequence"]) for data in dataset]
     elif input_dir:
-        files = list(input_dir.glob(pattern))
-
+        files = list(input_dir.glob('**/' + pattern))
         # Randomly select files if random_files is True
         if random_files and limit_files is not None and len(files) > limit_files:
             files = random.sample(files, limit_files)

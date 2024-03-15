@@ -1,18 +1,18 @@
-from tokenizer.bpe import BpeTokenizer
-from tokenizer.kmer import KmerTokenizer
-from tokenizer.unigram import UnigramTokenizer
+from src.tokenizer.bpe import BpeTokenizer
+from src.tokenizer.kmer import KmerTokenizer
+from src.tokenizer.unigram import UnigramTokenizer
 import argparse
 from pathlib import Path
 import json
-from tokenizer.utils import load_sequences, plot_and_save_evaluation_results, calculate_token_statistics
+from src.tokenizer.utils import load_sequences_generator, plot_and_save_evaluation_results, calculate_token_statistics
 
 def main():
     parser = argparse.ArgumentParser(description="Command line interface for tokenizer creation.")
     parser.add_argument("--tokenizer-name", type=str, required=True, help="Name of the tokenizer.")
     parser.add_argument("--tokenizer-type", type=str, required=True, help="Type of tokenizer.")
-    parser.add_argument("--input-dir", type=str, required=True, help="Input directory containing fastas.")
-    parser.add_argument("--output-dir", type=str, required=True, help="Output directory")
-    parser.add_argument("--evaluate-dir", type=str, required=True, help="Evaluation directory containing fastas.")
+    parser.add_argument("--input-dir", type=str, default = './root/data', required=True, help="Input directory containing fastas.")
+    parser.add_argument("--output-dir", type=str, default = './root/tokenizer', required=True, help="Output directory")
+    parser.add_argument("--evaluate-dir", type=str, default = './root/data', required=True, help="Evaluation directory containing fastas.")
     parser.add_argument("--limit-files", type=int, default=10, help="Number of files to read in.")
     parser.add_argument("--samples-per-file", type=int, default=100, help="Number of sequences to sample from each file.")
     parser.add_argument("--k", type=int, default=3, help="K-mer length.")
@@ -27,7 +27,7 @@ def main():
     input_dir = Path(args.input_dir)
     evaluate_dir = Path(args.evaluate_dir)
 
-    sequences = load_sequences(
+    sequences = load_sequences_generator(
         input_dir, 
         limit_files=args.limit_files, 
         samples_per_file=args.samples_per_file, 
@@ -35,7 +35,7 @@ def main():
     )
 
     print("Load evaluation data")
-    evaluation_data = load_sequences(evaluate_dir,limit_files=10,samples_per_file=1000)
+    evaluation_data = load_sequences_generator(evaluate_dir,limit_files=10,samples_per_file=1000)
 
     # Define a range of vocabulary sizes to explore
     vocab_sizes = [16000, 24000, 32000, 48000, 64000]
@@ -45,13 +45,16 @@ def main():
 
     for vocab_size in vocab_sizes:
         print(f"Creating and evaluating tokenizer for vocab size: {vocab_size}")
-        tokenizer_name=args.tokenizer_name+"_"+str(vocab_size)+"_"+str(args.limit_files)+"_"+str(args.samples_per_file)
+        tokenizer_name = f"{args.tokenizer_name}_{vocab_size}_{args.limit_files}_{args.samples_per_file}"
+
         if args.overlap:
-            tokenizer_type = args.tokenizer_type +"_" + str(args.k) + "_overlap"
+            tokenizer_type = f"{args.tokenizer_type}_{args.k}_overlap"
+        elif args.tokenizer_type == "Kmer":
+            tokenizer_type = f"{args.tokenizer_type}_{args.k}_nooverlap"
         else:
-            tokenizer_type = args.tokenizer_type +"_" + str(args.k) + "_nooverlap"
-        
-        tokenizer_path=str((output_dir / f"{tokenizer_type}_{tokenizer_name}.json").resolve())
+            tokenizer_type = f"{args.tokenizer_type}"
+
+        tokenizer_path=str((output_dir / f"{tokenizer_name}_{tokenizer_type}.json").resolve())
         if Path(tokenizer_path).exists():
             tokenizer=Tokenizer.from_file(tokenizer_path)
         else:
@@ -76,16 +79,12 @@ def main():
         token_statistics = calculate_token_statistics(tokenized_data)
         evaluation_results[vocab_size] = token_statistics
 
-     # Print evaluation results for each vocab size
-#    for vocab_size, results in evaluation_results.items():
-#        print(f"Vocab Size: {vocab_size}, Evaluation Results: {results}")
-
     output_file_path = str((output_dir / f"evaluation_results_{tokenizer_name}_{args.tokenizer_type}.json").resolve())
     
     with open(output_file_path, 'w') as file:
         json.dump(evaluation_results, file, indent=4)
 
-    plot_and_save_evaluation_results(evaluation_results, output_dir, tokenizer_type + "_" + tokenizer_name)
+    plot_and_save_evaluation_results(evaluation_results, output_dir, f"{tokenizer_name}_{tokenizer_type}")
 
 
 if __name__ == "__main__":
