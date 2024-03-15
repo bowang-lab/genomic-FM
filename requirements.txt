@@ -24,3 +24,5 @@ sgkit
 # pyliftover
 pyliftover
 
+# tokenizers
+tokenizers
