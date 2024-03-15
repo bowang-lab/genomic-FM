@@ -1,9 +1,8 @@
 # Import necessary functions from the modules
-from src.datasets.dida.dida import download_file, map_digenic_variants, get_digenic_variants
+from src.datasets.dida.load_dida import download_file, map_digenic_variants, get_digenic_variants
 from src.sequence_extractor import GenomeSequenceExtractor
-import pandas as pd
 from pyliftover import LiftOver
-
+import pandas as pd
 # Load the DIDA data
 
 file_path='./root/data/dida'
