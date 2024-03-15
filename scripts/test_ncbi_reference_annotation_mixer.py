@@ -1,6 +1,5 @@
 from src.datasets.ncbi_reference_genome.ncbi_dataset_parrallel import parallel_process_gtf
 
-
 def calculate_chromosome_lengths(file_path):
     with open(file_path, 'r') as file:
         lengths = {}
@@ -27,4 +26,5 @@ def calculate_chromosome_lengths(file_path):
 if __name__ == '__main__':
     human_fasta_file = 'root/data/GCF_000001405.40/GCF_000001405.40_GRCh38.p14_genomic.fna'
     human_gtf_file = 'root/data/GCF_000001405.40/genomic.gtf'
-    extractor = parallel_process_gtf(human_fasta_file, human_gtf_file, "root/data/GCF_000001405.40/GCF_000001405.40_GRCh38.p14_genomic_modified.fna")
+    extractor = parallel_process_gtf(human_fasta_file, human_gtf_file, "root/data/GCF_000001405.40/GCF_000001405.40_GRCh38.p14_genomic_modified.fna", num_processes=1)
+    # extractor.save_chrm_to_file("root/data/GCF_000001405.40/chr1.fasta", "")
