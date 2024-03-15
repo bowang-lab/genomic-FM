@@ -70,25 +70,6 @@ def process_chromosome_data(gtf_lines, extractor):
     # return the chromosome data
     return (chrom, extractor.sequences[chrom])
 
-
-# def parallel_process_gtf(fasta_file, gtf_file, output_file, num_processes=3):
-#     extractor = NCBIFastaStringExtractor(fasta_file)
-#     print(f"Processing {gtf_file} with {num_processes} processes")
-#     # Split the GTF file by chromosomes in-memory
-#     chromosome_data = split_gtf_file(gtf_file)
-#     print(f"Processing {len(chromosome_data)} chromosomes")
-#     # Prepare data for parallel processing
-#     tasks = [(chromosome_data[chrom], extractor) for chrom in chromosome_data]
-#     print(f"Processing {len(tasks)} tasks")
-#     # Process each chromosome in parallel with tqdm progress bar
-#     with Pool(num_processes) as pool:
-#         pool.starmap(process_chromosome_data, tasks)
-#     print("All tasks completed")
-#     return extractor
-#     # Save the modified fasta file
-#     # extractor.save_to_file(output_file)
-#     # print(f"Saved to {output_file}")
-
 def parallel_process_gtf(fasta_file, gtf_file, output_file, num_processes=3):
     """
     Processes a GTF file in parallel and modifies a fasta file based on the GTF data.
