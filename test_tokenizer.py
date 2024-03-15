@@ -4,7 +4,7 @@ from src.tokenizer.unigram import UnigramTokenizer
 import argparse
 from pathlib import Path
 import json
-from src.tokenizer.utils import load_sequences_generator, plot_and_save_evaluation_results, calculate_token_statistics
+from src.tokenizer.utils import load_sequences, plot_and_save_evaluation_results, calculate_token_statistics
 
 def main():
     parser = argparse.ArgumentParser(description="Command line interface for tokenizer creation.")
@@ -27,7 +27,7 @@ def main():
     input_dir = Path(args.input_dir)
     evaluate_dir = Path(args.evaluate_dir)
 
-    sequences = load_sequences_generator(
+    sequences = load_sequences(
         input_dir, 
         limit_files=args.limit_files, 
         samples_per_file=args.samples_per_file, 
@@ -35,7 +35,11 @@ def main():
     )
 
     print("Load evaluation data")
-    evaluation_data = load_sequences_generator(evaluate_dir,limit_files=10,samples_per_file=1000)
+    evaluation_data = load_sequences(
+        evaluate_dir,
+        limit_files=10,
+        samples_per_file=1000
+    )
 
     # Define a range of vocabulary sizes to explore
     vocab_sizes = [16000, 24000, 32000, 48000, 64000]

@@ -5,21 +5,18 @@ from datasets import load_dataset
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
-import random
 import collections
 import seaborn as sns
-
-from pathlib import Path
 from typing import Generator, Optional
 import random
 
-def load_sequences_generator(
+def load_sequences(
     input_dir: Optional[Path] = None,
     cache_dir: Optional[Path] = None,
     hf_dataset: Optional[str] = None,
     hf_dataset_config: Optional[str] = None,
     hf_dataset_split: str = "train",
-    pattern: str = "*.fasta",
+    pattern: str = "*.fna",
     samples_per_file: Optional[int] = None,
     random_files: bool = False,
     limit_files: Optional[int] = None,
@@ -55,62 +52,6 @@ def load_sequences_generator(
                         current_sequence += line
                 if current_sequence:  # Yield the last sequence in the file
                     yield current_sequence
-
-
-def load_sequences(
-    input_dir: Optional[Path] = None,
-    cache_dir: Optional[Path] = None,
-    hf_dataset: Optional[str] = None,
-    hf_dataset_config: Optional[str] = None,
-    hf_dataset_split: str = "train",
-    pattern: str = "*.fna",
-    samples_per_file: Optional[int] = None,
-    random_files: bool = False,
-    limit_files: Optional[int] = None,
-) -> List[str]:
-    """
-    Loads sequences from FASTA files located in the specified input directory.
-
-    Parameters:
-    - input_dir (Path): Directory containing FASTA files with sequences.
-    - pattern (str): Pattern to match the files. Default is "*.fasta".
-    - limit_files (Optional[int]): Maximum number of files to read. If None, all files are read.
-
-    Returns:
-    - List of strings: Loaded sequences.
-    """
-    sequences = []
-
-    if hf_dataset:
-        # Load sequences from a Hugging Face dataset
-        dataset = load_dataset(hf_dataset, hf_dataset_config, split=hf_dataset_split,cache_dir=cache_dir)
-        sequences = [str(data["sequence"]) for data in dataset]
-    elif input_dir:
-        files = list(input_dir.glob('**/' + pattern))
-        # Randomly select files if random_files is True
-        if random_files and limit_files is not None and len(files) > limit_files:
-            files = random.sample(files, limit_files)
-
-        file_count = 0
-        for file_path in files:
-            if limit_files is not None and file_count >= limit_files:
-                break
-
-            with open(file_path, 'r') as file:
-                current_sequence = ""
-                for line in file:
-                    line = line.strip()
-                    if line.startswith(">"):
-                        if current_sequence:  # save the previous sequence if exists
-                            sequences.append(current_sequence)
-                            current_sequence = ""  # start a new sequence
-                    else:
-                        current_sequence += line.strip()
-                if current_sequence:  # make sure to add the last sequence in the file
-                    sequences.append(current_sequence)
-
-            file_count += 1
-    return sequences
 
 
 def plot_and_save_evaluation_results(evaluation_results, output_dir, name):
