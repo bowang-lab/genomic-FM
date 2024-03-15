@@ -18,5 +18,11 @@ kipoiseq
 # pyfaidx
 pyfaidx
 
+# sgkit
+sgkit
+
+# pyliftover
+pyliftover
+
 # tokenizers
 tokenizers

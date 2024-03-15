@@ -1,10 +1,7 @@
 import pandas as pd
 import os
 import requests
-import sgkit as sg
 import numpy as np
-import scipy.sparse as sp_sparse
-import requests
 
 def download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv',
                   gwas_path='alternative'):
