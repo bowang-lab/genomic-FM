@@ -1,6 +1,7 @@
+import os
 import argparse
-from get_accession import get_main_assembly_accession, search_species, fetch_species_details
-from src.datasets.ncbi.download_ncbi import create_taxid_species_map, download_species_genome, download_species
+from src.datasets.ncbi_reference_genome.get_accession import get_main_assembly_accession, search_species, fetch_species_details
+from src.datasets.ncbi_reference_genome.download_ncbi import create_taxid_species_map, download_species_genome, download_species
 
 # Setup argparse
 parser = argparse.ArgumentParser(description="Download genome data for a given species.")
@@ -32,8 +33,7 @@ if species:
     else:
         print("Taxid for the specified species could not be found.")
 else:
-    filepath = './ncbi_dataset/nodes.dmp'
-    taxid_to_species = create_taxid_species_map(filepath)
+    taxid_to_species = create_taxid_species_map()
     species_list = list(taxid_to_species.keys())
     for species in species_list:
         try:

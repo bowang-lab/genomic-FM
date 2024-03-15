@@ -1,38 +1,37 @@
 import os
 import subprocess
 
-def download_species_nodes(output_dir):
+def download_species(outdir):
     """
     Downloads the NCBI Taxonomy dump and extracts it to a specified directory.
 
     Parameters:
-    - target_dir: The directory where the taxdump.tar.gz will be downloaded and extracted.
+    - outdir: The directory where the taxdump.tar.gz will be downloaded and extracted.
     """
-    os.makedirs(target_dir, exist_ok=True)
-    url = "https://ftp.ncbi.nih.gov/pub/taxonomy/taxdump.tar.gz"
-    tar_gz_path = os.path.join(target_dir, "taxdump.tar.gz")
+    os.makedirs(outdir, exist_ok=True)
+    if not os.path.exists(f'{outdir}/nodes.dmp'):
+        url = "https://ftp.ncbi.nih.gov/pub/taxonomy/taxdump.tar.gz"
+        tar_gz_path = os.path.join(outdir, "taxdump.tar.gz")
 
-    # Download the tar.gz file using wget
-    download_cmd = f"wget {url} -O {tar_gz_path}"
-    subprocess.run(download_cmd, shell=True, check=True)
+        # Download the tar.gz file using wget
+        download_cmd = f"wget {url} -O {tar_gz_path}"
+        subprocess.run(download_cmd, shell=True, check=True)
 
-    # Extract the downloaded tar.gz file
-    extract_cmd = f"tar -xvzf {tar_gz_path} -C {output_dir}"
-    subprocess.run(extract_cmd, shell=True, check=True)
+        # Extract the downloaded tar.gz file
+        extract_cmd = f"tar -xvzf {tar_gz_path} -C {outdir}"
+        subprocess.run(extract_cmd, shell=True, check=True)
 
-    os.remove(tar_gz_path)
+        os.remove(tar_gz_path)
 
 
-def create_taxid_species_map(filepath):
+def create_taxid_species_map():
     """
     Create a map from taxid to species name from the 'nodes.dmp' file.
-    Parameters:
-    - filepath: Path to the 'nodes.dmp' file.
     Returns:
     - A dictionary mapping taxids to species names.
     """
     species_to_taxid = {}
-    with open(filepath, 'r') as file:
+    with open('./root/data/nodes.dmp', 'r') as file:
         for line in file:
             # Split the line into components. Adjust based on file's actual format.
             parts = line.strip().split('\t|\t')
@@ -43,7 +42,7 @@ def create_taxid_species_map(filepath):
 
     return species_to_taxid
 
-def download_species_genome(species, accession, output_dir):
+def download_species_genome(species, accession, outdir):
     """
     Downloads genome data using NCBI's datasets tool, unzips the downloaded file,
     and then rehydrates it.
@@ -55,7 +54,10 @@ def download_species_genome(species, accession, output_dir):
     """
     # Construct the filename and directory paths
     filename = f"{outdir}/{species}/{accession}.zip"
-    directory = f"{outdir}/{species}/{accession}"
+    directory = f"{outdir}/{species}"
+
+    if not os.path.exists(directory):
+        os.mkdir(directory)
 
     # Download the genome data
     download_cmd = (
