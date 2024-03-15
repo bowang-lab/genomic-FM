@@ -46,6 +46,9 @@ class NCBIFastaStringExtractor:
             for seq in self.sequences[chrm]:
                 out_f.write(seq + '\n')
 
+    def update(self, chrm, sequence):
+        self.sequences[chrm] = sequence
+
 
 def add_tokens_to_fasta_from_gtf(fasta_file, gtf_file, output_file):
     extractor = NCBIFastaStringExtractor(fasta_file)
