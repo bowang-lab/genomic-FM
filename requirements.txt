@@ -17,3 +17,6 @@ kipoiseq
 
 # pyfaidx
 pyfaidx
+
+# tokenizers
+tokenizers
