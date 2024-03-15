@@ -21,18 +21,32 @@ def create_taxid_species_map(filepath):
 
     return species_to_taxid
 
-def download_genome(species_name, accession, output_dir):
+def download_genome(species, accession, output_dir):
     """
-    Calls a Bash script to download genome data for a given species.
-    
+    Downloads genome data using NCBI's datasets tool, unzips the downloaded file,
+    and then rehydrates it.
+
     Parameters:
-        species_name (str): The species name.
-        accession (str): Accession of assembly.
-        output_dir (str): The output directory for downloading the data.
+    - accession: The accession number of the genome to download.
+    - outdir: The output directory where the downloaded files will be stored.
+    - species: The species name, used to create subdirectories within the output directory.
     """
-    script_path = "./download_genome.sh"  
-    try:
-        subprocess.run([script_path, species_name, accession, output_dir], check=True)
-        print(f"Successfully downloaded genome data for {species_name}.")
-    except subprocess.CalledProcessError as e:
-        print(f"An error occurred while downloading genome data: {e}")
+    # Construct the filename and directory paths
+    filename = f"{outdir}/{species}/{accession}.zip"
+    directory = f"{outdir}/{species}/{accession}"
+
+    # Download the genome data
+    download_cmd = (
+        f"datasets download genome accession {accession} --dehydrated "
+        f"--include genome,rna,cds,protein,gtf --filename {filename}"
+    )
+    subprocess.run(download_cmd, shell=True, check=True)
+
+    # Unzip the downloaded file
+    unzip_cmd = f"unzip -o {filename} -d {directory}"
+    subprocess.run(unzip_cmd, shell=True, check=True)
+
+    # Rehydrate the dataset
+    rehydrate_cmd = f"datasets rehydrate --directory {directory}"
+    subprocess.run(rehydrate_cmd, shell=True, check=True)
+
