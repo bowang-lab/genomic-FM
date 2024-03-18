@@ -1,5 +1,6 @@
 from tqdm import tqdm
-
+import json
+from collections import deque
 
 class NCBIFastaStringExtractor:
     def __init__(self, fasta_file):
@@ -35,8 +36,8 @@ class NCBIFastaStringExtractor:
                     "<snoRNA_exon_end>": "p",
                     "<Y_RNA_exon_start>": "Q",
                     "<Y_RNA_exon_end>": "q",
-                    "<C_gene_segment_start>": "R",
-                    "<C_gene_segment_end>": "r",
+                    "<C_gene_segment_exon_start>": "R",
+                    "<C_gene_segment_exon_end>": "r",
                     "<scRNA_exon_start>": "S",
                     "<scRNA_exon_end>": "s",
                     "<RNase_P_RNA_exon_start>": "*", # Note: 'T' and 't' are not reserved
@@ -45,14 +46,131 @@ class NCBIFastaStringExtractor:
                     "<snRNA_exon_end>": "u",
                     "<tRNA_exon_start>": "V",
                     "<tRNA_exon_end>": "v",
-                    "<D_gene_segment_start>": "W",
-                    "<D_gene_segment_end>": "w",
-                    "<J_gene_segment_start>": "X",
-                    "<J_gene_segment_end>": "x",
+                    "<D_gene_segment_exon_start>": "W",
+                    "<D_gene_segment_exon_end>": "w",
+                    "<J_gene_segment_exon_start>": "X",
+                    "<J_gene_segment_exon_end>": "x",
                     "<rRNA_exon_start>": "Y",
                     "<rRNA_exon_end>": "y",
-                    "<V_gene_segment_start>": "Z",
-                    "<V_gene_segment_end>": "z",
+                    "<V_gene_segment_exon_start>": "Z",
+                    "<V_gene_segment_exon_end>": "z",
+                    "<telomerase_RNA_exon_start>": "K",
+                    "<telomerase_RNA_exon_end>": "k",
+                    "<ncRNA_exon_start>": "2", #
+                    "<ncRNA_exon_end>": "3",   #
+                    "<antisense_RNA_exon_start>": "4", #
+                    "<antisense_RNA_exon_end>": "5",  # Note: 'G' and 'g' are not reserved
+                    "<vault_RNA_exon_start>": "6",  # Choose alternative since 'A' is reserved
+                    "<vault_RNA_exon_end>": "7",  # Choose alternative since 'a' is reserved
+                    "<RNase_MRP_RNA_exon_start>": "8",  # Choose alternative since 'C' is reserved
+                    "<RNase_MRP_RNA_exon_end>": "9",  # Choose alternative since 'c' is reserved
+                }
+
+    def _parse_fasta(self):
+        current_header = ''
+        for line in self.lines:
+            if line.startswith('>'):
+                current_header = line[1:].split()[0]
+                self.sequences[current_header] = deque()
+                self._shifts[current_header] = 0
+            else:
+                self.sequences[current_header].extend(line)
+
+    def insert_token(self, chromosome, position, token, mapping=True):
+        if chromosome not in self.sequences:
+            raise ValueError(f"Chromosome {chromosome} not found in FASTA file.")
+        if mapping:
+            if token not in self.token_mapping:
+                raise ValueError(f"Token {token} not found in token mapping.")
+            token = self.token_mapping[token]
+
+        adjusted_position = position + self._shifts[chromosome]
+        sequence_deque = self.sequences[chromosome]
+
+        if adjusted_position < 0 or adjusted_position > len(sequence_deque) + 1:
+            raise ValueError(f"Position is out of range for chromosome {chromosome}. Position: {position}, Adjusted Position: {adjusted_position}, Sequence Length: {len(sequence_deque)}")
+
+        sequence_deque.rotate(-adjusted_position)
+        sequence_deque.extendleft(token)
+        sequence_deque.rotate(adjusted_position)
+
+        self._shifts[chromosome] += len(token)
+
+    def save_to_file(self, output_file):
+        with open(output_file, 'w') as out_f:
+            for chrom, seq_deque in self.sequences.items():
+                out_f.write(f'>{chrom}\n')
+                out_f.write(''.join(seq_deque) + '\n')
+
+        with open(output_file + '.json', 'w') as out_f:
+            json.dump(self.token_mapping, out_f)
+
+    def save_chrm_to_file(self, output_file, chrm):
+        if chrm not in self.sequences:
+            raise ValueError(f"Chromosome {chrm} not found in FASTA file.")
+        output_file = output_file + f'_{chrm}.fna'
+        with open(output_file, 'w') as out_f:
+            out_f.write(f'>{chrm}\n')
+            out_f.write(''.join(self.sequences[chrm]) + '\n')
+
+    def update(self, chrm, sequence):
+        if chrm not in self.sequences:
+            raise ValueError(f"Chromosome {chrm} not found in FASTA file.")
+        self.sequences[chrm] = deque(sequence)
+
+
+class NCBIFastaStringExtractor_second:
+    def __init__(self, fasta_file):
+        with open(fasta_file, 'r') as f:
+            self.fasta_content = f.read()
+        self.lines = self.fasta_content.split('\n')
+        self.sequences = {}
+        self._shifts = {}  # Tracks the shift in positions for each chromosome
+        self._parse_fasta()
+        self.token_mapping = {
+                    "<gene_start>": "B",
+                    "<gene_end>": "b",
+                    "<exon_start>": "D",
+                    "<exon_end>": "d",
+                    "<CDS_start>": "E",
+                    "<CDS_end>": "e",
+                    "<start_codon_start>": "F",
+                    "<start_codon_end>": "f",
+                    "<stop_codon_start>": "H",
+                    "<stop_codon_end>": "h",
+                    "<mRNA_exon_start>": "I",
+                    "<mRNA_exon_end>": "i",
+                    "<transcript_exon_start>": "J",
+                    "<transcript_exon_end>": "j",
+                    "<miRNA_exon_start>": "L",
+                    "<miRNA_exon_end>": "l",
+                    "<lnc_RNA_exon_start>": "M",
+                    "<lnc_RNA_exon_end>": "m",
+                    "<primary_transcript_exon_start>": "O",
+                    "<primary_transcript_exon_end>": "o",
+                    # Additional biotypes
+                    "<snoRNA_exon_start>": "P",
+                    "<snoRNA_exon_end>": "p",
+                    "<Y_RNA_exon_start>": "Q",
+                    "<Y_RNA_exon_end>": "q",
+                    "<C_gene_segment_exon_start>": "R",
+                    "<C_gene_segment_exon_end>": "r",
+                    "<scRNA_exon_start>": "S",
+                    "<scRNA_exon_end>": "s",
+                    "<RNase_P_RNA_exon_start>": "*", # Note: 'T' and 't' are not reserved
+                    "<RNase_P_RNA_exon_end>": "1",  # Note: 'T' and 't' are not reserved
+                    "<snRNA_exon_start>": "U",
+                    "<snRNA_exon_end>": "u",
+                    "<tRNA_exon_start>": "V",
+                    "<tRNA_exon_end>": "v",
+                    "<D_gene_segment_exon_start>": "W",
+                    "<D_gene_segment_exon_end>": "w",
+                    "<J_gene_segment_exon_start>": "X",
+                    "<J_gene_segment_exon_end>": "x",
+                    "<rRNA_exon_start>": "Y",
+                    "<rRNA_exon_end>": "y",
+                    "<V_gene_segment_exon_start>": "Z",
+                    "<V_gene_segment_exon_end>": "z",
                     "<telomerase_RNA_exon_start>": "K",
                     "<telomerase_RNA_exon_end>": "k",
                     "<ncRNA_exon_start>": "2", #
@@ -85,10 +203,16 @@ class NCBIFastaStringExtractor:
 
         adjusted_position = position + self._shifts[chromosome]
         sequence = self.sequences[chromosome]
-        if adjusted_position < 0 or adjusted_position > len(sequence):
-            raise ValueError(f"Position is out of range for chromosome {chromosome}.")
-
-        sequence[adjusted_position:adjusted_position] = list(token)  # Insert the token
+        if adjusted_position < 0 or adjusted_position > len(sequence) + 1:
+            # print(f"Position is out of range for chromosome {chromosome}.")
+            # print(f"Position: {position}, Adjusted Position: {adjusted_position}, Sequence Length: {len(sequence)}"
+            # more detailed raise
+            raise ValueError(f"Position is out of range for chromosome {chromosome}. Position: {position}, Adjusted Position: {adjusted_position}, Sequence Length: {len(sequence)}")
+            # raise ValueError(f"Position is out of range for chromosome {chromosome}.")
+        if adjusted_position == len(sequence)+1:
+            sequence.append(token)
+        else:
+            sequence[adjusted_position:adjusted_position] = list(token)  # Insert the token
         self._shifts[chromosome] += len(token)
 
     def save_to_file(self, output_file):
