@@ -64,3 +64,12 @@ __pycache__/
 # data files #
 #############
 root/*
+
+
+# temp #
+########
+temp_*
+
+# Slurm #
+########
+slurm-*

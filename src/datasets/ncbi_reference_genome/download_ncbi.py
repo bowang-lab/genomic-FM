@@ -10,7 +10,7 @@ def download_species(outdir):
     """
     os.makedirs(outdir, exist_ok=True)
     if not os.path.exists(f'{outdir}/nodes.dmp'):
-        url = "https://ftp.ncbi.nih.gov/pub/taxonomy/taxdump.tar.gz"
+        url = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump.tar.gz"
         tar_gz_path = os.path.join(outdir, "taxdump.tar.gz")
 
         # Download the tar.gz file using wget
@@ -73,4 +73,3 @@ def download_species_genome(species, accession, outdir):
     # Rehydrate the dataset
     rehydrate_cmd = f"datasets rehydrate --directory {directory}"
     subprocess.run(rehydrate_cmd, shell=True, check=True)
-

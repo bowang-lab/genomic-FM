@@ -17,8 +17,8 @@ def split_gtf_file(gtf_file):
                 chromosomes_data[chromosome] = []
             chromosomes_data[chromosome].append(line)
     # take only the top shortest 5 chromosomes
-    chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1]))[:3])
-    print(chromosomes_data.keys())
+    # chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1])))
+    # print(chromosomes_data.keys())
     return chromosomes_data
 
 
@@ -110,5 +110,5 @@ def parallel_process_gtf(fasta_file, gtf_file, output_file, num_processes=3):
 
     finally:
         # This block ensures that the following code is executed regardless of an exception
+        extractor.save_to_file(output_file)
         logging.info(f"Saved to {output_file}")
-        return extractor
