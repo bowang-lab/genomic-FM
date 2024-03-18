@@ -17,7 +17,7 @@ def split_gtf_file(gtf_file):
                 chromosomes_data[chromosome] = []
             chromosomes_data[chromosome].append(line)
     # take only the top shortest 5 chromosomes
-    # chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1])))
+    # chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1]))[80:82])
     # print(chromosomes_data.keys())
     return chromosomes_data
 
