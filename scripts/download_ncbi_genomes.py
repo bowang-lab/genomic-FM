@@ -1,7 +1,7 @@
 import os
 import argparse
-from data.ncbi.get_accession import get_main_assembly_accession, search_species, fetch_species_details
-from data.ncbi.download_ncbi import create_species_taxid_map, download_species_genome, download_species, download_gene_species
+from src.datasets.ncbi_reference_genome.get_accession import get_main_assembly_accession, search_species, fetch_species_details
+from src.datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map, download_species_genome, download_species, download_gene_species
 
 # Setup argparse
 parser = argparse.ArgumentParser(description="Download genome data for a given species.")
