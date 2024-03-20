@@ -56,4 +56,3 @@ def get_main_assembly_accession(species, reference=True):
                 return "Suitable assemblies not found"
     except Exception as e:
         return f"Error: {str(e)}"
-

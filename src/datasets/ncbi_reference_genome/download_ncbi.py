@@ -121,7 +121,7 @@ def download_species_genome(species, accession, outdir):
     # Download the genome data
     download_cmd = (
         f"datasets download genome accession {accession} --dehydrated "
-        f"--include gtf,gff3,rna,cds,protein,genome,seq-report --filename {filename}"
+        f"--include gtf,rna,protein,genome,seq-report --filename {filename}"
     )
     subprocess.run(download_cmd, shell=True, check=True)
 
@@ -132,4 +132,3 @@ def download_species_genome(species, accession, outdir):
     # Rehydrate the dataset
     rehydrate_cmd = f"datasets rehydrate --directory {directory}"
     subprocess.run(rehydrate_cmd, shell=True, check=True)
-
