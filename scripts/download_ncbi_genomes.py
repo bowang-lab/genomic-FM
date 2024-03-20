@@ -1,5 +1,6 @@
 import os
 import argparse
+import pandas as pd
 from src.datasets.ncbi_reference_genome.get_accession import get_main_assembly_accession, search_species, fetch_species_details
 from src.datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map, download_species_genome, download_species, download_gene_species
 
@@ -8,6 +9,7 @@ parser = argparse.ArgumentParser(description="Download genome data for a given s
 parser.add_argument("--outdir", default = './root/data',  help="The output directory to save the data.")
 parser.add_argument("--species", default=None, help="The species to download data for.")
 parser.add_argument("--gene", default=None, help="The gene symbol to process data for.")
+parser.add_argument("--eukaryotes", action='store_true', help="Download only eukaryotes.")
 parser.add_argument("--get_latest", action='store_true', help="Retrieve latest accession for species.")
 parser.add_argument("--get_reference", action='store_true', help="Retrieve reference genome accession for species.")
 args = parser.parse_args()
@@ -36,8 +38,14 @@ elif args.species:
     else:
         print("Taxid for the specified species could not be found.")
 else:
-    taxid_to_species = create_species_taxid_map()
-    species_list = list(taxid_to_species.keys())
+    species_to_taxids = create_species_taxid_map()
+    species_list = list(species_to_taxids.keys())
+    if args.eukaryotes:
+        eukaryotes = pd.read_table("./root/data/ncbi_reference_eukaryotes.txt",sep='\t')
+        eukaryotes_list = list(eukaryotes['Scientific.species'].str.rstrip())
+        species_list = [species for species in species_list if species in eukaryotes_list]
+        print(f"Number of eukaryotic species: {len(species_list)}")
+
     for species in species_list:
         try:
             if args.get_reference:
