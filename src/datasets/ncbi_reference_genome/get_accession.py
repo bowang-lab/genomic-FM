@@ -1,6 +1,6 @@
 from Bio import Entrez
 
-Entrez.email = "vallisubasri@gmail.com"
+Entrez.email = "zl6222@ic.ac.uk"
 
 def search_species(species_name):
     handle = Entrez.esearch(db="taxonomy", term=species_name, retmode="xml")
@@ -35,7 +35,6 @@ def get_main_assembly_accession(species, reference=True):
             fetch_handle = Entrez.esummary(db="assembly", id=assembly_id, report="full")
             fetch_results = Entrez.read(fetch_handle)
             fetch_handle.close()
-
             # Extract the main assembly's accession number
             for assembly in fetch_results['DocumentSummarySet']['DocumentSummary']:
                 return assembly['AssemblyAccession']

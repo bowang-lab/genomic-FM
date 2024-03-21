@@ -79,7 +79,7 @@ def process_chromosome_data(gtf_lines, extractor):
         insert_tokens_and_reset()
 
     # save the chromosome data
-    save_chrm_to_file(extractor.sequences[chrom],"./root/data/annotated_fasta_improved/test",chrom)
+    # save_chrm_to_file(extractor.sequences[chrom],"./root/data/annotated_fasta_improved/test",chrom)
     # return None
     # return the chromosome data
     return (chrom, extractor.sequences[chrom])
