@@ -14,7 +14,7 @@ SUPORTED_MODELS = ['dnabert2', 'dnabert6','gena-lm-bigbird-base-t2t',
                    'nt_transformer_1000g',
                    'nt_transformer_v2_500m',
                    'grover']
-
+#TODO evo, caduceus
 
 class BaseModel(torch.nn.Module):
     def __init__(self, model_initiator_name):
@@ -56,4 +56,4 @@ class BaseModel(torch.nn.Module):
         return ModelClass(**model_args)
 
     def forward(self, x):
-        return self.model(x)
+        return self.model.embed(x)

@@ -2,6 +2,7 @@ from src.model_wrapper.base_model import BaseModel
 
 
 model = BaseModel(model_initiator_name='hyenadna-tiny-1k')
-sequence = 'ATGATATAAG'
+sequence = ['TGGGCCGCTCGCCCCGTATC','TGGGCCGCTCGCCCCGTATC']
 output = model(sequence)
-print(output.shape)
+for i in output:
+    print(i.shape)
