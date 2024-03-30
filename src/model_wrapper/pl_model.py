@@ -6,19 +6,22 @@ from torchmetrics import Accuracy
 
 
 class MyLightningModule(pl.LightningModule):
-    def __init__(self, model, task='Classification', learning_rate=1e-3):
+    def __init__(self, model, task='classification', learning_rate=1e-3):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
-        self.loss_function = nn.CrossEntropyLoss() if task == 'Classification' else nn.MSELoss()
-        self.accuracy = Accuracy() if task == 'Classification' else nn.MSELoss()
+        self.loss_function = nn.CrossEntropyLoss() if task == 'classification' else nn.MSELoss()
+        self.accuracy = Accuracy(task="multiclass", num_classes=model.output_size) if task == 'classification' else nn.MSELoss()
 
     def forward(self, x):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self.forward(x)
+        ref = batch[0][0]
+        alt = batch[0][1]
+        annotation = batch[0][2]
+        y = batch[1]
+        logits =  self.forward(alt) - self.forward(ref)
         loss = self.loss_function(logits, y)
         preds = torch.argmax(logits, dim=1)
         acc = self.accuracy(preds, y)
@@ -27,8 +30,11 @@ class MyLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        logits = self.forward(x)
+        ref = batch[0][0]
+        alt = batch[0][1]
+        annotation = batch[0][2]
+        y = batch[1]
+        logits = self.forward(alt) - self.forward(ref)
         loss = self.loss_function(logits, y)
         preds = torch.argmax(logits, dim=1)
         acc = self.accuracy(preds, y)

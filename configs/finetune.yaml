@@ -1,3 +1,13 @@
-clinvar:
+clinvar_CLNSIG_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification
+  target: CLNSIG
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+
+clinvar_CLNDN_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNSIG
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 100

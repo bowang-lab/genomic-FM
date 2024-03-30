@@ -11,17 +11,18 @@ from ..datasets.cellpassport.load_cell_passport import (
     read_vcf,
     extract_cell_line_annotation_from_vcf_file
 )
-from ..datasets.qtl import process_eqtl_data, process_sqtl_data
+from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
 
 
 ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substant',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
 class ClinVarDataWrapper:
-    def __init__(self, num_records=100):
-        self.num_records = num_records
+    def __init__(self, num_records=2000, all_records=False):
         self.clinvar_vcf_path = load_clinvar.download_file()
-        self.records = load_clinvar.read_vcf(self.clinvar_vcf_path, num_records=self.num_records)
+        self.records = load_clinvar.read_vcf(self.clinvar_vcf_path,
+                                             num_records=num_records,
+                                             all_records=all_records)
         self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
@@ -31,14 +32,20 @@ class ClinVarDataWrapper:
         # return (x, y) pairs
         data = []
         for record in self.records:
-            ref,alt = self.extract_sequence_from_record(record, sequence_length=Seq_length)
+            ref,alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
             variant_type = record['CLNVC'] # single nucleotide variant, deletion, insertion, etc.
-            x = (ref, alt, variant_type)
+            x = [ref, alt, variant_type]
             if target == 'CLNSIG':
                 y = record['CLNSIG'] # benign, likely benign, likely pathogenic, pathogenic, uncertain significance
+                if y[0] == "Uncertain_significance" or y[0] == "Conflicting_classifications_of_pathogenicity" or y[0] == "not_provided":
+                    continue
+                if y[0] == 'Pathogenic/Likely_pathogenic':
+                    y[0] = 'Likely_pathogenic'
+                if y[0] == 'Benign/Likely_benign':
+                    y[0] = 'Likely_benign'
             elif target == 'CLNDN':
                 y = record['CLNDN']  # disease name
-            data.append((x, y))
+            data.append([x, y[0]])
         return data
 
     def metadata(self):
@@ -66,10 +73,10 @@ class GeneKoDataWrapper:
         for i in range(self.num_records):
             gene = self.fitness_scores.iloc[i]
             record = create_variant_sequence_and_reference_sequence_for_gene(gene, insert_Ns=insert_Ns)
-            ref, alt = self.extract_sequence_from_record(record, sequence_length=Seq_length)
+            ref, alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
             cell_line, cell_line_score = self.flatten(gene)
             for i, cell in enumerate(cell_line):
-                x = (ref, alt, cell)
+                x = [ref, alt, cell]
                 y = cell_line_score[i]
                 data.append((x, y))
             data.append((x, y))
@@ -91,7 +98,8 @@ class CellPassportDataWrapper:
         return self.get_data(*args)
     def get_data(self, Seq_length=20):
         #TODO need to define the target
-        throw NotImplementedError
+        print("The target is not defined")
+        return None
         data = []
         for record in self.records:
             ref,alt = self.extract_sequence_from_record(record, sequence_length=Seq_length)
@@ -114,7 +122,7 @@ class eQTLDataWrapper:
             slop = row['slope']
             p_val = row['pval_nominal']
             reference, alternate = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
-            x = (reference, alternate, organism)
+            x = [reference, alternate, organism]
             if target == 'slope':
                 y = slop
             elif target == 'p_val':
@@ -139,7 +147,7 @@ class sQTLDataWrapper:
             slop = row['slope']
             p_val = row['pval_nominal']
             reference, alternate = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
-            x = (reference, alternate, organism)
+            x = [reference, alternate, organism]
             if target == 'slope':
                 y = slop
             elif target == 'p_val':

@@ -13,8 +13,9 @@ def map_to_class(data, task='classification'):
     y_class = {}
     x_count = 0
     y_count = 0
-    for x, y in data:
-        x, y = data
+    for i in range(len(data)):
+        element = data[i]
+        x, y = element
         annotation = x[2]
         if annotation not in x_class:
             x_class[annotation] = x_count
@@ -24,8 +25,8 @@ def map_to_class(data, task='classification'):
             if y not in y_class:
                 y_class[y] = y_count
                 y_count += 1
-            y = y_class[y]
-    return (x, y), x_class, y_class
+            element[1] = y_class[y]
+    return x_class, y_class
 
 
 def transform(data):
@@ -36,14 +37,19 @@ def transform(data):
 
 class IterableDataset(torch.utils.data.IterableDataset):
     def __init__(self, data, task='classification', transform=None):
-        self.data, self.x_class_mapping, self.y_class_mapping = map_to_class(data, task=task)
+        self.x_class_mapping, self.y_class_mapping = map_to_class(data, task=task)
+        print(f"x_class_mapping: {self.x_class_mapping}")
+        print(f"y_class_mapping: {self.y_class_mapping}")
+        self.data = data
         self.transform = transform
+        print(f"Total data: {len(self.data)}")
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None:
             iter_start = 0
             iter_end = len(self.data)
+            print(f"iter_start: {iter_start}, iter_end: {iter_end}")
         else:
             per_worker = int(math.ceil(len(self.data) / float(worker_info.num_workers)))
             worker_id = worker_info.id

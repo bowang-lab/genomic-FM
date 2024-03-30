@@ -8,7 +8,7 @@ class LinearNN(BaseModel):
         super().__init__(model_initiator_name)
 
         # Freeze all parameters in the base model
-        for param in self.model.parameters():
+        for param in self.model.model.parameters():
             param.requires_grad = False
 
         # Create a sample input tensor of the specified shape
@@ -23,10 +23,15 @@ class LinearNN(BaseModel):
 
         # Define the linear layer with the determined size
         self.head = nn.Linear(base_model_output_size, output_size)
+        self.output_size = output_size
 
     def forward(self, x):
         # First, pass the input through the base model
-        x = self.model(x)
-
+        x = self.model.embed(x)
+        # convert list of numpy.ndarray to tensor
+        x = torch.tensor(x)
+        # remove the dummy dimension
+        x = x.squeeze(1)
         # Then pass the output through the linear layer
-        return self.head(x)
+        sentence_embedding = torch.mean(x, dim=1)
+        return self.head(sentence_embedding)
