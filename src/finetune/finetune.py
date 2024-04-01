@@ -8,6 +8,7 @@ import argparse
 from torch.utils.data import random_split
 import yaml
 from ..dataloader import data_wrapper as data_wrapper
+from pytorch_lightning.loggers import WandbLogger
 
 
 # Parsing command line arguments
@@ -20,43 +21,65 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--config", type=str, default="configs/finetune.yaml", help="Path to configuration file")
     parser.add_argument("--split_ratio", type=list, default=[0.8, 0.1, 0.1], help="Train, validation, test split ratio")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading")
+    parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
     args = parser.parse_args()
     return args
 
-def main():
-    args = parse_args()
-
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name):
+    if logger_name == "wandb":
+        wandb_logger = WandbLogger(name="test_linear_head_finetune_epoch_100", project="Genomic-FM")
+    else:
+        wandb_logger = None
     # Load configuration file
-    with open(args.config, 'r') as f:
+    with open(config_path, 'r') as f:
         info = yaml.load(f, Loader=yaml.FullLoader)
-    info = info[args.dataset]
+    info = info[dataset]
 
     # Create data module
-    #TODO add cls
     cls = getattr(data_wrapper, info.pop('class'))
     DATA = cls()
     data = DATA.get_data(target=info['target'])
+    model = LinearNN(model_initiator_name=info['model_initiator_name'],
+                     output_size=info['output_size'])
+
+    data = model.cache_embed(data) # Pre-compute embeddings for the data
+
     iterable_dataset = IterableDataset(data=data,
                                        task=info['task'],
                                        transform=None)
     # split the data
     train_data, val_data, test_data = random_split(iterable_dataset,
-                                                   args.split_ratio,
-                                                   generator=torch.Generator().manual_seed(args.seed))
+                                                   split_ratio,
+                                                   generator=torch.Generator().manual_seed(seed))
 
     data_module = MyDataModule(train_data=train_data, val_data=val_data,
-                               test_data=test_data, batch_size=32,
-                               num_workers=0, transform=None)
+                               test_data=test_data, batch_size=batch_size,
+                               num_workers=num_workers, transform=None)
     # Initialize your Lightning Module
 
-    model = LinearNN(model_initiator_name=info['model_initiator_name'],
-                     output_size=info['output_size'])
-    lightning_module = MyLightningModule(model=model, task=info['task'], learning_rate=args.lr)
+    lightning_module = MyLightningModule(model=model, task=info['task'], learning_rate=lr)
 
     # Create the Trainer
-    trainer = pl.Trainer(max_epochs=args.epochs,
-                         accelerator='ddp' if args.gpus > 1 else 'cpu')
+    trainer = pl.Trainer(max_epochs=epochs,
+                         accelerator='ddp' if gpus > 1 else 'cpu',
+                         logger=wandb_logger)
     trainer.fit(lightning_module, data_module)
+
+
+def main():
+    args = parse_args()
+    run_training(args.dataset,
+                 args.lr,
+                 args.epochs,
+                 args.gpus,
+                 args.seed,
+                 args.config,
+                 args.split_ratio,
+                 args.batch_size,
+                 args.num_workers,
+                 args.logger)
 
 if __name__ == "__main__":
     main()

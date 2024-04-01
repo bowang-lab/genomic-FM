@@ -64,3 +64,16 @@ __pycache__/
 # data files #
 #############
 root/*
+
+# Wandb #
+########
+wandb/*
+
+
+# Lightning Logs #
+#################
+lightning_logs/
+
+# Checkpoints #
+##############
+*.ckpt
