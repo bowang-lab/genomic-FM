@@ -3,6 +3,7 @@ import torch
 import importlib
 import os
 import sys
+from tqdm import tqdm
 SUPORTED_MODELS = ['dnabert2', 'dnabert6','gena-lm-bigbird-base-t2t',
                    'gena-lm-bert-large-t2', 'hyenadna-large-1m',
                    'hyenadna-tiny-1k',
@@ -57,3 +58,10 @@ class BaseModel(torch.nn.Module):
 
     def forward(self, x):
         return self.model.embed(x)
+
+    def cache_embed(self, data):
+        for i in tqdm(range(len(data)), desc="Caching embeddings"):
+            x, _ = data[i]
+            x[0], x[1] = self.model(x[0]), self.model(x[1])
+            data[i][0] = x
+        return data

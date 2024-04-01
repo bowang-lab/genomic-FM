@@ -26,12 +26,6 @@ class LinearNN(BaseModel):
         self.output_size = output_size
 
     def forward(self, x):
-        # First, pass the input through the base model
-        x = self.model.embed(x)
-        # convert list of numpy.ndarray to tensor
-        x = torch.tensor(x)
-        # remove the dummy dimension
         x = x.squeeze(1)
-        # Then pass the output through the linear layer
         sentence_embedding = torch.mean(x, dim=1)
         return self.head(sentence_embedding)
