@@ -47,15 +47,4 @@ for key in a_group_key:
         with h5py.File(file_path, 'r') as f:
             print(f[key])
 
-exit()
-file = h5py.File('../../../root/data/alternative_splicing/delta_logit.h5','r')
-batch_size = 32
-pad_size = (1000-400)/2
-for label in ('valid','test','train'):
-    onehot = file['x_'+label]
-    l_seq = onehot[:,:400]
-    r_seq = onehot[:,400:]
-
-    rbp_output.create_dataset(name='y_'+label,data = file['y_'+label][:],dtype='float32') 
-rbp_output.close()
 
