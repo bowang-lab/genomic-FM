@@ -11,5 +11,3 @@ for urn_id in urn_ids[:10]:
         scores = get_scores(urn_id)
         print(scores)
 
-
-
