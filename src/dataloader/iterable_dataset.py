@@ -26,6 +26,9 @@ def map_to_class(data, task='classification'):
                 y_class[y] = y_count
                 y_count += 1
             element[1] = y_class[y]
+        if task == 'regression':
+            # ensure y is torch tensor float
+            element[1] = torch.tensor([y], dtype=torch.float32)
     return x_class, y_class
 
 
@@ -37,6 +40,17 @@ def transform(data):
 
 class IterableDataset(torch.utils.data.IterableDataset):
     def __init__(self, data, task='classification', transform=None):
+        sample_data = data[0]
+        sample_x, sample_y = sample_data
+        # if annotation  is a list, unroll it
+        if isinstance(sample_x[-1], list):
+            new_data = []
+            for i in range(len(data)):
+                x, y = data[i]
+                for annotation, new_y in zip(x[-1], y):
+                    new_x = x[:-1] + [annotation]
+                    new_data.append([new_x, new_y])
+            data = new_data
         self.x_class_mapping, self.y_class_mapping = map_to_class(data, task=task)
         print(f"x_class_mapping: {self.x_class_mapping}")
         print(f"y_class_mapping: {self.y_class_mapping}")

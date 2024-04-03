@@ -8,6 +8,48 @@ clinvar_CLNSIG_hyena-tiny:
 clinvar_CLNDN_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification
-  target: CLNSIG
+  target: CLNDN
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 100
+  output_size: 13209 # number of unique diseases in the dataset
+
+geneko_hyena-tiny:
+  class: GeneKoDataWrapper
+  task: regression
+  insert_Ns: False
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+eqtl_pval_hyena-tiny:
+  class: eQTLDataWrapper
+  task: regression
+  target: p_val
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+eqtl_slope_hyena-tiny:
+  class: eQTLDataWrapper
+  task: regression
+  target: slope
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+sqtl_pval_hyena-tiny:
+  class: sQTLDataWrapper
+  task: regression
+  target: p_val
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+sqtl_slope_hyena-tiny:
+  class: sQTLDataWrapper
+  task: regression
+  target: slope
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+sqlt_splice-change_hyena-tiny:
+  class: sQTLDataWrapper
+  task: regression
+  target: splice_change
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2
