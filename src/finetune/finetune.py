@@ -29,25 +29,27 @@ def parse_args():
 
 def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name):
     if logger_name == "wandb":
-        wandb_logger = WandbLogger(name="test_linear_head_finetune_epoch_100", project="Genomic-FM")
+        run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}"
+        wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
     else:
         wandb_logger = None
     # Load configuration file
     with open(config_path, 'r') as f:
         info = yaml.load(f, Loader=yaml.FullLoader)
     info = info[dataset]
-
+    # Create model
+    model = LinearNN(model_initiator_name=info.pop('model_initiator_name'),
+                     output_size=info.pop('output_size'))
+    task = info.pop('task')
     # Create data module
     cls = getattr(data_wrapper, info.pop('class'))
     DATA = cls()
-    data = DATA.get_data(target=info['target'])
-    model = LinearNN(model_initiator_name=info['model_initiator_name'],
-                     output_size=info['output_size'])
+    data = DATA.get_data(**info)
 
     data = model.cache_embed(data) # Pre-compute embeddings for the data
 
     iterable_dataset = IterableDataset(data=data,
-                                       task=info['task'],
+                                       task=task,
                                        transform=None)
     # split the data
     train_data, val_data, test_data = random_split(iterable_dataset,
@@ -59,7 +61,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
                                num_workers=num_workers, transform=None)
     # Initialize your Lightning Module
 
-    lightning_module = MyLightningModule(model=model, task=info['task'], learning_rate=lr)
+    lightning_module = MyLightningModule(model=model, task=task, learning_rate=lr)
 
     # Create the Trainer
     trainer = pl.Trainer(max_epochs=epochs,
@@ -70,7 +72,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
 
 def main():
     args = parse_args()
-    run_training(args.dataset,
+    return run_training(args.dataset,
                  args.lr,
                  args.epochs,
                  args.gpus,
