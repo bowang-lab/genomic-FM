@@ -19,7 +19,7 @@ ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
 class ClinVarDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
+    def __init__(self, num_records=2000, all_records=True):
         self.clinvar_vcf_path = load_clinvar.download_file()
         self.records = load_clinvar.read_vcf(self.clinvar_vcf_path,
                                              num_records=num_records,
@@ -46,6 +46,8 @@ class ClinVarDataWrapper:
                     y[0] = 'Likely_pathogenic'
                 if y[0] == 'Benign/Likely_benign':
                     y[0] = 'Likely_benign'
+                if y[0] not in ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']:
+                    continue
                 data.append([x, y[0]])
             elif target == 'CLNDN':
                 if record['CLNDN'][0] is not None:
@@ -59,7 +61,7 @@ class ClinVarDataWrapper:
         return data
 
 class GeneKoDataWrapper:
-    def __init__(self, num_records=100, all_records=False):
+    def __init__(self, num_records=100, all_records=True):
         self.num_records = num_records
         self.fitness_scores = create_fitness_scores_dataframe()
         self.genome_extractor = GenomeSequenceExtractor()
@@ -95,26 +97,32 @@ class GeneKoDataWrapper:
 
 
 class CellPassportDataWrapper:
-    def __init__(self, num_records=100):
+    def __init__(self, num_records=100, all_records=True):
         self.num_records = num_records
         self.cell_passport_files = download_and_extract_cell_passport_file()
-        self.records = read_vcf(self.cell_passport_files[1], num_records=self.num_records)
+        self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
     def get_data(self, Seq_length=20):
-        #TODO need to define the target
-        print("The target is not defined")
-        return None
         data = []
-        for record in self.records:
-            ref,alt = self.extract_sequence_from_record(record, sequence_length=Seq_length)
-            x = (ref, alt)
+        for cell_line_file in tqdm(self.cell_passport_files):
+            records = read_vcf(cell_line_file, num_records=self.num_records, all_records=self.all_records)
+            for record in records:
+                record_types = ['DRV', 'CPV', 'NPGL']
+                for record_type in record_types:
+                    if record_type in record:
+                        ref, alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
+                        annotation = cell_line_file.split('/')[-1].split('.')[0]
+                        x = [ref, alt, annotation]
+                        y = record_type
+                        data.append([x, y])
+                        break
         return data
 
 
 class eQTLDataWrapper:
-    def __init__(self, num_records=1000, all_records=False):
+    def __init__(self, num_records=1000, all_records=True):
         self.num_records = num_records
         self.genome_extractor = GenomeSequenceExtractor()
         self.all_records = all_records
@@ -143,7 +151,7 @@ class eQTLDataWrapper:
         return data
 
 class sQTLDataWrapper:
-    def __init__(self, num_records=30, all_records=False):
+    def __init__(self, num_records=30, all_records=True):
         self.num_records = num_records
         self.genome_extractor = GenomeSequenceExtractor()
         self.all_records = all_records

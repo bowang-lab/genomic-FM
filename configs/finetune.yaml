@@ -53,3 +53,9 @@ sqlt_splice-change_hyena-tiny:
   target: splice_change
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
+
+cellpassport_hyena-tiny:
+  class: CellPassportDataWrapper
+  task: classification
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 3
