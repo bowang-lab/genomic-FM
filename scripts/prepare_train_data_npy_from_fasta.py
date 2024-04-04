@@ -13,6 +13,7 @@ def tokenize_and_save_fasta_as_npy(fasta_file, seq_length, target_dir, chunk_siz
     :param chunk_size: The maximum size of each .npy file in number of sequences.
     :param tokenizer: An object with a tokenize method for tokenizing sequences.
     """
+
     if not os.path.exists(target_dir):
         os.makedirs(target_dir)
 
@@ -21,20 +22,20 @@ def tokenize_and_save_fasta_as_npy(fasta_file, seq_length, target_dir, chunk_siz
 
     for record in SeqIO.parse(fasta_file, "fasta"):
         sequence = str(record.seq)
-        tokenized_seq = tokenizer.tokenize(sequence)
-        truncated_seq = tokenized_seq[:seq_length]  # Truncate or pad sequence
-        buffer.append(truncated_seq)
-        # Pad or truncate the sequence
-        if len(tokenized_seq) < seq_length:
-            tokenized_seq += [padding_token] * (seq_length - len(tokenized_seq))
-        else:
-            tokenized_seq = tokenized_seq[:seq_length]
+        tokenized_seq = tokenizer.encode(sequence)
 
-        if len(buffer) >= chunk_size:
-            npy_file_path = os.path.join(target_dir, f"chunk_{file_count}.npy")
-            np.save(npy_file_path, np.array(buffer))
-            buffer = []  # Reset buffer
-            file_count += 1
+        # Break the sequence into multiple parts if longer than seq_length
+        for i in range(0, len(tokenized_seq), seq_length):
+            chunk = tokenized_seq[i:i + seq_length]
+            if len(chunk) < seq_length:
+                chunk += [padding_token] * (seq_length - len(chunk))
+            buffer.append(chunk)
+
+            if len(buffer) >= chunk_size:
+                npy_file_path = os.path.join(target_dir, f"chunk_{file_count}.npy")
+                np.save(npy_file_path, np.array(buffer))
+                buffer = []  # Reset buffer
+                file_count += 1
 
     # Save any remaining sequences in the buffer
     if buffer:

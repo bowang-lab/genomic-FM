@@ -17,6 +17,7 @@ def split_gtf_file(gtf_file, output_file):
             if chromosome not in chromosomes_data:
                 chromosomes_data[chromosome] = []
             chromosomes_data[chromosome].append(line)
+
     # take only the top shortest 5 chromosomes
     chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1])))
     # if in the folder of the output file, there is chromosome fasta, remove the chromosome from the dictionary

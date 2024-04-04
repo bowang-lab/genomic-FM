@@ -279,6 +279,7 @@ class NCBIFastaStringExtractor_old:
             else:
                 self.sequences[current_header].append(line)
 
+
     def insert_token(self, chromosome, position, token, mapping=True):
         if chromosome not in self.sequences:
             raise ValueError(f"Chromosome {chromosome} not found in FASTA file.")

@@ -17,28 +17,42 @@ def fetch_species_details(tax_id):
 def get_main_assembly_accession(species, reference=True):
     try:
         if reference:
-            # Formulate the search query to include the species name and filter for the latest reference genome
-            search_query = f'"{species}"[Organism] AND "reference genome"[filter] AND "latest"[filter]'
+            search_query = f'"{species}"[Organism] AND (reference genome[filter] OR refseq[filter]) AND latest[filter]'
         else:
-            search_query = f'"{species}"[Organism] AND "latest"[filter]'
+            search_query = f'"{species}"[Organism] AND latest[filter]'
+        
         # Search the NCBI Assembly database
-        search_handle = Entrez.esearch(db="assembly", term=search_query, retmax="1")
+        search_handle = Entrez.esearch(db="assembly", term=search_query, retmax="100")
         search_results = Entrez.read(search_handle)
         search_handle.close()
 
-        # Extract the Assembly ID from the search results
+        refseq_assemblies = []
+        genbank_assemblies = []
+
+        # Extract the Assembly IDs from the search results
         assembly_id_list = search_results["IdList"]
         if assembly_id_list:
-            assembly_id = assembly_id_list[0]
+            for assembly_id in assembly_id_list:
+                # Fetch details for each assembly found
+                fetch_handle = Entrez.esummary(db="assembly", id=assembly_id, report="full")
+                fetch_results = Entrez.read(fetch_handle)
+                fetch_handle.close()
 
-            # Fetch details for the first assembly found
-            fetch_handle = Entrez.esummary(db="assembly", id=assembly_id, report="full")
-            fetch_results = Entrez.read(fetch_handle)
-            fetch_handle.close()
-            # Extract the main assembly's accession number
-            for assembly in fetch_results['DocumentSummarySet']['DocumentSummary']:
-                return assembly['AssemblyAccession']
-        else:
-            return "Assembly not found"
+                for assembly in fetch_results['DocumentSummarySet']['DocumentSummary']:
+                    assembly_accession = assembly['AssemblyAccession']
+                    # Check if it's a RefSeq assembly by accession prefix (GCF)
+                    if assembly_accession.startswith('GCF'):
+                        refseq_assemblies.append(assembly_accession)
+                    elif assembly_accession.startswith('GCA'):
+                        genbank_assemblies.append(assembly_accession)
+
+            # Prioritize returning a RefSeq assembly if available
+            if refseq_assemblies:
+                return refseq_assemblies[0]
+            # Fallback to the best available GenBank assembly if no RefSeq assemblies are found
+            elif genbank_assemblies:
+                return genbank_assemblies[0]
+            else:
+                return "Suitable assemblies not found"
     except Exception as e:
         return f"Error: {str(e)}"

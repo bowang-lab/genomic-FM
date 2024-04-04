@@ -65,6 +65,18 @@ __pycache__/
 #############
 root/*
 
+# Wandb #
+########
+wandb/*
+
+
+# Lightning Logs #
+#################
+lightning_logs/
+
+# Checkpoints #
+##############
+*.ckpt
 
 # temp #
 ########
@@ -73,3 +85,4 @@ temp_*
 # Slurm #
 ########
 slurm-*
+
