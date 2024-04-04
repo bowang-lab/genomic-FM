@@ -9,6 +9,26 @@ class NCBIFastaStringExtractor:
         self.sequences = {}
         self._shifts = {}  # Tracks the shift in positions for each chromosome
         self._parse_fasta()
+        self.token_mapping = {
+            "<gene_start>": "B",
+            "<gene_end>": "b",
+            "<exon_start>": "D",
+            "<exon_end>": "d",
+            "<CDS_start>": "E",
+            "<CDS_end>": "e",
+            "<start_codon_start>": "F",
+            "<start_codon_end>": "f",
+            "<stop_codon_start>": "H",
+            "<stop_codon_end>": "h",
+            "<mRNA_exon_start>": "I",
+            "<mRNA_exon_end>": "i",
+            "<transcript_exon_start>": "J",
+            "<transcript_exon_end>": "j",
+            "<miRNA_exon_start>": "L",
+            "<miRNA_exon_end>": "l",
+            "<lnc_RNA_exon_start>": "M",
+            "<lnc_RNA_exon_end>": "m",
+        }
 
     def _parse_fasta(self):
         current_header = ''
@@ -20,7 +40,9 @@ class NCBIFastaStringExtractor:
             else:
                 self.sequences[current_header].append(line)
 
-    def insert_token(self, chromosome, position, token):
+    def insert_token(self, chromosome, position, token, mapping=False):
+        if mapping:
+            token = self.token_mapping[token]
         if chromosome not in self.sequences:
             raise ValueError(f"Chromosome {chromosome} not found in FASTA file.")
 
