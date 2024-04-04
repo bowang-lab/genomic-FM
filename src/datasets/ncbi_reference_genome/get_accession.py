@@ -1,6 +1,6 @@
 from Bio import Entrez
 
-Entrez.email = "vallisubasri@gmail.com"
+Entrez.email = "zl6222@ic.ac.uk"
 
 def search_species(species_name):
     handle = Entrez.esearch(db="taxonomy", term=species_name, retmode="xml")

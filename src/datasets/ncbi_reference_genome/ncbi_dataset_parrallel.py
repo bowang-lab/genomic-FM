@@ -4,9 +4,10 @@ import logging
 from contextlib import closing
 import tqdm
 from .ncbi_dataset import NCBIFastaStringExtractor
+import os
 
 
-def split_gtf_file(gtf_file):
+def split_gtf_file(gtf_file, output_file):
     chromosomes_data = {}
     with open(gtf_file, 'r') as file:
         for line in file:
@@ -16,12 +17,24 @@ def split_gtf_file(gtf_file):
             if chromosome not in chromosomes_data:
                 chromosomes_data[chromosome] = []
             chromosomes_data[chromosome].append(line)
-    chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1]))[80:82])
-    print(chromosomes_data.keys())
+
+    # take only the top shortest 5 chromosomes
+    chromosomes_data = dict(sorted(chromosomes_data.items(), key=lambda item: len(item[1])))
+    # if in the folder of the output file, there is chromosome fasta, remove the chromosome from the dictionary
+    for chrom in list(chromosomes_data.keys()):
+        chrome_file = output_file + f'_{chrom}.fna'
+        if os.path.exists(chrome_file):
+            chromosomes_data.pop(chrom)
     return chromosomes_data
 
+def save_chrm_to_file(sequence, output_file, chrm):
+    output_file_chrom = output_file + f'_{chrm}.fna'
+    with open(output_file_chrom, 'w') as out_f:
+        out_f.write(f'>{chrm}\n')
+        out_f.write(''.join(sequence) + '\n')  # Join the list into a string
+    print(f"Saved to {output_file}")
 
-def process_chromosome_data(gtf_lines, extractor):
+def process_chromosome_data(gtf_lines, extractor, output_file):
     tokens_to_insert = []
 
     def extract_biotype(attributes_str):
@@ -66,6 +79,9 @@ def process_chromosome_data(gtf_lines, extractor):
         print(tokens_to_insert)
         insert_tokens_and_reset()
 
+    # save the chromosome data
+    save_chrm_to_file(extractor.sequences[chrom],output_file,chrom)
+    # return None
     # return the chromosome data
     return (chrom, extractor.sequences[chrom])
 
@@ -89,15 +105,18 @@ def parallel_process_gtf(fasta_file, gtf_file, output_file, num_processes=3):
         with multiprocessing.Manager() as manager:
             extractor = NCBIFastaStringExtractor(fasta_file)
             logging.info(f"Processing {gtf_file} with {num_processes} processes")
+            print(f"Processing {gtf_file} with {num_processes} processes")
 
-            chromosome_data = split_gtf_file(gtf_file)
+            chromosome_data = split_gtf_file(gtf_file, output_file)
             logging.info(f"Processing {len(chromosome_data)} chromosomes")
-
-            tasks = [(chromosome_data[chrom], extractor) for chrom in chromosome_data]
+            print(f"Processing {len(chromosome_data)} chromosomes")
+            tasks = [(chromosome_data[chrom], extractor,output_file) for chrom in chromosome_data]
             logging.info(f"Processing {len(tasks)} tasks")
+            print(f"Processing {len(tasks)} tasks")
 
             # Use contextlib.closing to ensure resources are cleaned up properly
             with closing(multiprocessing.Pool(num_processes)) as pool:
+                # results = pool.starmap(process_chromosome_data, tasks)
                 results = pool.starmap(process_chromosome_data, tasks)
             logging.info("All tasks completed")
 
@@ -109,5 +128,5 @@ def parallel_process_gtf(fasta_file, gtf_file, output_file, num_processes=3):
 
     finally:
         # This block ensures that the following code is executed regardless of an exception
+        extractor.save_to_file(output_file)
         logging.info(f"Saved to {output_file}")
-        return extractor
