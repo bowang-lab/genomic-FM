@@ -45,7 +45,6 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     cls = getattr(data_wrapper, info.pop('class'))
     DATA = cls()
     data = DATA.get_data(**info)
-
     data = model.cache_embed(data) # Pre-compute embeddings for the data
 
     iterable_dataset = IterableDataset(data=data,
