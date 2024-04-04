@@ -33,7 +33,7 @@ def save_chrm_to_file(sequence, output_file, chrm):
         out_f.write(''.join(sequence) + '\n')  # Join the list into a string
     print(f"Saved to {output_file}")
 
-def process_chromosome_data(gtf_lines, extractor):
+def process_chromosome_data(gtf_lines, extractor, output_file):
     tokens_to_insert = []
 
     def extract_biotype(attributes_str):
@@ -79,7 +79,7 @@ def process_chromosome_data(gtf_lines, extractor):
         insert_tokens_and_reset()
 
     # save the chromosome data
-    save_chrm_to_file(extractor.sequences[chrom],"./root/data/annotated_fasta_improved/test",chrom)
+    save_chrm_to_file(extractor.sequences[chrom],output_file,chrom)
     # return None
     # return the chromosome data
     return (chrom, extractor.sequences[chrom])
@@ -109,7 +109,7 @@ def parallel_process_gtf(fasta_file, gtf_file, output_file, num_processes=3):
             chromosome_data = split_gtf_file(gtf_file, output_file)
             logging.info(f"Processing {len(chromosome_data)} chromosomes")
             print(f"Processing {len(chromosome_data)} chromosomes")
-            tasks = [(chromosome_data[chrom], extractor) for chrom in chromosome_data]
+            tasks = [(chromosome_data[chrom], extractor,output_file) for chrom in chromosome_data]
             logging.info(f"Processing {len(tasks)} tasks")
             print(f"Processing {len(tasks)} tasks")
 
