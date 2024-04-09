@@ -29,6 +29,22 @@ class ClinVarDataWrapper:
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
+    def convert_disease_name(self, disease_name):
+        """
+        Convert a disease name by removing any trailing numbers and underscores.
+        For example, converts 'Megacystis-microcolon-intestinal_hypoperistalsis_syndrome_2' to
+        'Megacystis-microcolon-intestinal_hypoperistalsis_syndrome'.
+        """
+        # Split the name by underscores
+        parts = disease_name.split('_')
+
+        # Check if the last part is a number, if so, remove it
+        if parts[-1].isdigit():
+            parts = parts[:-1]
+
+        # Join the parts back together
+        return '_'.join(parts)
+
     def get_data(self, Seq_length=20, target='CLNSIG'):
         # return (x, y) pairs
         data = []
@@ -56,7 +72,7 @@ class ClinVarDataWrapper:
                     # but most of those diseases are related, so we just take the first one which is not 'not_provided'
                     for disease in y:
                         if disease != 'not_provided':
-                            data.append([x, disease])
+                            data.append([x, self.convert_disease_name(disease)])
                             break
         return data
 
