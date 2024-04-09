@@ -19,7 +19,7 @@ ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
 class ClinVarDataWrapper:
-    def __init__(self, num_records=2000, all_records=True):
+    def __init__(self, num_records=2000, all_records=False):
         self.clinvar_vcf_path = load_clinvar.download_file()
         self.records = load_clinvar.read_vcf(self.clinvar_vcf_path,
                                              num_records=num_records,
@@ -28,6 +28,22 @@ class ClinVarDataWrapper:
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
+
+    def convert_disease_name(self, disease_name):
+        """
+        Convert a disease name by removing any trailing numbers and underscores.
+        For example, converts 'Megacystis-microcolon-intestinal_hypoperistalsis_syndrome_2' to
+        'Megacystis-microcolon-intestinal_hypoperistalsis_syndrome'.
+        """
+        # Split the name by underscores
+        parts = disease_name.split('_')
+
+        # Check if the last part is a number, if so, remove it
+        if parts[-1].isdigit():
+            parts = parts[:-1]
+
+        # Join the parts back together
+        return '_'.join(parts)
 
     def get_data(self, Seq_length=20, target='CLNSIG'):
         # return (x, y) pairs
@@ -56,7 +72,7 @@ class ClinVarDataWrapper:
                     # but most of those diseases are related, so we just take the first one which is not 'not_provided'
                     for disease in y:
                         if disease != 'not_provided':
-                            data.append([x, disease])
+                            data.append([x, self.convert_disease_name(disease)])
                             break
         return data
 

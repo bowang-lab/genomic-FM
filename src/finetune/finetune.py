@@ -62,10 +62,17 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
 
     lightning_module = MyLightningModule(model=model, task=task, learning_rate=lr)
 
+    trainer_args = {
+        'max_epochs': epochs,
+        'logger': wandb_logger
+    }
+    if gpus > 1:
+        trainer_args['accelerator'] = 'ddp'
+        trainer_args['devices'] = gpus
+    else:
+        trainer_args['accelerator'] = 'cpu'
     # Create the Trainer
-    trainer = pl.Trainer(max_epochs=epochs,
-                         accelerator='ddp' if gpus > 1 else 'cpu',
-                         logger=wandb_logger)
+    trainer = pl.Trainer(**trainer_args)
     trainer.fit(lightning_module, data_module)
 
 
