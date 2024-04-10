@@ -48,7 +48,7 @@ def process_chromosome_data(gtf_lines, extractor, output_file):
         return attributes_str[start_index:end_index] if end_index != -1 else None
 
     def insert_tokens_and_reset():
-        for chrom, position, token in sorted(tokens_to_insert):
+        for chrom, position, token in sorted(tokens_to_insert, key=lambda x: x[1]):
             extractor.insert_token(chromosome=chrom, position=position, token=token)
         tokens_to_insert.clear()
 
@@ -62,8 +62,8 @@ def process_chromosome_data(gtf_lines, extractor, output_file):
         if feature_type == 'gene':
             if tokens_to_insert:
                 insert_tokens_and_reset()
-            tokens_to_insert.append((chrom, start, '<gene_start>'))
-            tokens_to_insert.append((chrom, end + 1, '<gene_end>'))
+            tokens_to_insert.append((chrom, start-1, '<gene_start>'))
+            tokens_to_insert.append((chrom, end, '<gene_end>'))
         elif feature_type in ['exon', 'CDS', 'start_codon', 'stop_codon']:
             if feature_type == 'exon':
                 biotype = extract_biotype(attributes)
@@ -72,8 +72,8 @@ def process_chromosome_data(gtf_lines, extractor, output_file):
             else:
                 token_start = f'<{feature_type}_start>'
                 token_end = f'<{feature_type}_end>'
-            tokens_to_insert.append((chrom, start, token_start))
-            tokens_to_insert.append((chrom, end + 1, token_end))
+            tokens_to_insert.append((chrom, start-1, token_start))
+            tokens_to_insert.append((chrom, end, token_end))
 
     if tokens_to_insert:
         print(tokens_to_insert)
