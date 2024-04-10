@@ -7,7 +7,7 @@ All the tasks are formulated as a classification problem or regression problem. 
 
 | Data Set     | Description                                          | Feature                | Label                             | Size   |
 |--------------|------------------------------------------------------|------------------------|-----------------------------------|--------|
-| CliVar_CLNSIG       | Genetic Variants Prediction                          | (ref, alt, variance type) | Ourcome Classification: 4 classes   {'Likely_benign': 714866, 'Benign': 195030, 'Pathogenic': 143348, 'Likely_pathogenic': 100859}    | 1,154,103    |
+| CliVar_CLNSIG       | Genetic Variants Prediction                          | (ref, alt, variance type) | Outcome Classification: 4 classes   {'Likely_benign': 714866, 'Benign': 195030, 'Pathogenic': 143348, 'Likely_pathogenic': 100859}    | 1,154,103    |
 | ClinVar_CLNREVSTAT  | Genetic Variants Prediction                          | (ref, alt, review status) | Disease Type Classification: 13209 diseases types  | 1,739,691    |
 | CellPassport | Experimental verified Genetic Variants Prediction    | (ref, alt, cellline type) | Classification: 2 classes {'DRV': 1334, 'NPGL': 740404} | 741738 |
 | GeneKO       | Gene Knockout Prediction                             | (ref, alt, celline type) | Fitness score, 17548 mutations in 1107 cellliens             | 17548*1107 =  19,425,636   |

@@ -10,7 +10,7 @@ But:
 """
 
 from .base import Tokenizer, get_stats, merge
-
+from tqdm import tqdm
 
 class BasicTokenizer(Tokenizer):
 
@@ -28,7 +28,7 @@ class BasicTokenizer(Tokenizer):
         # iteratively merge the most common pairs to create new tokens
         merges = {} # (int, int) -> int
         vocab = {idx: bytes([idx]) for idx in range(256)} # int -> bytes
-        for i in range(num_merges):
+        for i in tqdm(range(num_merges)):
             # count up the number of times every consecutive pair appears
             stats = get_stats(ids)
             # find the pair with the highest count

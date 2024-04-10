@@ -1,4 +1,5 @@
 from .minbpe import BasicTokenizer, RegexTokenizer
+from .minbpe.basic_torch import BasicTorchTokenizer
 from tqdm import tqdm
 from typing import List, Optional
 from pathlib import Path
@@ -12,7 +13,7 @@ class MinBpeTokenizer:
                  tokenizer_type: str = "Basic"):
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens if special_tokens else COMMON_SPECIAL_TOKENS
-        self.tokenizer = BasicTokenizer() if tokenizer_type == "Basic" else RegexTokenizer()
+        self.tokenizer = BasicTorchTokenizer() if tokenizer_type == "Basic" else RegexTokenizer()
         self.tokenizer_type="MinBPE"
         self.token_to_id = {}
         self.id_to_token = {}
