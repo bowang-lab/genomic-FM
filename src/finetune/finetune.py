@@ -2,6 +2,9 @@ import torch
 import pytorch_lightning as pl
 from ..dataloader.iterable_dataset import IterableDataset
 from ..dataloader.pl_data_module import MyDataModule
+from ..dataloader.save_as_np import save_data, get_cache, map_to_class, get_mapped_class, map_to_given_class
+from ..dataloader.memmap_dataset import MemMapDataset
+from ..dataloader.efficient_iteratable_dataset import EffIterableDataset
 from ..model_wrapper.pl_model import MyLightningModule
 from ..model_wrapper.linear_nn import LinearNN
 import argparse
@@ -24,10 +27,11 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading")
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
+    parser.add_argument("--disk_chunk", type=int, default=10000, help="Number of chunks to split the data into for saving to disk")
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk=10000):
     if logger_name == "wandb":
         run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
@@ -45,11 +49,25 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     cls = getattr(data_wrapper, info.pop('class'))
     DATA = cls()
     data = DATA.get_data(**info)
-    data = model.cache_embed(data) # Pre-compute embeddings for the data
 
-    iterable_dataset = IterableDataset(data=data,
+    x_class, y_class = get_mapped_class(data, task)
+    # save and cache the data in batches
+    for i in range(0, len(data), disk_chunk):
+        embeddings = model.cache_embed(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
+        map_to_given_class(embeddings, x_class, y_class, task)
+        save_data(embeddings, base_filename=dataset, base_index=i)
+
+    seq1_path, seq2_path, annot_path, label_path = get_cache(dataset)
+    memmap_data = MemMapDataset(path_seq1=seq1_path,
+                                path_seq2=seq2_path,
+                                seq_shape=(info['Seq_length'], 128),
+                                chunk_size=info['Seq_length'],
+                                annotation_paths=annot_path,
+                                label_paths=label_path)
+    iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
-                                       transform=None)
+                                       transform=None,
+                                       skip_mapping=True)
     # split the data
     print("split_ratio: ", split_ratio)
     train_data, val_data, test_data = random_split(iterable_dataset,
