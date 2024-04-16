@@ -51,10 +51,11 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
                                        task=task,
                                        transform=None)
     # split the data
+    print("split_ratio: ", split_ratio)
     train_data, val_data, test_data = random_split(iterable_dataset,
                                                    split_ratio,
                                                    generator=torch.Generator().manual_seed(seed))
-
+    print("Train data size: ", len(train_data), "split ratio: ", split_ratio, "Total data size: ", len(iterable_dataset))
     data_module = MyDataModule(train_data=train_data, val_data=val_data,
                                test_data=test_data, batch_size=batch_size,
                                num_workers=num_workers, transform=None)
@@ -66,9 +67,10 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         'max_epochs': epochs,
         'logger': wandb_logger
     }
-    if gpus > 1:
-        trainer_args['accelerator'] = 'ddp'
+    if gpus >= 1:
+        trainer_args['accelerator'] = 'gpu'
         trainer_args['devices'] = gpus
+        trainer_args['strategy'] = 'ddp'
     else:
         trainer_args['accelerator'] = 'cpu'
     # Create the Trainer

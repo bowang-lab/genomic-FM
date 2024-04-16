@@ -4,7 +4,8 @@ from src.datasets.clinvar.filter_record import filter_records
 from src.sequence_extractor import GenomeSequenceExtractor
 
 # Download the ClinVar VCF file and store the path to the downloaded file
-clinvar_vcf_path = download_file()
+clinvar_vcf_path = download_file(vcf_file_path='./root/data/clinvar_20240407.vcf',
+                  vcf_gz_path='clinvar_20240407.vcf.gz')
 
 # Read the first 100 records from the VCF file
 res = read_vcf(clinvar_vcf_path, num_records=100)
