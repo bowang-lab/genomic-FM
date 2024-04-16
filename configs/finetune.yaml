@@ -2,6 +2,7 @@ clinvar_CLNSIG_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification
   target: CLNSIG
+  Seq_length: 20
   model_initiator_name: hyenadna-tiny-1k
   output_size: 4
 

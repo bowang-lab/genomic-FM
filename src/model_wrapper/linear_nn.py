@@ -26,6 +26,5 @@ class LinearNN(BaseModel):
         self.output_size = output_size
 
     def forward(self, x):
-        x = x.squeeze(1)
         sentence_embedding = torch.mean(x, dim=1)
         return self.head(sentence_embedding)
