@@ -2,7 +2,7 @@ import torch
 import pytorch_lightning as pl
 from ..dataloader.iterable_dataset import IterableDataset
 from ..dataloader.pl_data_module import MyDataModule
-from ..dataloader.save_as_np import save_data, get_cache, map_to_class, get_mapped_class, map_to_given_class
+from ..dataloader.save_as_np import save_data, get_cache, map_to_class, get_mapped_class, map_to_given_class, has_cache
 from ..dataloader.memmap_dataset import MemMapDataset
 from ..dataloader.efficient_iteratable_dataset import EffIterableDataset
 from ..model_wrapper.pl_model import MyLightningModule
@@ -50,12 +50,14 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     DATA = cls()
     data = DATA.get_data(**info)
 
-    x_class, y_class = get_mapped_class(data, task)
+
     # save and cache the data in batches
-    for i in range(0, len(data), disk_chunk):
-        embeddings = model.cache_embed(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
-        map_to_given_class(embeddings, x_class, y_class, task)
-        save_data(embeddings, base_filename=dataset, base_index=i)
+    if not has_cache('root/data/npy_output', dataset):
+        x_class, y_class = get_mapped_class(data, task)
+        for i in range(0, len(data), disk_chunk):
+            embeddings = model.cache_embed(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
+            map_to_given_class(embeddings, x_class, y_class, task)
+            save_data(embeddings, base_filename=dataset, base_index=i)
 
     seq1_path, seq2_path, annot_path, label_path = get_cache(dataset)
     memmap_data = MemMapDataset(path_seq1=seq1_path,
