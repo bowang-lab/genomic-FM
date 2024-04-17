@@ -23,7 +23,7 @@ species_to_epd = {
     "Zea mays": "Z_mays"
 }
 
-def download_epd(species, out_dir='./root/data'):
+def download_epd(species, out_dir='./root/data/epd'):
     """
     Downloads all .dat files for a given species from a specific directory URL to a local directory.
 
@@ -31,7 +31,9 @@ def download_epd(species, out_dir='./root/data'):
     - species (str): The name of the species, used to form the URL and directory path.
     - out_dir (str): The base directory where the species directory will be created and files downloaded.
     """
-    base_url = f"http://epd.expasy.org//ftp/epdnew/{species}/current"
+    base_url = f"http://epd.expasy.org/ftp/epdnew/{species}/current"
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
     local_directory = os.path.join(out_dir, species)
 
     response = requests.get(base_url)

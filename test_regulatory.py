@@ -1,5 +1,5 @@
-from src.datasets.ensembl.regulatory import download_regulatory_gff, get_feature_type
-from src.datasets.sequence_extractor import FastaStringExtractor
+from src.datasets.ensembl_regulatory.get_regulatory import download_regulatory_gff, get_feature_type
+from src.sequence_extractor import FastaStringExtractor
 from kipoiseq import Interval
 
 # Example usage for Homo sapiens
