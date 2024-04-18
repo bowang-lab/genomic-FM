@@ -60,8 +60,9 @@ class BaseModel(torch.nn.Module):
         return self.model.embed(x)
 
     def cache_embed(self, data):
+        new_data = []
         for i in tqdm(range(len(data)), desc="Caching embeddings"):
-            x, _ = data[i]
-            x[0], x[1] = self.model(x[0]), self.model(x[1])
-            data[i][0] = x
-        return data
+            x, y = data[i]
+            seq1, seq2 = self.model(x[0]), self.model(x[1])
+            new_data.append([[seq1,seq2,x[2]],y])
+        return new_data

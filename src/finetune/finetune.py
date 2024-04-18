@@ -12,6 +12,39 @@ from torch.utils.data import random_split
 import yaml
 from ..dataloader import data_wrapper as data_wrapper
 from pytorch_lightning.loggers import WandbLogger
+import psutil
+
+def get_memory_usage():
+    # Get the memory details
+    memory = psutil.virtual_memory()
+
+    # Calculate the used memory as total - available
+    total_memory_gb = memory.total / (1024 ** 3)
+    available_memory_gb = memory.available / (1024 ** 3)
+    used_memory_gb = total_memory_gb - available_memory_gb
+
+    print(f"Total RAM: {total_memory_gb:.2f} GB")
+    print(f"Available RAM: {available_memory_gb:.2f} GB")
+    print(f"Used RAM: {used_memory_gb:.2f} GB")
+
+def print_gpu_usage():
+    """Prints the current GPU usage including memory details."""
+    if torch.cuda.is_available():
+        gpu_id = torch.cuda.current_device()
+        gpu_name = torch.cuda.get_device_name(gpu_id)
+        total_memory = torch.cuda.get_device_properties(gpu_id).total_memory
+        total_memory_gb = total_memory / (1024**3)  # Convert total memory to GB
+        allocated_memory = torch.cuda.memory_allocated(gpu_id)
+        allocated_memory_gb = allocated_memory / (1024**3)  # Convert allocated memory to GB
+        cached_memory = torch.cuda.memory_reserved(gpu_id)
+        cached_memory_gb = cached_memory / (1024**3)  # Convert cached memory to GB
+
+        print(f"GPU: {gpu_name}")
+        print(f"Total Memory: {total_memory_gb:.2f} GB")
+        print(f"Allocated Memory: {allocated_memory_gb:.2f} GB")
+        print(f"Cached Memory: {cached_memory_gb:.2f} GB")
+    else:
+        print("CUDA is not available. Please check your setup.")
 
 
 # Parsing command line arguments
@@ -28,10 +61,11 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading")
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
     parser.add_argument("--disk_chunk", type=int, default=10000, help="Number of chunks to split the data into for saving to disk")
+    parser.add_argument("--cache_dir", type=str, default="root/data/npy_output", help="Directory to save the cached embeddings")
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk=10000):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output"):
     if logger_name == "wandb":
         run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
@@ -52,14 +86,15 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
 
 
     # save and cache the data in batches
-    if not has_cache('root/data/npy_output', dataset):
-        x_class, y_class = get_mapped_class(data, task)
+    if not has_cache(cache_dir, dataset):
+        x_class, y_class = map_to_class(data, task, dataset)
+        print(f"Mapped x_class: {x_class}")
+        print(f"Mapped y_class: {y_class}")
         for i in range(0, len(data), disk_chunk):
             embeddings = model.cache_embed(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
-            map_to_given_class(embeddings, x_class, y_class, task)
             save_data(embeddings, base_filename=dataset, base_index=i)
-
-    seq1_path, seq2_path, annot_path, label_path = get_cache(dataset)
+        print(">>>>End of caching")
+    seq1_path, seq2_path, annot_path, label_path = get_cache(dataset, cache_dir)
     memmap_data = MemMapDataset(path_seq1=seq1_path,
                                 path_seq2=seq2_path,
                                 seq_shape=(info['Seq_length'], 128),
@@ -109,7 +144,9 @@ def main():
                  args.split_ratio,
                  args.batch_size,
                  args.num_workers,
-                 args.logger)
+                 args.logger,
+                 args.disk_chunk,
+                 args.cache_dir)
 
 if __name__ == "__main__":
     main()

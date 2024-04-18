@@ -2,13 +2,16 @@ import numpy as np
 import torch
 import math
 import os
+import yaml
+from tqdm import tqdm
+
 
 def get_mapped_class(data, task='classification'):
     x_class = {}
     y_class = {}
     x_count = 0
     y_count = 0
-    for i in range(len(data)):
+    for i in tqdm(range(len(data)), desc="Mapping Annotation classes"):
         x, y = data[i]
         annotation = x[2]
         if annotation not in x_class:
@@ -32,7 +35,7 @@ def map_to_given_class(data, x_class, y_class, task='classification'):
             element[1] = torch.tensor([y], dtype=np.float32)
     return data
 
-def map_to_class(data, task='classification'):
+def map_to_class(data, task='classification', dataset_name="test", path='root/data/npy_output'):
     # x = (reference, alternate, annotation)
     # map x annotation to corresponding class label
     # y = target， e.g. beneign or pathogenic, slope, p_val, splice_change
@@ -59,6 +62,10 @@ def map_to_class(data, task='classification'):
         if task == 'regression':
             # ensure y is torch tensor float
             element[1] = torch.tensor([y], dtype=np.float32)
+    with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
+        yaml.dump(x_class, f)
+    with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
+        yaml.dump(y_class, f)
     return x_class, y_class
 
 def has_cache(cache_dir, base_filename):
