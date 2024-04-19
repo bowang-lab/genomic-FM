@@ -1,9 +1,44 @@
-clinvar_CLNSIG_hyena-tiny:
-  class: ClinVarDataWrapper
+digenic_hyena-tiny:
+  class: DigenicDataWrapper
   task: classification
   target: CLNSIG
   model_initiator_name: hyenadna-tiny-1k
   output_size: 4
+  
+regulatory_hyena-tiny:
+  class: EnsemblRegulatoryDataWrapper
+  task: classification
+  target: 
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+  
+mave_score_hyena-tiny:
+  class: MAVEDataWrapper
+  task: classification
+  target: 
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+  
+gwas_beta_hyena-tiny:
+  class: GWASDataWrapper
+  task: regression
+  target: 
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+
+gwas_pval_hyena-tiny:
+  class: GWASDataWrapper
+  task: regression
+  target: 
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+  
+promoter_hyena-tiny:
+  class: PromoterDataWrapper
+  task: classification
+  target: 
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2
 
 clinvar_CLNDN_hyena-tiny:
   class: ClinVarDataWrapper

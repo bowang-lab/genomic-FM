@@ -26,8 +26,7 @@ from tqdm import tqdm
 ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substantia_nigra',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
-
-
+        
 class DigenicDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
@@ -73,6 +72,55 @@ class MAVEDataWrapper:
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
+        self.gwas_catalogue = download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv', gwas_path='alternative')
+        self.trait_mappings = download_file(file_path='./root/data/gwas_catalog_trait-mappings_r2024-03-01.tsv', gwas_path='trait_mappings')
+        self.all_records = all_records
+        self.genome_extractor = GenomeSequenceExtractor()
+
+    def __call__(self, *args: Any) -> Any:
+        return self.get_data(*args)
+
+    def get_data(self, Seq_length=20, target='Value'):
+        # return (x, y) pairs
+        data = []        
+
+        trait = "height"
+        trait_mappings = get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait)
+        print(trait_mappings[:10])
+
+        unique_risk_snps = get_unique_risk_snps(gwas_catalog)
+
+        # Display the number of unique SNPs and the first few SNPs as a sample
+        print(f"Total unique risk SNPs found: {len(unique_risk_snps)}")
+
+        # Get rsSNPs associated with a trait
+        risk_snps = get_risk_snps(gwas_catalog, trait)
+        print(risk_snps)
+
+        for index, row in tqdm(risk_snps.iterrows()):
+            rsSNP = row['SNPS']
+
+            print(rsSNP)
+
+            # Get information about a rssnp 
+            snp_details = extract_snp_details(gwas_catalog, rsSNP, trait)
+            print(snp_details)
+
+            record = {
+                'Chromosome': snp_details['Chromosome'], 
+                'Position': int(snp_details['Position']),
+                'Reference Base': snp_details['Reference'],  
+                'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
+                'ID': rsSNP
+            }
+
+            reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
+
+
+
+class PromoterDataWrapper:
+    def __init__(self, num_records=2000, all_records=False):
+        self.num_records = num_records
         self.cell_passport_files = download_and_extract_cell_passport_file()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
@@ -82,8 +130,8 @@ class GWASDataWrapper:
 
     def get_data(self, Seq_length=20, target='CLNSIG'):
         # return (x, y) pairs
-        data = []        
-
+        data = []    
+        
 class ClinVarDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.clinvar_vcf_path = load_clinvar.download_file()
@@ -210,8 +258,10 @@ class eQTLDataWrapper:
         self.num_records = num_records
         self.genome_extractor = GenomeSequenceExtractor()
         self.all_records = all_records
+        
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
+    
     def get_data(self, Seq_length=20, target='slope'):
         data = []
         for organism in tqdm(ORGANISM):
@@ -239,8 +289,10 @@ class sQTLDataWrapper:
         self.num_records = num_records
         self.genome_extractor = GenomeSequenceExtractor()
         self.all_records = all_records
+        
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
+    
     def get_data(self, Seq_length=20, target='slope'):
         data = []
         for organism in tqdm(ORGANISM):
