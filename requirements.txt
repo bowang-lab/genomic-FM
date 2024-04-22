@@ -26,3 +26,6 @@ pyliftover
 
 # tokenizers
 tokenizers
+
+# mavehgvs
+mavehgvs

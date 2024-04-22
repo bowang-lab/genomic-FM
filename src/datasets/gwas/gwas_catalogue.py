@@ -79,11 +79,10 @@ def extract_snp_details(gwas_catalog, rssnp, trait=None):
             "Chromosome": snp_info['CHR_ID'].astype(str).unique().tolist()[0],
             "Position": snp_info['CHR_POS'].astype(str).unique().tolist()[0],
             "Reference": ref,
-            "Alternate": alt,
+            "Alternate": alt[0],
             "Initial Sample Size": snp_info['INITIAL SAMPLE SIZE'].tolist(),
             "Replication Sample Size": snp_info['REPLICATION SAMPLE SIZE'].tolist(),
             "Value": snp_info['OR or BETA'].tolist(),
-            "Value Type": snp_info['OR or BETA'].apply(lambda x: "Beta" if isinstance(x, float) and x < 1 else "Odds").tolist(),
             "Traits": snp_info['DISEASE/TRAIT'].tolist(),
             "Risk Allele": snp_info['STRONGEST SNP-RISK ALLELE'].apply(lambda x: x.split('-')[-1]).tolist(),
             "MAF": snp_info['RISK ALLELE FREQUENCY'].tolist(),
@@ -92,7 +91,7 @@ def extract_snp_details(gwas_catalog, rssnp, trait=None):
         }
         return snp_details
     else:
-        print("No details found for rsSNP: {rssnp} with trait filter: {trait}")
+        print(f"No details found for rsSNP: {rssnp} with trait filter: {trait}")
         return None
 
 def get_risk_snps(gwas_catalog, trait, pvalue_text_filter=None):
@@ -150,7 +149,6 @@ def get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait):
     
     return result.drop_duplicates()
 
-
 def parse_ci(ci_text):
     """Parse confidence intervals from a string format like '[1.04-1.16]' and return the standard error.
     
@@ -163,13 +161,13 @@ def parse_ci(ci_text):
         float: The estimated standard error or None if parsing fails.
     """
     try:
-        # Remove the square brackets and split by '-' to get lower and upper CI bounds
-        match = re.search(r'\[(.*?)\]', ci_text)
+        match = re.search(r'\[(-?\d+\.?\d*)(--?)(-?\d+\.?\d*)\]', ci_text)
         if not match:
-            raise ValueError("No text found in square brackets")
+            raise ValueError("CI format not recognized")
 
-        # Split the extracted string by '-' to get lower and upper CI bounds
-        lower, upper = map(float, match.group(1).split('-'))
+        # Extract lower and upper bounds from regex groups
+        lower = float(match.group(1))
+        upper = float(match.group(3))
 
         midpoint = (lower + upper) / 2
         half_width = (upper - lower) / 2  # The half-width of the confidence interval
@@ -178,41 +176,30 @@ def parse_ci(ci_text):
         standard_error = half_width / 1.96
         return standard_error
     except Exception as e:
-        print(f"Error parsing CI: {str(e)}")
         return None
 
-def get_summary_stats_for_snp(snp_details, trait, value_type='Beta'):
-    """ Calculates the summary statistics for a given SNP across multiple studies for specified value type (Beta or Odds). """
+def get_summary_stats_for_snp(snp_details, traits):
+    """ Calculates the summary statistics for a given SNP across multiple studies. """
     # Finding indices with trait
-    indices = [i for i, search_trait in enumerate(snp_details['Traits']) if trait.lower() in trait.lower()]       
+    print(traits)
+    indices = [i for i, search_trait in enumerate(snp_details['Traits']) if traits.lower() in search_trait.lower()]
     values = []
-    ses = []  # List to store standard errors
+    ses = [] 
 
-    for value, v_type, ci_text in zip([snp_details['Value'][i] for i in indices], [snp_details['Value Type'][i] for i in indices], [snp_details['95% CI'][i] for i in indices]):
-        if v_type == value_type and isinstance(value, (int, float)):  # Checking for correct value type and valid data
-            values.append(value)
-            se = parse_ci(ci_text)
-            if se:
-                ses.append(se)
-    if not values or not ses:  # Handle cases where no valid data is found
+    for value, ci_text in zip([snp_details['P-Value'][i] for i in indices], [snp_details['95% CI'][i] for i in indices]):
+        values.append(value)
+        se = parse_ci(ci_text)
+        if se:
+            ses.append(se)
+            
+    if not values:  # Handle cases where no valid data is found
         return None
-
-    weights = 1 / np.square(ses)
-    weighted_mean_value = np.sum(weights * values) / np.sum(weights)
-    variance_weighted_mean = 1 / np.sum(weights)
-    se_weighted_mean = np.sqrt(variance_weighted_mean)
     
-    z_score = weighted_mean_value / se_weighted_mean
-    p_value = 2 * (1 - norm.cdf(np.abs(z_score)))  # two-tailed p-value
-
     return {
         'rsSNP': snp_details['rsSNP'],
-        'trait': trait,
-        'Value Type': value_type,
-        'Weighted Mean Value': weighted_mean_value,
-        'SE Weighted Mean': se_weighted_mean,
-        'Z-Score': z_score,
-        'P-Value': p_value
+        'Trait': traits,
+        'P-Value': values[0],
+        'Standard Error': se
     }
 
 def get_alleles_ensembl(rs_id):

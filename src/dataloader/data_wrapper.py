@@ -68,9 +68,25 @@ class MAVEDataWrapper:
     def get_data(self, Seq_length=20, target='CLNSIG'):
         # return (x, y) pairs
         data = []
+        urn_ids = get_all_urn_ids()
+        for urn_id in urn_ids[:10]:
+            print(urn_id)
+            score_set = get_score_set(urn_id)
+            print(score_set)
+            for exp in score_set:
+                urn_id = exp.get('urn', None)
+                scores = get_scores(urn_id)
+                scores.head()
+
+                for index, row in scores.iterrows():
+                    if pd.notna(row['hgvs_nt']):
+                        alt = get_alternate_sequence(exp['targetGenes'][0]['sequence'],row['hgvs_nt'])
+                        print(f'Alternate sequence: {alt} HGVS_NT: {row["hgvs_nt"]} Score: {row["score"]}')
+
+
         
 class GWASDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
+    def __init__(self, num_records=2000, all_records=True):
         self.num_records = num_records
         self.gwas_catalogue = download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv', gwas_path='alternative')
         self.trait_mappings = download_file(file_path='./root/data/gwas_catalog_trait-mappings_r2024-03-01.tsv', gwas_path='trait_mappings')
@@ -83,40 +99,26 @@ class GWASDataWrapper:
     def get_data(self, Seq_length=20, target='Value'):
         # return (x, y) pairs
         data = []        
-
-        trait = "height"
-        trait_mappings = get_trait_mappings(gwas_catalog, gwas_trait_mappings, trait)
-        print(trait_mappings[:10])
-
-        unique_risk_snps = get_unique_risk_snps(gwas_catalog)
-
-        # Display the number of unique SNPs and the first few SNPs as a sample
-        print(f"Total unique risk SNPs found: {len(unique_risk_snps)}")
-
-        # Get rsSNPs associated with a trait
-        risk_snps = get_risk_snps(gwas_catalog, trait)
-        print(risk_snps)
-
-        for index, row in tqdm(risk_snps.iterrows()):
-            rsSNP = row['SNPS']
-
-            print(rsSNP)
-
-            # Get information about a rssnp 
-            snp_details = extract_snp_details(gwas_catalog, rsSNP, trait)
-            print(snp_details)
-
-            record = {
-                'Chromosome': snp_details['Chromosome'], 
-                'Position': int(snp_details['Position']),
-                'Reference Base': snp_details['Reference'],  
-                'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
-                'ID': rsSNP
-            }
-
-            reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
-
-
+        disease_to_efo = self.gwas_trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
+        for trait in set(disease_to_efo.values()):
+            traits = [key for key, value in disease_to_efo.items() if value == trait]
+            risk_snps = get_risk_snps(self.gwas_catalog, trait)                
+            for index, row in risk_snps.iterrows():
+                snp_details = extract_snp_details(gwas_catalog, rsSNP, trait)
+                if snp_details:
+                    summary_stats = get_summary_stats_for_snp(snp_details, trait)
+                    if summary_stats:
+                        record = {
+                            'Chromosome': snp_details['Chromosome'], 
+                            'Position': int(snp_details['Position']),
+                            'Reference Base': snp_details['Reference'],  
+                            'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
+                            'ID': rsSNP
+                        }
+                        reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
+                        x = [reference, alternate, trait]
+                        y = summary_stats['P-Value']
+                        data.append([x,y])
 
 class PromoterDataWrapper:
     def __init__(self, num_records=2000, all_records=False):

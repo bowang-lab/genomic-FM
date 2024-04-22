@@ -35,7 +35,6 @@ for trait in set(disease_to_efo.values()):
     print(f"Trait: {trait}")
     
     traits = [key for key, value in disease_to_efo.items() if value == trait]
-    print(traits)
 
     # Get rsSNPs associated with a trait
     risk_snps = get_risk_snps(gwas_catalog, trait)
@@ -43,27 +42,29 @@ for trait in set(disease_to_efo.values()):
         
     for index, row in risk_snps.iterrows():
         rsSNP = row['SNPS']
-        
         print(rsSNP)
 
         # Get information about a rssnp 
         snp_details = extract_snp_details(gwas_catalog, rsSNP, trait)
-        print(snp_details)
         
         if snp_details:
-            summary_stats = get_summary_stats_for_snp(snp_details, trait, value_type = 'beta')
+            print(snp_details)
+            
+            summary_stats = get_summary_stats_for_snp(snp_details, trait)
             print(summary_stats)
+            
+            if summary_stats:
 
-            record = {
-                'Chromosome': snp_details['Chromosome'], 
-                'Position': int(snp_details['Position']),
-                'Reference Base': snp_details['Reference'],  
-                'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
-                'ID': rsSNP
-            }
+                record = {
+                    'Chromosome': snp_details['Chromosome'], 
+                    'Position': int(snp_details['Position']),
+                    'Reference Base': snp_details['Reference'],  
+                    'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
+                    'ID': rsSNP
+                }
 
-            reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
-            print(f"Reference sequence for {rsSNP}: {reference}")
-            print(f"Alternate sequence for {rsSNP}: {alternate}")
+                reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
+                print(f"Reference sequence for {rsSNP}: {reference}")
+                print(f"Alternate sequence for {rsSNP}: {alternate}")
 
 

@@ -3,6 +3,10 @@ import csv
 from io import StringIO
 import pandas as pd
 import re
+from mavehgvs.patterns.dna import (
+    dna_sub_c, dna_del_c, dna_delins_c, dna_dup_c, dna_ins_c
+)
+from mavehgvs.patterns.util import combine_patterns
 
 def get_all_urn_ids():
     experiments_endpoint = "https://api.mavedb.org/api/v1/experiments/"
@@ -79,67 +83,54 @@ def get_score_set(urn_id):
         print(f"Error: {response.status_code}")
         return {}
 
+def combine_patterns(patterns, groupname='variant'):
+    """Combines various regex patterns into a single pattern with named groups."""
+    grouped_patterns = '|'.join(patterns)
+    return f"(?P<{groupname}>{grouped_patterns})"
+
 def get_alternate_sequence(dna_sequence, hgvs_nt):
     """
-    Apply DNA level changes to a given sequence.
+    Apply DNA level changes to a given sequence using sequential mavehgvs regex patterns.
 
     Args:
         dna_sequence (str): The original DNA sequence.
-        hgvs_nt (str): Changes in the format "c.[394C>A;610T>C;611T>A;612A>T]"
+        hgvs_nt (str): Changes in HGVS format, e.g., "c.[394C>A;610T>C;611T>A;612A>T]"
 
     Returns:
-        str: The DNA sequence with the changes applied.
+        str: The DNA sequence with the changes applied or None if error in parsing changes.
     """
-    changes = hgvs_nt.strip("c.[]").split(";")
 
+    changes = hgvs_nt.strip("c.[]").strip("n.[]").split(";")
     for change in changes:
-        if 'delins' in change:
-            match = re.match(r"(\d+)_?(\d+)?delins([ATCG]+)", change)
+        # Process each type of variant separately using mavehgvs patterns
+        for pattern in [dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c, dna_delins_c]:
+            match = re.match(pattern, change)
             if match:
-                start, end, ins_seq = match.groups()
-                start = int(start) - 1
-                end = int(end) if end else start + 1
-                # Validation
-                expected = dna_sequence[start:end]
-                if not expected:
-                    print(f"Reference sequence not found for change: {change}")
-                    return None
-                dna_sequence = dna_sequence[:start] + ins_seq + dna_sequence[end:]
-            else:
-                print(f"Unable to parse change: {change}")
-                return None
-        elif 'del' in change and 'ins' not in change:
-            match = re.match(r"(\d+)_?(\d+)?del", change)
-            if match:
-                start, end = match.groups()
-                start = int(start) - 1
-                end = int(end) if end else start + 1
-                # Validation
-                expected = dna_sequence[start:end]
-                if not expected:
-                    print(f"Reference sequence not found for deletion: {change}")
-                    return None
-                dna_sequence = dna_sequence[:start] + dna_sequence[end:]
-            else:
-                print(f"Unable to parse deletion: {change}")
-                return None
+                if 'delins' in pattern and match.group('seq'):
+                    start = int(match.group('start')) - 1
+                    end = int(match.group('end')) - 1 if match.group('end') else start
+                    ins_seq = match.group('seq')
+                    dna_sequence = dna_sequence[:start] + ins_seq + dna_sequence[end+1:]
+                elif 'del' in pattern and not 'ins' in pattern:
+                    start = int(match.group('start')) - 1
+                    end = int(match.group('end')) - 1 if match.group('end') else start
+                    dna_sequence = dna_sequence[:start] + dna_sequence[end+1:]
+                elif 'ins' in pattern and not 'del' in pattern:
+                    start = int(match.group('start')) - 1
+                    ins_seq = match.group('seq')
+                    dna_sequence = dna_sequence[:start+1] + ins_seq + dna_sequence[start+1:]
+                elif 'dup' in pattern:
+                    start = int(match.group('start')) - 1
+                    end = int(match.group('end')) - 1 if match.group('end') else start
+                    segment = dna_sequence[start:end+1]
+                    dna_sequence = dna_sequence[:end+1] + segment + dna_sequence[end+1:]
+                elif 'sub' in pattern:
+                    position = int(match.group('position')) - 1
+                    change_to = match.group('new')
+                    dna_sequence = dna_sequence[:position] + change_to + dna_sequence[position+1:]
+                break  # Exit the loop after successful matching and modification
         else:
-            match = re.match(r"(\d+)([ATCG]+)>([ATCG]+)", change)
-            if match:
-                position, change_from, change_to = match.groups()
-                position = int(position) - 1
-                if dna_sequence[position:position+len(change_from)] == change_from:
-                    dna_sequence = dna_sequence[:position] + change_to + dna_sequence[position+len(change_from):]
-                    # Check if the substitution introduces a stop codon
-                    codon_start = position - (position % 3)
-                    codon = dna_sequence[codon_start:codon_start+3]
-                    if codon in ['TAA', 'TAG', 'TGA']:
-                        print(f"Stop codon introduced at position {position+1} by {change}")
-                else:
-                    print(f"Mismatch at position {position+1}: expected {change_from}, found {dna_sequence[position:position+len(change_from)]}")
-                    return None
-            else:
-                print(f"Change {change} does not match expected format.")
-                return None
+            print(f"Unable to parse change: {change}")
+            return None
 
     return dna_sequence
