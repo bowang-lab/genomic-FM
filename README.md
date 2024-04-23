@@ -15,5 +15,5 @@ All the tasks are formulated as a classification problem or regression problem. 
 | eQTLs        | Expression Quantitative Trait Loci Prediction        | (ref, alt, organism) | Expression p-val/slope           | 1,207,976    |
 | GWAS        | Genome-Wide Association Study Prediction        | (ref, alt, trait) | Expression p-val/beta/odds ratio           | 306,890    |
 | Ensembl Regulatory        | Regulatory Feature Prediction        | (ref, alt, organism) | Classification: 2 classes           | X    |
-| MAVEs        | Multiplex Assays of Variant Effect Prediction        | (ref, alt, organism) | Score           | X    |
+| MAVEs        | Multiplex Assays of Variant Effect Prediction        | (ref, alt, organism) | Score           | 84/1373    |
 | Promoter        | Promoter Prediction        | (ref, alt, organism) | Classification: 2 classes           | X    |

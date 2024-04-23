@@ -13,16 +13,21 @@ for urn_id in tqdm(urn_ids[:limit], desc="Processing URN IDs"):
     for exp in score_set:
         print(exp)
         urn_id = exp.get('urn', None)
+        title = exp.get('title', None)
+        description = exp.get('description', None)
         numVariants = exp.get('numVariants', None)
+        sequence_type = exp.get('sequence_type', None)
         total += int(numVariants)  
         scores = get_scores(urn_id)
 
-        # Check if the DataFrame 'scores' is not empty
-        if not scores.empty:
-            for index, row in scores.iterrows():
-                if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
-                    avail += int(numVariants) 
-                    alt = get_alternate_sequence(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
-                    print(f'Alternate sequence: {alt} HGVS_NT: {row["hgvs_nt"]} Score: {row["score"]}')
+        if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
+            if not scores.empty:
+                for index, row in scores.iterrows():
+                    if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
+                        print(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
+                        alt = get_alternate_sequence(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
+                        if alt:
+                            avail += int(numVariants) 
+                            print(f'Alternate sequence: {alt} HGVS_NT: {row["hgvs_nt"]} Score: {row["score"]}')
 
 print(f"Total number of MAVEs: {avail}/{total}")

@@ -22,7 +22,7 @@ import pandas as pd
 from kipoiseq import Interval
 from tqdm import tqdm
 
-
+SPECIES = []
 ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substantia_nigra',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
@@ -40,7 +40,21 @@ class DigenicDataWrapper:
     def get_data(self, Seq_length=20, target='CLNSIG'):
         # return (x, y) pairs
         data = []
-        
+
+class PromoterDataWrapper:
+    def __init__(self, num_records=2000, all_records=False):
+        self.num_records = num_records
+        self.cell_passport_files = download_and_extract_cell_passport_file()
+        self.all_records = all_records
+        self.genome_extractor = GenomeSequenceExtractor()
+
+    def __call__(self, *args: Any) -> Any:
+        return self.get_data(*args)
+
+    def get_data(self, Seq_length=20, target='CLNSIG'):
+        # return (x, y) pairs
+        data = [] 
+
 class EnsemblRegulatoryDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
@@ -69,21 +83,28 @@ class MAVEDataWrapper:
         # return (x, y) pairs
         data = []
         urn_ids = get_all_urn_ids()
-        for urn_id in urn_ids[:10]:
-            print(urn_id)
+        limit=len(urn_ids)
+
+        for urn_id in tqdm(urn_ids[:limit], desc="Processing URN IDs"):
             score_set = get_score_set(urn_id)
-            print(score_set)
             for exp in score_set:
                 urn_id = exp.get('urn', None)
+                title = exp.get('title', None)
+                description = exp.get('description', None)
+                sequence_type = exp.get('sequence_type', None)
                 scores = get_scores(urn_id)
-                scores.head()
 
-                for index, row in scores.iterrows():
-                    if pd.notna(row['hgvs_nt']):
-                        alt = get_alternate_sequence(exp['targetGenes'][0]['sequence'],row['hgvs_nt'])
-                        print(f'Alternate sequence: {alt} HGVS_NT: {row["hgvs_nt"]} Score: {row["score"]}')
-
-
+                if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
+                    if not scores.empty:
+                        for index, row in scores.iterrows():
+                            if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
+                                reference = exp['targetGenes'][0]['sequence']
+                                alternate = get_alternate_sequence(reference, row['hgvs_nt'])
+                                annotation = ': '.join([title, description])
+                                if alternate:
+                                    x = [reference, alternate, annotation]
+                                    y = row["score"]
+                                    data.append([x,y])
         
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=True):
@@ -118,21 +139,7 @@ class GWASDataWrapper:
                         reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
                         x = [reference, alternate, trait]
                         y = summary_stats['P-Value']
-                        data.append([x,y])
-
-class PromoterDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
-        self.num_records = num_records
-        self.cell_passport_files = download_and_extract_cell_passport_file()
-        self.all_records = all_records
-        self.genome_extractor = GenomeSequenceExtractor()
-
-    def __call__(self, *args: Any) -> Any:
-        return self.get_data(*args)
-
-    def get_data(self, Seq_length=20, target='CLNSIG'):
-        # return (x, y) pairs
-        data = []    
+                        data.append([x,y])   
         
 class ClinVarDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
