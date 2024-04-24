@@ -2,6 +2,8 @@ clinvar_CLNSIG_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification
   target: CLNSIG
+  Seq_length: 1024
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 4
 
@@ -57,5 +59,6 @@ sqlt_splice-change_hyena-tiny:
 cellpassport_hyena-tiny:
   class: CellPassportDataWrapper
   task: classification
+  Seq_length: 2048
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 3
+  output_size: 2

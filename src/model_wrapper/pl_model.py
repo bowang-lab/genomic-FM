@@ -27,7 +27,7 @@ class MyLightningModule(pl.LightningModule):
         ref = batch[0][0]
         alt = batch[0][1]
         annotation = batch[0][2]
-        y = batch[1]
+        y = batch[1].squeeze(1)
         logits =  self.forward(alt) - self.forward(ref)
         loss = self.loss_function(logits, y)
         if self.task == 'classification':
@@ -43,7 +43,7 @@ class MyLightningModule(pl.LightningModule):
         ref = batch[0][0]
         alt = batch[0][1]
         annotation = batch[0][2]
-        y = batch[1]
+        y = batch[1].squeeze(1)
         logits = self.forward(alt) - self.forward(ref)
         loss = self.loss_function(logits, y)
         if  self.task == 'classification':
