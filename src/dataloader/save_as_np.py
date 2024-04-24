@@ -4,6 +4,23 @@ import math
 import os
 import yaml
 from tqdm import tqdm
+from sklearn.decomposition import PCA
+
+
+def apply_pca(data, n_components=16):
+    # Reshape the data
+    reshaped_data = data.reshape(-1, data.shape[-1])  # Reshape to (num_samples * 1024, 128)
+
+    # Apply PCA
+    pca = PCA(n_components=n_components)
+    pca.fit(reshaped_data)
+    pca_transformed_data = pca.transform(reshaped_data)
+
+    # Reshape back to the original shape
+    pca_transformed_data = pca_transformed_data.reshape(data.shape[:-1] + (-1,))  # Reshape back to (num_samples, 1024, n_components)
+
+    return pca_transformed_data
+
 
 
 def get_mapped_class(data, task='classification'):
@@ -93,7 +110,7 @@ def get_cache(base_filename, cache_dir='root/data/npy_output'):
     label_paths = sorted(label_paths)
     return seq1_paths, seq2_paths, annot_paths, label_paths
 
-def save_data(data, base_filename='data', base_index=0, base_dir='root/data/npy_output'):
+def save_data(data, base_filename='data', base_index=0, base_dir='root/data/npy_output',pca_components=16):
 
     base_filename = f'{base_dir}/{base_filename}'
     seq1_paths = None
@@ -117,6 +134,12 @@ def save_data(data, base_filename='data', base_index=0, base_dir='root/data/npy_
     seq2s = [np.array(d[0][1]) for d in chunk]
     annotation = np.array([d[0][2] for d in chunk], dtype=dtype_int_val)
     y = np.array([d[1] for d in chunk], dtype=dtype_y)
+
+    ##########################
+    # Try pca
+    ##########################
+    seq1s = apply_pca(np.array(seq1s),n_components=pca_components)
+    seq2s = apply_pca(np.array(seq2s),n_components=pca_components)
 
     # Save each component of the chunk
     filename = f'{base_filename}_seq1_{base_index}.npy'

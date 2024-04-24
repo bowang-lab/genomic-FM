@@ -3,6 +3,7 @@ clinvar_CLNSIG_hyena-tiny:
   task: classification
   target: CLNSIG
   Seq_length: 1024
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 4
 

@@ -76,28 +76,33 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         info = yaml.load(f, Loader=yaml.FullLoader)
     info = info[dataset]
     # Create model
+    pca_components = info.pop('pca_components')
     model = LinearNN(model_initiator_name=info.pop('model_initiator_name'),
-                     output_size=info.pop('output_size'))
+                     output_size=info.pop('output_size'),
+                     base_model_output_size=pca_components)
     task = info.pop('task')
-    # Create data module
-    cls = getattr(data_wrapper, info.pop('class'))
-    DATA = cls()
-    data = DATA.get_data(**info)
+
 
 
     # save and cache the data in batches
     if not has_cache(cache_dir, dataset):
+        # Create data module
+        cls = getattr(data_wrapper, info.pop('class'))
+        DATA = cls()
+        data = DATA.get_data(**info)
         x_class, y_class = map_to_class(data, task, dataset)
         print(f"Mapped x_class: {x_class}")
         print(f"Mapped y_class: {y_class}")
         for i in range(0, len(data), disk_chunk):
             embeddings = model.cache_embed(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
-            save_data(embeddings, base_filename=dataset, base_index=i)
+            save_data(embeddings, base_filename=dataset, base_index=i,pca_components=pca_components)
+            if i == 20000:
+                break
         print(">>>>End of caching")
     seq1_path, seq2_path, annot_path, label_path = get_cache(dataset, cache_dir)
     memmap_data = MemMapDataset(path_seq1=seq1_path,
                                 path_seq2=seq2_path,
-                                seq_shape=(info['Seq_length'], 128),
+                                seq_shape=(info['Seq_length'], pca_components),
                                 chunk_size=info['Seq_length'],
                                 annotation_paths=annot_path,
                                 label_paths=label_path)

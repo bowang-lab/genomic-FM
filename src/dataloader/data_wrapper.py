@@ -19,7 +19,7 @@ ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
 class ClinVarDataWrapper:
-    def __init__(self, num_records=20000, all_records=True):
+    def __init__(self, num_records=30000, all_records=True):
         self.clinvar_vcf_path = load_clinvar.download_file()
         self.records = load_clinvar.read_vcf(self.clinvar_vcf_path,
                                              num_records=num_records,
