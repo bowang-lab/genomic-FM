@@ -13,7 +13,7 @@ from ..datasets.cellpassport.load_cell_passport import (
 )
 from ..datasets.ensembl_regulatory.get_regulatory import download_regulatory_gff, get_feature_type
 from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
-from ..datasets.maves.get_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_sequence
+from ..datasets.maves.get_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
 from ..datasets.gwas.gwas_catalogue import download_file, get_trait_mappings, get_unique_risk_snps, extract_snp_details, get_risk_snps
 from ..datasets.dida.load_dida import download_file, map_digenic_variants, get_digenic_variants
 
@@ -99,7 +99,7 @@ class MAVEDataWrapper:
                         for index, row in scores.iterrows():
                             if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
                                 reference = exp['targetGenes'][0]['sequence']
-                                alternate = get_alternate_sequence(reference, row['hgvs_nt'])
+                                alternate = get_alternate_dna_sequence(reference, row['hgvs_nt'])
                                 annotation = ': '.join([title, description])
                                 if alternate:
                                     x = [reference, alternate, annotation]

@@ -118,7 +118,7 @@ def apply_change(dna_sequence, match):
         dna_sequence = dna_sequence[:position] + new_base + dna_sequence[position + 1:]
     return dna_sequence
 
-def get_alternate_sequence(dna_sequence, hgvs_nt):
+def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
     prefix_patterns = {
         'c.': [dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c, dna_delins_c, dna_equal_c],
         'gmo.': [dna_sub_gmo, dna_del_gmo, dna_ins_gmo, dna_dup_gmo, dna_delins_gmo, dna_equal_gmo],

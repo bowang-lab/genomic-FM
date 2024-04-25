@@ -6,7 +6,42 @@ import pyfaidx
 import requests
 import gzip
 
+import random
+import gffutils
 
+class RandomSequenceExtractor:
+    def __init__(self, fasta_file, gtf_file):
+        self.fasta_file = fasta_file
+        self.db = self.create_db(gtf_file)
+
+    def create_db(self, gtf_file):
+        db = gffutils.create_db(gtf_file, dbfn='./root/data/genes.db', force=True, keep_order=True, merge_strategy='merge', sort_attribute_values=True)
+        return db
+
+    def extract_random_sequence(self, length_range=(200, 1000), num_sequences=10, known_regions=None):
+        fasta = pyfaidx.Fasta(self.fasta_file)
+        selected_sequences = []
+
+        for _ in range(num_sequences):
+            chrom = random.choice(list(fasta.keys()))
+            chrom_length = len(fasta[chrom])
+
+            # Ensure the random sequence does not overlap with known promoters
+            is_known_promoter = True
+            while is_known_promoter:
+                start = random.randint(1, chrom_length - length_range[1])  # Adjust start point to allow enough space for maximum length
+                length = random.randint(*length_range)
+                end = start + length
+                is_known_promoter = any(
+                    prom.start <= start <= prom.end or prom.start <= end <= prom.end
+                    for prom in known_regions if prom.chrom == chrom
+                )
+
+            sequence = fasta[chrom][start:end].seq.upper()
+            selected_sequences.append(sequence)
+
+        return selected_sequences
+    
 class GenomeSequenceExtractor:
     def __init__(self, fasta_file='./root/data/hg38.fa'):
         self.fasta_file = fasta_file
@@ -113,7 +148,9 @@ class FastaStringExtractor:
                 return None
         return chrom_name
 
-    def extract(self, interval: Interval, **kwargs) -> str:
+    def extract(self, interval: Interval, sequence_length = None, **kwargs) -> str:
+        if sequence_length is not None:
+            interval = interval.resize(sequence_length)
         chrom_name = interval.chrom
         chrom_name = self.is_valid_chromosome(chrom_name)
         chromosome_length = self._chromosome_sizes[chrom_name]
