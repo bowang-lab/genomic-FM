@@ -1,5 +1,5 @@
 # Import necessary functions from the modules
-from src.datasets.gwas.load_gwas_catalogue import download_file, get_trait_mappings, get_unique_risk_snps, extract_snp_details, get_risk_snps, get_summary_stats_for_snp 
+from src.datasets.gwas.load_gwas_catalogue import download_file, get_unique_risk_snps, extract_snp_details, get_risk_snps, get_summary_stats_for_snp 
 from src.sequence_extractor import GenomeSequenceExtractor
 import pandas as pd
 

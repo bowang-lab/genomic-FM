@@ -11,10 +11,10 @@ from ..datasets.cellpassport.load_cell_passport import (
     read_vcf,
     extract_cell_line_annotation_from_vcf_file
 )
-from ..datasets.ensembl_regulatory.get_regulatory import download_regulatory_gff, get_feature_type
+from ..datasets.ensembl_regulatory.load_regulatory import download_regulatory_gff, get_regulatory_regions
 from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
-from ..datasets.maves.get_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
-from ..datasets.gwas.gwas_catalogue import download_file, get_trait_mappings, get_unique_risk_snps, extract_snp_details, get_risk_snps
+from ..datasets.maves.load_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
+from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps
 from ..datasets.dida.load_dida import download_file, map_digenic_variants, get_digenic_variants
 
 from pyliftover import LiftOver
@@ -22,7 +22,8 @@ import pandas as pd
 from kipoiseq import Interval
 from tqdm import tqdm
 
-SPECIES = []
+SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
+           'Mus musculus','Oncorhynchus mykiss', 'Plasmodium falciparum', 'Rattus norvegicus', 'Saccharomyces cerevisiae', 'Salmo salar', 'Schizosaccharomyces pombe', 'Sus scrofa', 'Scophthalmus maximus', 'Zea mays']
 ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substantia_nigra',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
