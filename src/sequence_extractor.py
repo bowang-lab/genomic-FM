@@ -5,18 +5,11 @@ from kipoiseq import Interval
 import pyfaidx
 import requests
 import gzip
-
 import random
-import gffutils
 
 class RandomSequenceExtractor:
     def __init__(self, fasta_file, gtf_file):
         self.fasta_file = fasta_file
-        self.db = self.create_db(gtf_file)
-
-    def create_db(self, gtf_file):
-        db = gffutils.create_db(gtf_file, dbfn='./root/data/genes.db', force=True, keep_order=True, merge_strategy='merge', sort_attribute_values=True)
-        return db
 
     def extract_random_sequence(self, length_range=(200, 1000), num_sequences=10, known_regions=None):
         fasta = pyfaidx.Fasta(self.fasta_file)
@@ -27,14 +20,14 @@ class RandomSequenceExtractor:
             chrom_length = len(fasta[chrom])
 
             # Ensure the random sequence does not overlap with known promoters
-            is_known_promoter = True
-            while is_known_promoter:
+            is_known_region = True
+            while is_known_region:
                 start = random.randint(1, chrom_length - length_range[1])  # Adjust start point to allow enough space for maximum length
                 length = random.randint(*length_range)
                 end = start + length
-                is_known_promoter = any(
-                    prom.start <= start <= prom.end or prom.start <= end <= prom.end
-                    for prom in known_regions if prom.chrom == chrom
+                is_known_region = any(
+                    feature.start <= start <= feature.end or feature.start <= end <= feature.end
+                    for feature in known_regions if feature.chrom == chrom
                 )
 
             sequence = fasta[chrom][start:end].seq.upper()
@@ -102,7 +95,6 @@ class GenomeSequenceExtractor:
         variant = kipoiseq.Variant(f"chr{chr}", pos, ref, alt, id=f'rs{variant_id}')
         # Extract the reference and alternate sequences surrounding the variant
         return self.extract_sequence(variant, sequence_length=sequence_length)
-
 
 class FastaStringExtractor:
     def __init__(self, fasta_file):
