@@ -142,7 +142,7 @@ class GWASDataWrapper:
                         data.append([x,y])   
         
 class ClinVarDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
+    def __init__(self, num_records=30000, all_records=True):
         self.clinvar_vcf_path = load_clinvar.download_file()
         self.records = load_clinvar.read_vcf(self.clinvar_vcf_path,
                                              num_records=num_records,
@@ -218,6 +218,8 @@ class GeneKoDataWrapper:
             gene = self.fitness_scores.iloc[i]
             record = create_variant_sequence_and_reference_sequence_for_gene(gene, insert_Ns=insert_Ns)
             ref, alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
+            if ref is None:
+                continue
             cell_line, cell_line_score = self.flatten(gene)
 
             x = [ref, alt, cell_line]
@@ -254,6 +256,8 @@ class CellPassportDataWrapper:
                 for record_type in record_types:
                     if record_type in record:
                         ref, alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
+                        if ref is None:
+                            continue
                         annotation = cell_line_file.split('/')[-1].split('.')[0]
                         x = [ref, alt, annotation]
                         y = record_type
@@ -285,6 +289,8 @@ class eQTLDataWrapper:
                 slop = row['slope']
                 p_val = row['pval_nominal']
                 reference, alternate = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
+                if reference is None:
+                    continue
                 x = [reference, alternate, organism]
                 if target == 'slope':
                     y = slop
