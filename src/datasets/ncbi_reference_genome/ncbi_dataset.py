@@ -1,6 +1,5 @@
 from tqdm import tqdm
 
-
 class NCBIFastaStringExtractor:
     def __init__(self, fasta_file):
         with open(fasta_file, 'r') as f:

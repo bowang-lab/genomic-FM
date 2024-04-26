@@ -8,7 +8,6 @@ import pyfaidx
 import requests
 import gzip
 
-
 def download_fasata_file(fasta_file):
     if not os.path.exists(fasta_file):
         run_bash_commands_fasta(fasta_file)

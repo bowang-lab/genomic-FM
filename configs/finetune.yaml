@@ -21,13 +21,6 @@ mave_score_hyena-tiny:
   model_initiator_name: hyenadna-tiny-1k
   output_size: 4
   
-gwas_beta_hyena-tiny:
-  class: GWASDataWrapper
-  task: regression
-  target: 
-  model_initiator_name: hyenadna-tiny-1k
-  output_size: 4
-
 gwas_pval_hyena-tiny:
   class: GWASDataWrapper
   task: regression
@@ -41,6 +34,15 @@ promoter_hyena-tiny:
   target: 
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
+
+clinvar_CLNSIG_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNSIG
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
 
 clinvar_CLNDN_hyena-tiny:
   class: ClinVarDataWrapper
