@@ -59,7 +59,7 @@ class PromoterDataWrapper:
 class EnsemblRegulatoryDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.cell_passport_files = download_and_extract_cell_passport_file()
+        self.ensembl_regulatory = get_eukaryote_regulatory()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
 
@@ -69,6 +69,8 @@ class EnsemblRegulatoryDataWrapper:
     def get_data(self, Seq_length=20, target='CLNSIG'):
         # return (x, y) pairs
         data = []
+        for regulatory_region in self.ensembl_regulatory:
+            print(regulatory_region)
         
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):

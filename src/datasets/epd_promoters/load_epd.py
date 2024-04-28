@@ -125,13 +125,13 @@ def get_eukaryote_promoters(sequence_length=1024, limit=None):
         print(f"Processing {eukaryote_species}")
         species_dir = os.path.join('./root/data/epd', species_id)
         file_path = next(iter(glob.glob(f"{species_dir}/*.dat")), None)
-        fasta_path, gtf_path = (glob.glob(os.path.join("./root/data", search_species(eukaryote_species)[0], f"ncbi_dataset/data/GCF*/{p}"))[0] for p in ["GCF*fna", "genomic.gtf"])
+        fasta_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GCF*/GCF*fna"))
 
-        if not file_path or not fasta_path or not gtf_path:
+        if not file_path or not fasta_paths:
             print(f"Required files missing for {eukaryote_species}. Skipping...")
             continue
 
-        fasta_extractor = FastaStringExtractor(fasta_path)
+        fasta_extractor = FastaStringExtractor(fasta_paths[0])
         eukaryote_promoters = parse_epd(file_path)
         promoter_data = []
 
@@ -142,7 +142,7 @@ def get_eukaryote_promoters(sequence_length=1024, limit=None):
             species, gene_name, sequence = promoter['Species'], promoter['Gene Name'], promoter['Sequence'].upper()
 
             if sequence: 
-                interval = run_blast_query(sequence, fasta_path)
+                interval = run_blast_query(sequence, fasta_paths[0])
                 if interval is not None:
                     interval = interval.resize(sequence_length)
                     extended_sequence = fasta_extractor.extract(interval)
@@ -150,7 +150,7 @@ def get_eukaryote_promoters(sequence_length=1024, limit=None):
 
         if promoter_data:
             intervals = [data[-1] for data in promoter_data] 
-            random_sequences = RandomSequenceExtractor(fasta_path, gtf_path).extract_random_sequence(
+            random_sequences = RandomSequenceExtractor(fasta_paths[0]).extract_random_sequence(
                 length_range=(sequence_length, sequence_length),
                 num_sequences=len(promoter_data),
                 known_regions=intervals

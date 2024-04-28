@@ -7,7 +7,7 @@ import glob
 from tqdm import tqdm
 from src.sequence_extractor import RandomSequenceExtractor, FastaStringExtractor
 from src.blast_search import run_blast_query
-from src.datasets.ncbi_reference_genome.get_accession import search_species
+from src.datasets.ncbi_reference_genome.get_accession import search_species, get_chromosome_name
 import random
 import os
 
@@ -24,38 +24,44 @@ ensembl_regulatory_species = [
 ]
 
 def download_regulatory_gff(out_dir='./root/data/regulatory_features'):
-    """Download regulatory features GFF for a given species"""
+    """Download regulatory features GFF for a given species."""
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+
+    ftp_url = 'ftp.ensembl.org'
+    base_path = '/pub/current_regulation/'
+
     for species in ensembl_regulatory_species:
         print(f"Downloading regulatory regions for {species}")
 
-        ftp_url = 'ftp.ensembl.org'
-        base_path = '/pub/current_regulation/'
         species_path = species.lower().replace(' ', '_')
-
-        if os.path.exists(out_dir):
-            return
-
-        os.makedirs(out_dir, exist_ok=True)
 
         with ftplib.FTP(ftp_url) as ftp:
             ftp.login()  # Anonymous login
 
             full_path = os.path.join(base_path, species_path)
+            
             try:
                 ftp.cwd(full_path)
             except ftplib.error_perm as e:
                 print(f"Could not access directory for {species}. Error: {e}")
-                return
+                continue  # Skip to the next species
 
             files = ftp.nlst()  # List all files in the species directory
             gff_files = [f for f in files if f.endswith('.gff.gz')]
 
             if not gff_files:
                 print(f"No regulatory GFF files found for {species}.")
-                return
+                continue  # Skip to the next species
 
             for filename in gff_files:
                 local_filename = os.path.join(out_dir, filename)
+
+                # Check if the file already exists
+                if os.path.exists(local_filename):
+                    print(f"{filename} already downloaded. Skipping.")
+                    continue  # Skip this file and proceed to the next
+
                 with open(local_filename, 'wb') as file:
                     ftp.retrbinary('RETR ' + filename, file.write)
                     print(f"Downloaded {filename} to {local_filename}")
@@ -89,7 +95,7 @@ def get_feature_type(filter_type, species,target_directory = './root/data/regula
     filtered_data = reg_data[reg_data['type'] == filter_type]
     return filtered_data
 
-def get_regulatory_regions(sequence_length=1024, limit=None):
+def get_eukaryote_regulatory(sequence_length=1024, limit=None):
     feature_types = ["enhancer", "TF_binding_site", "CTCF_binding_site", "open_chromatin_region"]
     combined_data = []
 
@@ -97,14 +103,21 @@ def get_regulatory_regions(sequence_length=1024, limit=None):
         print(f"Processing regulatory regions for {species}")
         tax_id = search_species(species)
         fasta_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GCF*/GCF*fna"))
-        gtf_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GCF*/genomic.gtf"))
 
-        if not fasta_paths or not gtf_paths:
-            print(f"Required genomic files missing for {species}. Skipping...")
+        if not fasta_paths :
+            print(f"Required genomic fasta file is missing for {species}. Skipping...")
             continue
 
         fasta_extractor = FastaStringExtractor(fasta_paths[0])
-        random_extractor = RandomSequenceExtractor(fasta_paths[0], gtf_paths[0])
+        ncbi_ids = [key for key in fasta_extractor.fasta.keys() if key.startswith(('NC', 'NL'))]
+        ncbi_chromosome_mapping = {}
+
+        for ncbi_id in ncbi_ids:
+            chromosome_name = get_chromosome_name(ncbi_id)
+            ncbi_chromosome_mapping[ncbi_id] = chromosome_name
+        chromosome_ncbi_mapping = {value: key for key, value in ncbi_chromosome_mapping.items()}
+
+        random_extractor = RandomSequenceExtractor(fasta_paths[0])
 
         for feature_type in feature_types:
             features = get_feature_type(feature_type, species)
@@ -116,7 +129,7 @@ def get_regulatory_regions(sequence_length=1024, limit=None):
                 if limit and index >= limit:
                     break
 
-                chrom = "chr" + str(row['seqid'])
+                chrom = chromosome_ncbi_mapping[row['seqid']]
                 start = int(row['start'])
                 end = int(row['end'])
                 interval = Interval(chrom, start, end).resize(sequence_length)

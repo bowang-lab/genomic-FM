@@ -8,7 +8,7 @@ import gzip
 import random
 
 class RandomSequenceExtractor:
-    def __init__(self, fasta_file, gtf_file):
+    def __init__(self, fasta_file):
         self.fasta_file = fasta_file
 
     def extract_random_sequence(self, length_range=(200, 1000), num_sequences=10, known_regions=None):
@@ -19,10 +19,18 @@ class RandomSequenceExtractor:
             chrom = random.choice(list(fasta.keys()))
             chrom_length = len(fasta[chrom])
 
+            if chrom_length <= length_range[1]:
+                # Handle case where chromosome is too short
+                sequence = fasta[chrom][:].seq.upper()  # Extract the whole sequence
+                pad_length = length_range[1] - chrom_length
+                padded_sequence = ('N' * (pad_length // 2)) + sequence + ('N' * ((pad_length + 1) // 2))
+                selected_sequences.append(padded_sequence)
+                continue
+
             # Ensure the random sequence does not overlap with known promoters
             is_known_region = True
             while is_known_region:
-                start = random.randint(1, chrom_length - length_range[1])  # Adjust start point to allow enough space for maximum length
+                start = random.randint(1, chrom_length - length_range[1])
                 length = random.randint(*length_range)
                 end = start + length
                 is_known_region = any(
@@ -34,7 +42,7 @@ class RandomSequenceExtractor:
             selected_sequences.append(sequence)
 
         return selected_sequences
-    
+     
 class GenomeSequenceExtractor:
     def __init__(self, fasta_file='./root/data/hg38.fa'):
         self.fasta_file = fasta_file
