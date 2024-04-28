@@ -11,16 +11,18 @@ from ..datasets.cellpassport.load_cell_passport import (
     read_vcf,
     extract_cell_line_annotation_from_vcf_file
 )
-from ..datasets.ensembl_regulatory.load_regulatory import download_regulatory_gff, get_regulatory_regions
+from ..datasets.ensembl_regulatory.load_regulatory import download_regulatory_gff, get_eukaryote_regulatory
 from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
 from ..datasets.maves.load_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
-from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps
+from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
 from ..datasets.dida.load_dida import download_file, map_digenic_variants, get_digenic_variants
 
 from pyliftover import LiftOver
 import pandas as pd
 from kipoiseq import Interval
 from tqdm import tqdm
+
+
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
            'Mus musculus','Oncorhynchus mykiss', 'Plasmodium falciparum', 'Rattus norvegicus', 'Saccharomyces cerevisiae', 'Salmo salar', 'Schizosaccharomyces pombe', 'Sus scrofa', 'Scophthalmus maximus', 'Zea mays']
@@ -31,21 +33,23 @@ ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland',
 class DigenicDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.cell_passport_files = download_and_extract_cell_passport_file()
+        self.cell_passport_files = download_file()
+        get_digenic_variants()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='CLNSIG'):
+    def get_data(self, Seq_length=20, target='score'):
         # return (x, y) pairs
         data = []
 
 class PromoterDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.cell_passport_files = download_and_extract_cell_passport_file()
+        self.promoters = download_epd(out_dir="./root/data/epd")
+        get_eukaryote_promoters()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
 
@@ -59,7 +63,8 @@ class PromoterDataWrapper:
 class EnsemblRegulatoryDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.ensembl_regulatory = get_eukaryote_regulatory()
+        self.ensembl_regulatory = download_regulatory_gff(out_dir='./root/data/regulatory_features')
+        get_eukaryote_regulatory()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
 
@@ -75,20 +80,19 @@ class EnsemblRegulatoryDataWrapper:
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.cell_passport_files = download_and_extract_cell_passport_file()
+        self.urn_ids = get_all_urn_ids()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='CLNSIG'):
+    def get_data(self, Seq_length=20, target='score'):
         # return (x, y) pairs
         data = []
-        urn_ids = get_all_urn_ids()
-        limit=len(urn_ids)
+        limit=len(self.urn_ids)
 
-        for urn_id in tqdm(urn_ids[:limit], desc="Processing URN IDs"):
+        for urn_id in tqdm(self.urn_ids[:limit], desc="Processing URN IDs"):
             score_set = get_score_set(urn_id)
             for exp in score_set:
                 urn_id = exp.get('urn', None)
@@ -106,7 +110,7 @@ class MAVEDataWrapper:
                                 annotation = ': '.join([title, description])
                                 if alternate:
                                     x = [reference, alternate, annotation]
-                                    y = row["score"]
+                                    y = row[target]
                                     data.append([x,y])
         
 class GWASDataWrapper:
@@ -120,7 +124,7 @@ class GWASDataWrapper:
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='Value'):
+    def get_data(self, Seq_length=20, target='P-Value'):
         # return (x, y) pairs
         data = []        
         disease_to_efo = self.gwas_trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
@@ -128,7 +132,8 @@ class GWASDataWrapper:
             traits = [key for key, value in disease_to_efo.items() if value == trait]
             risk_snps = get_risk_snps(self.gwas_catalog, trait)                
             for index, row in risk_snps.iterrows():
-                snp_details = extract_snp_details(gwas_catalog, rsSNP, trait)
+                rsSNP = row['SNPS']
+                snp_details = extract_snp_details(self.gwas_catalog, rsSNP, trait)
                 if snp_details:
                     summary_stats = get_summary_stats_for_snp(snp_details, trait)
                     if summary_stats:
@@ -139,9 +144,9 @@ class GWASDataWrapper:
                             'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
                             'ID': rsSNP
                         }
-                        reference, alternate = genome_extractor.extract_sequence_from_record(record, SEQUENCE_LENGTH)
+                        reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
                         x = [reference, alternate, trait]
-                        y = summary_stats['P-Value']
+                        y = summary_stats[target]
                         data.append([x,y])   
         
 class ClinVarDataWrapper:

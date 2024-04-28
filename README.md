@@ -13,7 +13,8 @@ All the tasks are formulated as a classification problem or regression problem. 
 | GeneKO       | Gene Knockout Prediction                             | (ref, alt, celline type) | Fitness score, 17548 mutations in 1107 cellliens             | 17548*1107 =  19,425,636   |
 | sQTLs        | Splicing Quantitative Trait Loci Prediction          | (ref, alt, organism) | Splicing change/p-val/slope      |  618,932 mutations    |
 | eQTLs        | Expression Quantitative Trait Loci Prediction        | (ref, alt, organism) | Expression p-val/slope           | 1,207,976    |
-| GWAS        | Genome-Wide Association Study Prediction        | (ref, alt, trait) | Expression p-val/beta/odds ratio           | 306,890    |
-| Ensembl Regulatory        | Regulatory Feature Prediction        | (ref, alt, organism) | Classification: 2 classes           | X    |
-| MAVEs        | Multiplex Assays of Variant Effect Prediction        | (ref, alt, organism) | Score           | 84/1373    |
-| Promoter        | Promoter Prediction        | (ref, alt, organism) | Classification: 2 classes           | X    |
+| GWAS        | Genome-Wide Association Study Prediction        | (ref, alt, trait) | Expression p-val/beta/odds ratio           | 306,890 SNPs    |
+| Ensembl Regulatory        | Regulatory Feature Prediction        | (ref, alt, organism) | Classification: 2 classes           | 9 species    |
+| MAVEs        | Multiplex Assays of Variant Effect Prediction        | (ref, alt, organism) | Score           | 1373 studies    |
+| Promoter        | Promoter Prediction        | (ref, alt, organism) | Classification: 2 classes           | 15 species    |
+| Oligogenic Variants       | Oligogenic Variant Effect Prediction        | (ref, alt, disease) | Classification: 2 classes           | 1808 variants combinations, 219 diseases    |

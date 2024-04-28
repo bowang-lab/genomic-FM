@@ -124,11 +124,13 @@ def get_eukaryote_regulatory(sequence_length=1024, limit=None):
             print(f"Processing features of type {feature_type}:")
 
             feature_data = []
-
             for index, row in tqdm(features.iterrows()):
                 if limit and index >= limit:
                     break
 
+                if row['seqid'] not in chromosome_ncbi_mapping.keys():
+                    continue 
+                
                 chrom = chromosome_ncbi_mapping[row['seqid']]
                 start = int(row['start'])
                 end = int(row['end'])
