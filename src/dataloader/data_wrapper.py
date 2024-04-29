@@ -1,5 +1,5 @@
 from typing import Any
-from ..sequence_extractor import GenomeSequenceExtractor
+from ..sequence_extractor import GenomeSequenceExtractor, FastaStringExtractor, RandomSequenceExtractor
 from ..datasets.clinvar import load_clinvar
 from ..datasets.gene_ko.get_gene_knock_out import (
     create_fitness_scores_dataframe,
@@ -15,14 +15,14 @@ from ..datasets.ensembl_regulatory.load_regulatory import download_regulatory_gf
 from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
 from ..datasets.maves.load_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
 from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
-from ..datasets.dida.load_dida import download_file, map_digenic_variants, get_digenic_variants
+from ..datasets.olida.load_olida import get_variant_combinations, load_and_process_negative_pairs
+from ..datasets.epd_promoters.load_epd import get_eukaryote_promoters, download_epd
 
 from pyliftover import LiftOver
 import pandas as pd
 from kipoiseq import Interval
 from tqdm import tqdm
-
-
+import random 
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
            'Mus musculus','Oncorhynchus mykiss', 'Plasmodium falciparum', 'Rattus norvegicus', 'Saccharomyces cerevisiae', 'Salmo salar', 'Schizosaccharomyces pombe', 'Sus scrofa', 'Scophthalmus maximus', 'Zea mays']
@@ -30,52 +30,95 @@ ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
         
-class DigenicDataWrapper:
+class OligogenicDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.cell_passport_files = download_file()
-        get_digenic_variants()
+        self.variant_combinations = get_variant_combinations()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='score'):
+    def get_data(self, Seq_length=20):
         # return (x, y) pairs
         data = []
+
+        for variant_combo in self.variant_combinations:
+            variant_combo_reference = []
+            variant_combo_alternate = []
+            if variant_combo['FINALmeta'] >= 1:
+                try:
+                    for variant in ['Variant_1', 'Variant_2']:
+                        # Check if key elements are present in the variant data
+                        if all(key in variant_combo[variant] for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']) and \
+                            all(variant_combo[variant][key] != "N.A." and not (isinstance(variant_combo[variant][key], float)) for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']):
+                            record = {
+                                    'Chromosome': variant_combo[variant]['Chromosome'],
+                                    'Position': int(variant_combo[variant]['Genomic_Position_Hg38']),
+                                    'Reference Base': variant_combo[variant]['Ref_Allele'],
+                                    'Alternate Base': variant_combo[variant]['Alt_Allele'],
+                                    'ID': variant_combo['OLIDA_ID']
+                                }
+                            reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
+                            variant_combo_reference.append(reference)
+                            variant_combo_alternate.append(alternate)
+                        else:
+                            raise ValueError("Missing required variant information")
+
+                    variant_combo_reference = 'N'.join(variant_combo_reference)
+                    variant_combo_alternate = 'N'.join(variant_combo_alternate)
+                    x, y = [variant_combo_reference, variant_combo_alternate, variant_combo['Disease']], 1
+                    data.append([x, y])
+
+                except Exception as e:
+                    print(f"Skipping variant combination due to error: {e}")
+                    continue  
+
+        negative_examples = load_and_process_negative_pairs(Seq_length=Seq_length)
+        data += negative_examples
+        random.shuffle(data)
+        return data
 
 class PromoterDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.promoters = download_epd(out_dir="./root/data/epd")
-        get_eukaryote_promoters()
+        self.epd_promoter_path = download_epd()
         self.all_records = all_records
-        self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='CLNSIG'):
+    def get_data(self, Seq_length=20):
         # return (x, y) pairs
+        promoters = get_eukaryote_promoters(sequence_length=Seq_length)
         data = [] 
-
+        for promoter in tqdm(promoters):
+            species, gene, sequence, target = promoter[0], promoter[1], promoter[2], promoter[3]
+            x = (species, gene, sequence)
+            y = target 
+            data.append([x,y])
+        return data
+    
 class EnsemblRegulatoryDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.ensembl_regulatory = download_regulatory_gff(out_dir='./root/data/regulatory_features')
-        get_eukaryote_regulatory()
+        self.ensembl_regulatory_path = download_regulatory_gff()
         self.all_records = all_records
-        self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='CLNSIG'):
+    def get_data(self, Seq_length=20):
         # return (x, y) pairs
+        regulatory_regions = get_eukaryote_regulatory(sequence_length=Seq_length)
         data = []
-        for regulatory_region in self.ensembl_regulatory:
-            print(regulatory_region)
+        for regulatory_region in tqdm(regulatory_regions):
+            species, feature, sequence, target = regulatory_region[0], regulatory_region[1], regulatory_region[2], regulatory_region[3]
+            x = (species, feature, sequence)
+            y = target 
+            data.append([x,y])
+        return data
         
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
@@ -112,6 +155,7 @@ class MAVEDataWrapper:
                                     x = [reference, alternate, annotation]
                                     y = row[target]
                                     data.append([x,y])
+        return data
         
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=True):
@@ -128,7 +172,7 @@ class GWASDataWrapper:
         # return (x, y) pairs
         data = []        
         disease_to_efo = self.gwas_trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
-        for trait in set(disease_to_efo.values()):
+        for trait in tqdm(set(disease_to_efo.values())):
             traits = [key for key, value in disease_to_efo.items() if value == trait]
             risk_snps = get_risk_snps(self.gwas_catalog, trait)                
             for index, row in risk_snps.iterrows():
@@ -148,6 +192,7 @@ class GWASDataWrapper:
                         x = [reference, alternate, trait]
                         y = summary_stats[target]
                         data.append([x,y])   
+        return data
         
 class ClinVarDataWrapper:
     def __init__(self, num_records=30000, all_records=True):

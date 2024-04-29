@@ -1,5 +1,7 @@
 import pandas as pd
 import re
+from pyliftover import LiftOver
+from src.sequence_extractor import GenomeSequenceExtractor
 
 # List of files to load
 files = {
@@ -17,7 +19,7 @@ def load_data(file_path):
     elif file_path.endswith('.tsv'):
         return pd.read_csv(file_path, sep='\t')
 
-def parse_gene_pairs():
+def get_gene_pairs():
     genepairs_df = load_data(files["genepairs"])
     genes_df = load_data(files["genes"])
     
@@ -82,7 +84,7 @@ def parse_variants(variant_str):
 
     return variants_info
 
-def parse_variant_combinations():
+def get_variant_combinations():
     variant_combinations_df = load_data(files["variantcombinations"])
     snv_df = load_data(files["snv"])
     cnv_df = load_data(files["cnv"])
@@ -93,8 +95,14 @@ def parse_variant_combinations():
         base_info = {
             "OLIDA_ID": row["OLIDA ID"],
             "Disease": row["Diseases"],
-            "Oligogenic_Effect": row["Oligogenic Effect"]
+            "Oligogenic_Effect": row["Oligogenic Effect"],
+            "FINALmeta": int(row["FINALmeta"]),
+            "FUNmeta": int(row["FUNmeta"]),
+            "VARmeta": int(row["VARmeta"]),
+            "GENEmeta": int(row["GENEmeta"]),
+            "STATmeta": int(row["STATmeta"])
         }
+
         # Container for all variants of a single row
         variants_info = {}
 
@@ -137,3 +145,81 @@ def process_variant(variants_df, gene, cdna_change):
         formatted_info = {k.replace(' ', '_'): v for k, v in variant_info.items()}  # Replace spaces with underscores in keys
         return formatted_info
     return {'Details': 'Variant not found'}
+
+def extract_negative_pairs(extractor, num_pairs, length_range=(200, 1000), min_separation=1000000):
+    negative_pairs = []
+    while len(negative_pairs) < num_pairs:
+        # Extract two sequences
+        sequences = extractor.extract_random_sequence(length_range=length_range, num_sequences=2)
+        if len(sequences) < 2:
+            continue  # In case the extraction fails or does not return enough sequences
+        seq1, seq2 = sequences[0], sequences[1]
+        # Check if they are negative pairs:
+        # They should either be on different chromosomes or on the same chromosome but far apart
+        if seq1[0].chrom != seq2[0].chrom or abs(seq1[0].start - seq2[0].start) >= min_separation:
+            negative_pairs.append((seq1, seq2))
+    return negative_pairs
+
+def load_and_process_negative_pairs(file_path='./root/data/1KGP_negative_pairs.txt', Seq_length=20, num_records=None):
+    # Load the data
+    data = []
+    data_1kgp = pd.read_csv(file_path, delimiter='\t', index_col=False)
+
+    # Initialize the LiftOver object for hg19 to hg38
+    lo = LiftOver('hg19', 'hg38')
+    genome_extractor = GenomeSequenceExtractor()
+
+    # Iterate through each row in the DataFrame
+    for _, row in data_1kgp.iterrows():
+        try:
+            variant_combo_alternate = [] 
+            variant_combo_reference = []
+            for gene_variant in ['GeneA_variant', 'GeneB_variant']:
+                # Check if the gene_variant data is not NaN and is a string
+                if pd.isna(row[gene_variant]) or not isinstance(row[gene_variant], str):
+                    raise ValueError(f"Invalid or missing variant data in row: {row}")
+                
+                # Extracting chromosome and position data
+                chrom, pos, ref, alt, zygosity = row[gene_variant].split(':')
+                
+                pos = int(pos) - 1  # Convert to 0-based for pyliftover
+
+                # Convert hg19 to hg38
+                converted = lo.convert_coordinate('chr' + chrom, pos)
+                if not converted:
+                    raise ValueError(f"Conversion failed for {chrom}:{pos+1}")
+
+                # Get the new chromosome and position
+                new_chrom, new_pos, _, _ = converted[0]
+                new_pos += 1  # Convert back to 1-based
+                
+                # Create record for sequence extraction
+                record = {
+                    'Chromosome': new_chrom.replace('chr', ''),  # Remove 'chr' if not needed
+                    'Position': new_pos,
+                    'Reference Base': ref,
+                    'Alternate Base': alt,
+                    'ID': row['Combination_ID']
+                }
+                # Extract sequences
+                reference, alternate = genome_extractor.extract_sequence_from_record(record, Seq_length)
+
+                variant_combo_reference.append(reference)
+                variant_combo_alternate.append(alternate)
+
+            variant_combo_reference = 'N'.join(variant_combo_reference)
+            variant_combo_alternate = 'N'.join(variant_combo_alternate)
+
+            # Append processed data (assuming negative examples have a label '0')
+            x = [variant_combo_reference, variant_combo_alternate, "1000 Genome Project"]
+            y = 0
+            data.append([x, y])
+
+        except Exception as e:
+            print(f"Skipping due to error: {e}")
+            continue
+
+    if num_records:
+        return data[:num_records]
+
+    return data

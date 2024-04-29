@@ -8,6 +8,7 @@ from src.sequence_extractor import RandomSequenceExtractor, FastaStringExtractor
 from src.blast_search import run_blast_query
 from src.datasets.ncbi_reference_genome.get_accession import search_species
 import random
+from src.datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map
 
 species_to_epd = {
     "Apis mellifera": "A_mellifera",
@@ -37,7 +38,6 @@ def download_epd(out_dir='./root/data/epd'):
     - out_dir (str): The base directory where the species directory will be created and files downloaded.
     """
     for eukaryote_species, species in species_to_epd.items():
-        print(f"Downloading {eukaryote_species}")
         base_url = f"http://epd.expasy.org/ftp/epdnew/{species}/current"
         if not os.path.exists(out_dir):
             os.mkdir(out_dir)
@@ -49,6 +49,9 @@ def download_epd(out_dir='./root/data/epd'):
             soup = BeautifulSoup(response.text, 'html.parser')
 
             # Ensure the local directory exists
+            if os.path.exists(local_directory):
+                continue 
+
             os.makedirs(local_directory, exist_ok=True)
 
             # Find all the .dat file links
@@ -67,6 +70,8 @@ def download_epd(out_dir='./root/data/epd'):
                         print(f"Failed to download {href}")
         else:
             print(f"Failed to access {base_url}") 
+
+    return out_dir
 
 def parse_epd(file_path):
     """
@@ -121,11 +126,15 @@ def parse_epd(file_path):
 def get_eukaryote_promoters(sequence_length=1024, limit=None):
     combined_tuples = []
 
+    species_to_taxids = create_species_taxid_map()
     for eukaryote_species, species_id in species_to_epd.items():
         print(f"Processing {eukaryote_species}")
         species_dir = os.path.join('./root/data/epd', species_id)
         file_path = next(iter(glob.glob(f"{species_dir}/*.dat")), None)
-        fasta_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GCF*/GCF*fna"))
+        
+        tax_id = species_to_taxids[eukaryote_species]
+        fasta_paths = glob.glob(os.path.join("./root/data", tax_id, "ncbi_dataset/data/GCF*/GCF*fna"))
+
 
         if not file_path or not fasta_paths:
             print(f"Required files missing for {eukaryote_species}. Skipping...")

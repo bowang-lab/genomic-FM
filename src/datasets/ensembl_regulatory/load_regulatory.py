@@ -67,6 +67,8 @@ def download_regulatory_gff(out_dir='./root/data/regulatory_features'):
                     print(f"Downloaded {filename} to {local_filename}")
             else:
                 print(f"Downloaded all regulatory GFF files for {species}.")
+                
+    return out_dir
 
 def parse_attributes(attribute_string):
     """Parse the GFF attributes column into a dictionary."""
