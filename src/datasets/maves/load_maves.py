@@ -11,7 +11,9 @@ from mavehgvs.patterns.dna import (
 )
 from tqdm import tqdm
 
-dna_sub_c_x = r'c\.(\d+)([ACGT])>([ACGTX])'
+dna_sub_c_x = r'c\.(?P<position>\d+)(?P<ref>[ACGT])>(?P<new>[ACGTX])'
+dna_sub_gmo_x = r'gmo\.(?P<position>\d+)(?P<ref>[ACGT])>(?P<new>[ACGTX])'
+dna_sub_n_x = r'n\.(?P<position>\d+)(?P<ref>[ACGT])>(?P<new>[ACGTX])'
 
 def get_all_urn_ids():
     experiments_endpoint = "https://api.mavedb.org/api/v1/experiments/"
@@ -96,6 +98,7 @@ def apply_change(dna_sequence, match):
             new_base = match.group(3)
             if new_base == 'X':
                 print(f"Skipping unknown substitution at position {position + 1}")
+                return dna_sequence  # Return unmodified sequence or handle as needed
             else:
                 dna_sequence = dna_sequence[:position] + new_base + dna_sequence[position + 1:]
         elif mutation_type in ['del', 'delins', 'dup', 'ins']:
@@ -120,8 +123,8 @@ def apply_change(dna_sequence, match):
 def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
     prefix_patterns = {
         'c.': [dna_sub_c_x, dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c, dna_delins_c, dna_equal_c],
-        'gmo.': [dna_sub_gmo, dna_del_gmo, dna_ins_gmo, dna_dup_gmo, dna_delins_gmo, dna_equal_gmo],
-        'n.': [dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n, dna_delins_n, dna_equal_n]
+        'gmo.': [dna_sub_gmo_x, dna_sub_gmo, dna_del_gmo, dna_ins_gmo, dna_dup_gmo, dna_delins_gmo, dna_equal_gmo],
+        'n.': [dna_sub_n_x, dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n, dna_delins_n, dna_equal_n]
     }
 
     prefix = hgvs_nt.split('.')[0] + '.'
@@ -161,6 +164,10 @@ def get_maves(Seq_length=1024, limit = None, target='score'):
             break
 
         for index, exp in enumerate(score_set):
+            if not exp.get('targetGenes'):  # Check if targetGenes is empty or not present
+                print(f"Warning: No target genes found for {urn_id}")
+                continue  # Skip this entry if no target genes
+
             print(exp)
             urn_id = exp.get('urn', None)
             title = exp.get('title', None)
