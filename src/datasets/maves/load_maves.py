@@ -11,6 +11,8 @@ from mavehgvs.patterns.dna import (
 )
 from tqdm import tqdm
 
+dna_sub_c_x = r'c\.(\d+)([ACGT])>([ACGTX])'
+
 def get_all_urn_ids():
     experiments_endpoint = "https://api.mavedb.org/api/v1/experiments/"
     response = requests.get(experiments_endpoint)
@@ -88,62 +90,36 @@ def get_score_set(urn_id):
     
 def apply_change(dna_sequence, match):
     try:
-        # Handling for each mutation type
-        if 'delins' in match.re.pattern:
-            start = match.group('start')
-            end = match.group('end') if 'end' in match.groupdict() and match.group('end') else start
-            # Handle range in start or end
-            if '-' in start:
-                start, start_offset = map(int, start.split('-'))
-                start, end = start - 1, start - int(start_offset)
+        mutation_type = match.lastgroup  # This depends on named groups in your regex
+        if mutation_type == 'sub':
+            position = int(match.group(1)) - 1
+            new_base = match.group(3)
+            if new_base == 'X':
+                print(f"Skipping unknown substitution at position {position + 1}")
             else:
-                start, end = int(start) - 1, int(end) - 1
-            new_sequence = match.group('seq')
-            dna_sequence = dna_sequence[:start] + new_sequence + dna_sequence[end + 1:]
-        elif 'del' in match.re.pattern:
-            start = match.group('start') if 'start' in match.groupdict() else match.group('position')
-            end = match.group('end') if 'end' in match.groupdict() and match.group('end') else start
-            if '-' in start:
-                start, start_offset = map(int, start.split('-'))
-                start, end = start - 1, start - int(start_offset)
-            else:
-                start, end = int(start) - 1, int(end) - 1
-            dna_sequence = dna_sequence[:start] + dna_sequence[end + 1:]
-        elif 'ins' in match.re.pattern:
-            start = match.group('start')
-            if '-' in start:
-                start, _ = map(int, start.split('-'))
-                start = start - 1
-            else:
-                start = int(start) - 1
-            seq = match.group('seq')
-            dna_sequence = dna_sequence[:start + 1] + seq + dna_sequence[start + 1:]
-        elif 'dup' in match.re.pattern:
-            start = match.group('start') if 'start' in match.groupdict() else match.group('position')
-            end = match.group('end') if 'end' in match.groupdict() and match.group('end') else start
-            if '-' in start:
-                start, start_offset = map(int, start.split('-'))
-                start, end = start - 1, start - int(start_offset)
-            else:
-                start, end = int(start) - 1, int(end) - 1
-            segment = dna_sequence[start:end + 1]
-            dna_sequence = dna_sequence[:end + 1] + segment + dna_sequence[end + 1:]
-        elif 'sub' in match.re.pattern:
-            position = match.group('position')
-            if '-' in position:
-                position, _ = position.split('-')
-            position = int(position) - 1
-            new_base = match.group('new')
-            dna_sequence = dna_sequence[:position] + new_base + dna_sequence[position + 1:]
+                dna_sequence = dna_sequence[:position] + new_base + dna_sequence[position + 1:]
+        elif mutation_type in ['del', 'delins', 'dup', 'ins']:
+            start = int(match.group('start')) - 1
+            end = int(match.group('end')) if match.group('end') else start
+            if mutation_type == 'del':
+                dna_sequence = dna_sequence[:start] + dna_sequence[end + 1:]
+            elif mutation_type == 'delins':
+                new_sequence = match.group('seq')
+                dna_sequence = dna_sequence[:start] + new_sequence + dna_sequence[end + 1:]
+            elif mutation_type == 'ins':
+                seq = match.group('seq')
+                dna_sequence = dna_sequence[:start + 1] + seq + dna_sequence[start + 1:]
+            elif mutation_type == 'dup':
+                segment = dna_sequence[start:end + 1]
+                dna_sequence = dna_sequence[:end + 1] + segment + dna_sequence[end + 1:]
         return dna_sequence
     except Exception as e:
-        # Error handling to capture any issues during the mutation process
-        print(f"Error applying change: {str(e)}")
+        print(f"Error applying change at position {match.group('start')} for mutation type {mutation_type}: {str(e)}")
         return None
 
 def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
     prefix_patterns = {
-        'c.': [dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c, dna_delins_c, dna_equal_c],
+        'c.': [dna_sub_c_x, dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c, dna_delins_c, dna_equal_c],
         'gmo.': [dna_sub_gmo, dna_del_gmo, dna_ins_gmo, dna_dup_gmo, dna_delins_gmo, dna_equal_gmo],
         'n.': [dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n, dna_delins_n, dna_equal_n]
     }
@@ -156,6 +132,8 @@ def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
     changes = re.findall(r'\[(.*?)\]', hgvs_nt)[0].split(';') if '[' in hgvs_nt else [hgvs_nt[len(prefix):]]
     modified_sequence = dna_sequence[:]
     for change in changes:
+        if '=' in change:
+            continue  # Skip processing as '=' indicates no change
         applied = False
         for pattern in prefix_patterns[prefix]:
             match = re.match(pattern, change.strip())
