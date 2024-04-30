@@ -5,8 +5,47 @@ from kipoiseq import Interval
 import pyfaidx
 import requests
 import gzip
+import random
 
+class RandomSequenceExtractor:
+    def __init__(self, fasta_file):
+        self.fasta_file = fasta_file
 
+    def extract_random_sequence(self, length_range=(200, 1000), num_sequences=10, known_regions=None):
+        fasta = pyfaidx.Fasta(self.fasta_file)
+        selected_sequences = []
+
+        # Initialize known_regions to an empty list if None is provided
+        if known_regions is None:
+            known_regions = []
+
+        for _ in range(num_sequences):
+            chrom = random.choice(list(fasta.keys()))
+            chrom_length = len(fasta[chrom])
+
+            if chrom_length < length_range[0]:  # Check if chromosome is shorter than the minimum length
+                sequence = fasta[chrom][:].seq.upper()  # Extract the whole sequence
+                pad_length = length_range[1] - chrom_length
+                padded_sequence = ('N' * (pad_length // 2)) + sequence + ('N' * ((pad_length + 1) // 2))
+                selected_sequences.append(padded_sequence)
+                continue
+
+            # Randomly generate sequences ensuring they do not overlap with known regions
+            is_known_region = True
+            while is_known_region:
+                start = random.randint(0, chrom_length - length_range[1])
+                length = random.randint(*length_range)
+                end = start + length - 1  # Adjust index for inclusive end
+                is_known_region = any(
+                    feature.start <= start <= feature.end or feature.start <= end <= feature.end
+                    for feature in known_regions if feature.chrom == chrom
+                )
+                if not is_known_region:  # Only append sequence if it does not overlap with known regions
+                    sequence = fasta[chrom][start:end + 1].seq.upper()  # Correct end index for slicing
+                    selected_sequences.append(sequence)
+
+        return selected_sequences
+     
 class GenomeSequenceExtractor:
     def __init__(self, fasta_file='./root/data/hg38.fa'):
         self.fasta_file = fasta_file
@@ -68,7 +107,6 @@ class GenomeSequenceExtractor:
         # Extract the reference and alternate sequences surrounding the variant
         return self.extract_sequence(variant, sequence_length=sequence_length)
 
-
 class FastaStringExtractor:
     def __init__(self, fasta_file):
         self.fasta = pyfaidx.Fasta(fasta_file)
@@ -113,7 +151,9 @@ class FastaStringExtractor:
                 return None
         return chrom_name
 
-    def extract(self, interval: Interval, **kwargs) -> str:
+    def extract(self, interval: Interval, sequence_length = None, **kwargs) -> str:
+        if sequence_length is not None:
+            interval = interval.resize(sequence_length)
         chrom_name = interval.chrom
         chrom_name = self.is_valid_chromosome(chrom_name)
         chromosome_length = self._chromosome_sizes[chrom_name]

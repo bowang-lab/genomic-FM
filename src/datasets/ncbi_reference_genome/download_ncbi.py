@@ -123,6 +123,7 @@ def download_species_genome(species, accession, outdir):
         f"datasets download genome accession {accession} --dehydrated "
         f"--include gtf,rna,protein,genome,seq-report --filename {filename}"
     )
+    print(download_cmd)
     subprocess.run(download_cmd, shell=True, check=True)
 
     # Unzip the downloaded file

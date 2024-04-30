@@ -4,7 +4,7 @@ Entrez.email = "vallisubasri@gmail.com"
 
 def search_species(species_name):
     handle = Entrez.esearch(db="taxonomy", term=species_name, retmode="xml")
-    record = Entrez.read(handle)
+    record = Entrez.read(handle, validate=False)
     handle.close()
     return record["IdList"]
 
@@ -17,13 +17,13 @@ def fetch_species_details(tax_id):
 def get_main_assembly_accession(species, reference=True):
     try:
         if reference:
-            search_query = f'"{species}"[Organism] AND (reference genome[filter] OR refseq[filter]) AND latest[filter]'
+            search_query = f'"{species}"[Organism] AND ((latest[filter] OR "latest refseq"[filter]) AND (all[filter] NOT anomalous[filter] AND all[filter] NOT partial[filter]))'
         else:
             search_query = f'"{species}"[Organism] AND latest[filter]'
         
         # Search the NCBI Assembly database
-        search_handle = Entrez.esearch(db="assembly", term=search_query, retmax="100")
-        search_results = Entrez.read(search_handle)
+        search_handle = Entrez.esearch(db="assembly", term=search_query, retmax="25000")
+        search_results = Entrez.read(search_handle, validate=False)
         search_handle.close()
 
         refseq_assemblies = []
@@ -35,7 +35,7 @@ def get_main_assembly_accession(species, reference=True):
             for assembly_id in assembly_id_list:
                 # Fetch details for each assembly found
                 fetch_handle = Entrez.esummary(db="assembly", id=assembly_id, report="full")
-                fetch_results = Entrez.read(fetch_handle)
+                fetch_results = Entrez.read(fetch_handle, validate=False)
                 fetch_handle.close()
 
                 for assembly in fetch_results['DocumentSummarySet']['DocumentSummary']:
@@ -56,3 +56,23 @@ def get_main_assembly_accession(species, reference=True):
                 return "Suitable assemblies not found"
     except Exception as e:
         return f"Error: {str(e)}"
+
+def get_chromosome_name(ncbi_id):
+    """Retrieve the chromosome name for a given NCBI ID."""
+    try:
+        # Fetch the nucleotide record from NCBI using the given ID
+        handle = Entrez.efetch(db="nucleotide", id=ncbi_id, rettype="gb", retmode="xml")
+        records = Entrez.read(handle)
+        handle.close()
+        
+        # Navigate the GenBank record structure to find the chromosome information
+        for record in records:
+            if 'GBSeq_feature-table' in record:
+                for feature in record['GBSeq_feature-table']:
+                    if feature['GBFeature_key'] == "source":
+                        for qualifier in feature['GBFeature_quals']:
+                            if qualifier['GBQualifier_name'] == "chromosome":
+                                return qualifier['GBQualifier_value']
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    return None  # Return None if no chromosome name is found or an error occurs

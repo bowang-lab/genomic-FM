@@ -27,6 +27,9 @@ pyliftover
 # tokenizers
 tokenizers
 
+# mavehgvs
+mavehgvs
+
 # BEND
 webdataset
 
