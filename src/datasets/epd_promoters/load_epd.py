@@ -11,6 +11,14 @@ import random
 from src.datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map
 
 species_to_epd = {
+    "Homo sapiens (non-coding)": "H_sapiens_nc",
+    "Macaca mulatta": "M_mulatta",
+    "Mus musculus (non-coding)": "M_musculus_nc",
+    "Plasmodium falciparum": "P_falciparum",
+    "Rattus norvegicus": "R_norvegicus",
+    "Saccharomyces cerevisiae": "S_cerevisiae",
+    "Schizosaccharomyces pombe": "S_pombe",
+    "Zea mays": "Z_mays",
     "Apis mellifera": "A_mellifera",
     "Arabidopsis thaliana": "A_thaliana",
     "Caenorhabditis elegans": "C_elegans",
@@ -19,15 +27,7 @@ species_to_epd = {
     "Danio rerio": "D_rerio",
     "Gallus gallus": "G_gallus",
     "Homo sapiens": "H_sapiens",
-    "Homo sapiens (non-coding)": "H_sapiens_nc",
-    "Macaca mulatta": "M_mulatta",
-    "Mus musculus": "M_musculus",
-    "Mus musculus (non-coding)": "M_musculus_nc",
-    "Plasmodium falciparum": "P_falciparum",
-    "Rattus norvegicus": "R_norvegicus",
-    "Saccharomyces cerevisiae": "S_cerevisiae",
-    "Schizosaccharomyces pombe": "S_pombe",
-    "Zea mays": "Z_mays"
+    "Mus musculus": "M_musculus"
 }
 
 def download_epd(out_dir='./root/data/epd'):

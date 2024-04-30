@@ -21,10 +21,6 @@ disease_to_efo = gwas_trait_mappings.set_index('Disease trait')['EFO term'].to_d
 # Set the length of the sequence to be extracted
 SEQUENCE_LENGTH = 20
 genome_extractor = GenomeSequenceExtractor()
-
-# Number of unique rsSNPs
-print(f"Total unique risk SNPs found: {len(gwas_catalog['SNPS'])}")
-
 unique_risk_snps = get_unique_risk_snps(gwas_catalog)
 
 # Display the number of unique SNPs and the first few SNPs as a sample

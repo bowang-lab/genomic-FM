@@ -90,14 +90,7 @@ class PromoterDataWrapper:
         return self.get_data(*args)
 
     def get_data(self, Seq_length=20):
-        # return (x, y) pairs
-        promoters = get_eukaryote_promoters(sequence_length=Seq_length)
-        data = [] 
-        for promoter in tqdm(promoters):
-            species, gene, sequence, target = promoter[0], promoter[1], promoter[2], promoter[3]
-            x = (species, gene, sequence)
-            y = target 
-            data.append([x,y])
+        data = get_eukaryote_promoters(sequence_length=Seq_length)
         return data
     
 class EnsemblRegulatoryDataWrapper:
@@ -110,14 +103,7 @@ class EnsemblRegulatoryDataWrapper:
         return self.get_data(*args)
 
     def get_data(self, Seq_length=20):
-        # return (x, y) pairs
-        regulatory_regions = get_eukaryote_regulatory(sequence_length=Seq_length)
-        data = []
-        for regulatory_region in tqdm(regulatory_regions):
-            species, feature, sequence, target = regulatory_region[0], regulatory_region[1], regulatory_region[2], regulatory_region[3]
-            x = (species, feature, sequence)
-            y = target 
-            data.append([x,y])
+        data = get_eukaryote_regulatory(sequence_length=Seq_length)
         return data
         
 class MAVEDataWrapper:
@@ -125,7 +111,6 @@ class MAVEDataWrapper:
         self.num_records = num_records
         self.urn_ids = get_all_urn_ids()
         self.all_records = all_records
-        self.genome_extractor = GenomeSequenceExtractor()
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
@@ -141,22 +126,24 @@ class MAVEDataWrapper:
                 urn_id = exp.get('urn', None)
                 title = exp.get('title', None)
                 description = exp.get('description', None)
-                sequence_type = exp.get('sequence_type', None)
+                sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
+                annotation = ': '.join([title, description])
                 scores = get_scores(urn_id)
 
                 if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
                     if not scores.empty:
                         for index, row in scores.iterrows():
-                            if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
+                            if pd.notna(row['hgvs_nt']) and pd.notna(row[target]):
                                 reference = exp['targetGenes'][0]['sequence']
                                 alternate = get_alternate_dna_sequence(reference, row['hgvs_nt'])
-                                annotation = ': '.join([title, description])
+                                
                                 if alternate:
-                                    x = [reference, alternate, annotation]
-                                    y = row[target]
-                                    data.append([x,y])
+                                    if len(reference) <= Seq_length:
+                                        x = [reference, alternate, annotation]
+                                        y = row[target]
+                                        data.append([x,y])
         return data
-        
+
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=True):
         self.num_records = num_records

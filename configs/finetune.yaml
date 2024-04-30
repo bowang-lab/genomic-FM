@@ -1,32 +1,32 @@
 digenic_hyena-tiny:
-  class: DigenicDataWrapper
+  class: OligogenicDataWrapper
   task: classification
-  target: CLNSIG
+  target: 
   Seq_length: 1024
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 4
+  output_size: 2
   
 regulatory_hyena-tiny:
   class: EnsemblRegulatoryDataWrapper
   task: classification
   target: 
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 4
+  output_size: 2
   
 mave_score_hyena-tiny:
   class: MAVEDataWrapper
-  task: classification
-  target: 
+  task: regression
+  target: score
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 4
+  output_size: 1
   
 gwas_pval_hyena-tiny:
   class: GWASDataWrapper
   task: regression
-  target: 
+  target: P-Value
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 4
+  output_size: 1
   
 promoter_hyena-tiny:
   class: PromoterDataWrapper

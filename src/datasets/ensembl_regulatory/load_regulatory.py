@@ -12,15 +12,15 @@ import os
 import requests
 
 ensembl_regulatory_species = [
-    "Cyprinus carpio carpio",
-    "Dicentrarchus labrax",
-    "Gallus gallus",
-    "Homo sapiens",
-    "Mus musculus",
     "Oncorhynchus mykiss",
     "Salmo salar",
     "Scophthalmus maximus",
-    "Sus scrofa"
+    "Sus scrofa",
+    "Cyprinus carpio carpio",
+    "Dicentrarchus labrax",
+    "Gallus gallus",
+    "Mus musculus",
+    "Homo sapiens",
 ]
 
 def download_regulatory_gff(out_dir='./root/data/regulatory_features'):
