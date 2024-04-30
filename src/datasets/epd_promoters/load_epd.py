@@ -24,7 +24,7 @@ species_to_epd = {
     "Mus musculus": "M_musculus",
     "Mus musculus (non-coding)": "M_musculus_nc",
     "Plasmodium falciparum": "P_falciparum",
-    "Rattus Norvegicus": "R_norvegicus",
+    "Rattus norvegicus": "R_norvegicus",
     "Saccharomyces cerevisiae": "S_cerevisiae",
     "Schizosaccharomyces pombe": "S_pombe",
     "Zea mays": "Z_mays"
@@ -128,12 +128,15 @@ def get_eukaryote_promoters(sequence_length=1024, limit=None):
 
     species_to_taxids = create_species_taxid_map()
     for eukaryote_species, species_id in species_to_epd.items():
+        if "non-coding" in eukaryote_species:
+            eukaryote_species = eukaryote_species.replace(' (non-coding)','')
+
         print(f"Processing {eukaryote_species}")
         species_dir = os.path.join('./root/data/epd', species_id)
         file_path = next(iter(glob.glob(f"{species_dir}/*.dat")), None)
         
         tax_id = species_to_taxids[eukaryote_species]
-        fasta_paths = glob.glob(os.path.join("./root/data", tax_id, "ncbi_dataset/data/GCF*/GCF*fna"))
+        fasta_paths = glob.glob(os.path.join("./root/data", tax_id, "ncbi_dataset/data/GC*/GC*fna"))
 
 
         if not file_path or not fasta_paths:

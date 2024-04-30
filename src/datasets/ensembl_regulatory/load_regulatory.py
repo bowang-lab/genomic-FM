@@ -1,7 +1,6 @@
 import vcf
 import pandas as pd
 import gzip
-import ftplib
 from kipoiseq import Interval
 import glob
 from tqdm import tqdm
@@ -10,6 +9,7 @@ from src.blast_search import run_blast_query
 from src.datasets.ncbi_reference_genome.get_accession import search_species, get_chromosome_name
 import random
 import os
+import requests
 
 ensembl_regulatory_species = [
     "Cyprinus carpio carpio",
@@ -24,50 +24,42 @@ ensembl_regulatory_species = [
 ]
 
 def download_regulatory_gff(out_dir='./root/data/regulatory_features'):
-    """Download regulatory features GFF for a given species."""
+    """Download regulatory features GFF for a given species using specific URLs."""
     if not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    ftp_url = 'ftp.ensembl.org'
-    base_path = '/pub/current_regulation/'
+    species_urls = {
+        "Cyprinus carpio carpio": "https://ftp.ensembl.org/pub/current_regulation/cyprinus_carpio_carpio/Cypcar_WagV4.0/cyprinus_carpio_carpio.Cypcar_WagV4.0.regulatory_features.20230913.gff.gz",
+        "Dicentrarchus labrax": "https://ftp.ensembl.org/pub/current_regulation/dicentrarchus_labrax/dlabrax2021/dicentrarchus_labrax.dlabrax2021.regulatory_features.20230918.gff.gz",
+        "Gallus gallus": "https://ftp.ensembl.org/pub/current_regulation/gallus_gallus/GRCg7b/gallus_gallus.bGalGal1.mat.broiler.GRCg7b.regulatory_features.20230815.gff.gz",
+        "Homo sapiens": "https://ftp.ensembl.org/pub/current_regulation/homo_sapiens/homo_sapiens.GRCh38.Regulatory_Build.regulatory_features.20221007.gff.gz",
+        "Mus musculus": "https://ftp.ensembl.org/pub/current_regulation/mus_musculus/mus_musculus.GRCm39.Regulatory_Build.regulatory_features.20221007.gff.gz",
+        "Scophthalmus maximus": "https://ftp.ensembl.org/pub/current_regulation/scophthalmus_maximus/ASM1334776v1/scophthalmus_maximus.ASM1334776v1.regulatory_features.20230920.gff.gz",
+        "Sus scrofa": "https://ftp.ensembl.org/pub/current_regulation/sus_scrofa/Sscrofa11.1/sus_scrofa.Sscrofa11.1.regulatory_features.20230814.gff.gz",
+        "Salmo salar": "https://ftp.ensembl.org/pub/current_regulation/salmo_salar/Ssal_v3.1/salmo_salar.Ssal_v3.1.regulatory_features.20230906.gff.gz",
+        "Oncorhynchus mykiss": "https://ftp.ensembl.org/pub/current_regulation/oncorhynchus_mykiss/USDA_OmykA_1.1/oncorhynchus_mykiss.USDA_OmykA_1.1.regulatory_features.20230919.gff.gz"
+    }
 
-    for species in ensembl_regulatory_species:
-        print(f"Downloading regulatory regions for {species}")
+    for species, url in species_urls.items():
+        filename = url.split('/')[-1]
+        local_filename = os.path.join(out_dir, filename)
 
-        species_path = species.lower().replace(' ', '_')
+        print(f"Downloading regulatory regions for {species}: {filename}")
 
-        with ftplib.FTP(ftp_url) as ftp:
-            ftp.login()  # Anonymous login
+        if os.path.exists(local_filename):
+            print(f"{filename} already downloaded. Skipping.")
+            continue
 
-            full_path = os.path.join(base_path, species_path)
-            
-            try:
-                ftp.cwd(full_path)
-            except ftplib.error_perm as e:
-                print(f"Could not access directory for {species}. Error: {e}")
-                continue  # Skip to the next species
+        try:
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                with open(local_filename, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            print(f"Downloaded {filename} to {local_filename}")
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to download {filename}. Error: {e}")
 
-            files = ftp.nlst()  # List all files in the species directory
-            gff_files = [f for f in files if f.endswith('.gff.gz')]
-
-            if not gff_files:
-                print(f"No regulatory GFF files found for {species}.")
-                continue  # Skip to the next species
-
-            for filename in gff_files:
-                local_filename = os.path.join(out_dir, filename)
-
-                # Check if the file already exists
-                if os.path.exists(local_filename):
-                    print(f"{filename} already downloaded. Skipping.")
-                    continue  # Skip this file and proceed to the next
-
-                with open(local_filename, 'wb') as file:
-                    ftp.retrbinary('RETR ' + filename, file.write)
-                    print(f"Downloaded {filename} to {local_filename}")
-            else:
-                print(f"Downloaded all regulatory GFF files for {species}.")
-                
     return out_dir
 
 def parse_attributes(attribute_string):
@@ -104,7 +96,7 @@ def get_eukaryote_regulatory(sequence_length=1024, limit=None):
     for species in ensembl_regulatory_species:
         print(f"Processing regulatory regions for {species}")
         tax_id = search_species(species)
-        fasta_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GCF*/GCF*fna"))
+        fasta_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GC*/GC*fna"))
 
         if not fasta_paths :
             print(f"Required genomic fasta file is missing for {species}. Skipping...")
@@ -123,7 +115,7 @@ def get_eukaryote_regulatory(sequence_length=1024, limit=None):
 
         for feature_type in feature_types:
             features = get_feature_type(feature_type, species)
-            print(f"Processing features of type {feature_type}:")
+            print(f"Processing {len(features)} features of type {feature_type}:")
 
             feature_data = []
             for index, row in tqdm(features.iterrows()):

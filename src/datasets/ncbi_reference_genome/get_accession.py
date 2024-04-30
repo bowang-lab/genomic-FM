@@ -22,7 +22,7 @@ def get_main_assembly_accession(species, reference=True):
             search_query = f'"{species}"[Organism] AND latest[filter]'
         
         # Search the NCBI Assembly database
-        search_handle = Entrez.esearch(db="assembly", term=search_query, retmax="100")
+        search_handle = Entrez.esearch(db="assembly", term=search_query, retmax="25000")
         search_results = Entrez.read(search_handle, validate=False)
         search_handle.close()
 
