@@ -154,11 +154,11 @@ def get_maves(Seq_length=1024, limit = None, target='score'):
     n_studies = 0
     data = [] 
 
-    for urn_id in tqdm(urn_ids):
+    for study_num, urn_id in tqdm(enumerate(urn_ids)):
         score_set = get_score_set(urn_id)
 
- #       if limit and study_num >= limit:
- #           break
+        if limit and study_num >= limit:
+            break
 
         for index, exp in enumerate(score_set):
             print(exp)
@@ -187,8 +187,6 @@ def get_maves(Seq_length=1024, limit = None, target='score'):
                                     data.append([x,y])
                             else:
                                 print(f"Error: Could not retrieve alternate sequence: {urn_id}")
-                        else:
-                            print(f"Error: Missing values: {urn_id}")
                 else:
                     print(f"Error: Scores dataframe is empty: {urn_id}")
             else:
