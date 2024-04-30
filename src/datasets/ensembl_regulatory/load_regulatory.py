@@ -143,7 +143,7 @@ def get_eukaryote_regulatory(sequence_length=1024, limit=None):
                     known_regions=intervals
                 )
 
-                combined_data.extend([(data[0], data[1], data[2], 1) for data in feature_data])
-                combined_data.extend([(data[0], data[1], rand_seq, 0) for data, rand_seq in zip(feature_data, random_sequences)])
+                combined_data.extend([[[data[0], data[1], data[2]], 1] for data in feature_data])
+                combined_data.extend([[[data[0], data[1], rand_seq], 0] for data, rand_seq in zip(feature_data, random_sequences)])
 
     return combined_data

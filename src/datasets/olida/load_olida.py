@@ -2,6 +2,8 @@ import pandas as pd
 import re
 from pyliftover import LiftOver
 from src.sequence_extractor import GenomeSequenceExtractor
+import random
+from tqdm import tqdm
 
 # List of files to load
 files = {
@@ -222,4 +224,48 @@ def load_and_process_negative_pairs(file_path='./root/data/1KGP_negative_pairs.t
     if num_records:
         return data[:num_records]
 
+    return data
+
+def get_olida(Seq_length, limit=None):
+    variant_combinations = get_variant_combinations()
+    data = []
+    for index, variant_combo in tqdm(enumerate(variant_combinations)):
+        if limit and index >= limit:
+            break
+        
+        variant_combo_reference = []
+        variant_combo_alternate = []
+        if variant_combo['FINALmeta'] >= 1:
+            try:
+                for variant in ['Variant_1', 'Variant_2']:
+                    # Check if key elements are present in the variant data
+                    if all(key in variant_combo[variant] for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']) and \
+                        all(variant_combo[variant][key] != "N.A." and not (isinstance(variant_combo[variant][key], float)) for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']):
+                        record = {
+                                'Chromosome': variant_combo[variant]['Chromosome'],
+                                'Position': int(variant_combo[variant]['Genomic_Position_Hg38']),
+                                'Reference Base': variant_combo[variant]['Ref_Allele'],
+                                'Alternate Base': variant_combo[variant]['Alt_Allele'],
+                                'ID': variant_combo['OLIDA_ID']
+                            }
+                        
+                        genome_extractor = GenomeSequenceExtractor(Seq_length)
+                        reference, alternate = genome_extractor.extract_sequence_from_record(record, Seq_length)
+                        variant_combo_reference.append(reference)
+                        variant_combo_alternate.append(alternate)
+                    else:
+                        raise ValueError("Missing required variant information")
+
+                variant_combo_reference = 'N'.join(variant_combo_reference)
+                variant_combo_alternate = 'N'.join(variant_combo_alternate)
+                x, y = [variant_combo_reference, variant_combo_alternate, variant_combo['Disease']], 1
+                data.append([x, y])
+
+            except Exception as e:
+                print(f"Skipping variant combination due to error: {e}")
+                continue  
+
+    negative_examples = load_and_process_negative_pairs(Seq_length=Seq_length)
+    data += negative_examples
+    random.shuffle(data)
     return data

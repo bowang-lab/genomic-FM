@@ -6,7 +6,6 @@ from tqdm import tqdm
 import glob
 from src.sequence_extractor import RandomSequenceExtractor, FastaStringExtractor
 from src.blast_search import run_blast_query
-from src.datasets.ncbi_reference_genome.get_accession import search_species
 import random
 from src.datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map
 
@@ -123,7 +122,7 @@ def parse_epd(file_path):
 
     return promoters
 
-def get_eukaryote_promoters(sequence_length=1024, limit=None):
+def get_eukaryote_promoters(Seq_length=1024, limit=None):
     combined_tuples = []
 
     species_to_taxids = create_species_taxid_map()
@@ -156,19 +155,19 @@ def get_eukaryote_promoters(sequence_length=1024, limit=None):
             if sequence: 
                 interval = run_blast_query(sequence, fasta_paths[0])
                 if interval is not None:
-                    interval = interval.resize(sequence_length)
+                    interval = interval.resize(Seq_length)
                     extended_sequence = fasta_extractor.extract(interval)
                     promoter_data.append((species, gene_name, extended_sequence, interval))
 
         if promoter_data:
             intervals = [data[-1] for data in promoter_data] 
             random_sequences = RandomSequenceExtractor(fasta_paths[0]).extract_random_sequence(
-                length_range=(sequence_length, sequence_length),
+                length_range=(Seq_length, Seq_length),
                 num_sequences=len(promoter_data),
                 known_regions=intervals
             )
-            combined_tuples.extend([(data[0], data[1], data[2], 1) for data in promoter_data])
-            combined_tuples.extend([(data[0], data[1], seq, 0) for data, seq in zip(promoter_data, random_sequences)])
+            combined_tuples.extend([[[data[0], data[1], data[2]], 1] for data in promoter_data])
+            combined_tuples.extend([[[data[0], data[1], seq], 0] for data, seq in zip(promoter_data, random_sequences)])
         random.shuffle(combined_tuples)
 
     return combined_tuples

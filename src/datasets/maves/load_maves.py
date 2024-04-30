@@ -9,6 +9,7 @@ from mavehgvs.patterns.dna import (
     dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n, dna_delins_n,
     dna_multi_variant, dna_equal_c, dna_equal_gmo, dna_equal_n
 )
+from tqdm import tqdm
 
 def get_all_urn_ids():
     experiments_endpoint = "https://api.mavedb.org/api/v1/experiments/"
@@ -145,3 +146,53 @@ def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
             return None
 
     return modified_sequence
+
+def get_maves(Seq_length=1024, limit = None, target='score'):
+    urn_ids = get_all_urn_ids()
+    avail = 0
+    total = 0
+    n_studies = 0
+    data = [] 
+
+    for study_num, urn_id in tqdm(enumerate(urn_ids)):
+        score_set = get_score_set(urn_id)
+
+        if limit and study_num >= limit:
+            break
+
+        for index, exp in enumerate(score_set):
+            print(exp)
+            urn_id = exp.get('urn', None)
+            title = exp.get('title', None)
+            description = exp.get('description', None)
+            numVariants = exp.get('numVariants', None)
+            sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
+            annotation = ': '.join([title, description])
+
+            total += int(numVariants)  
+            scores = get_scores(urn_id)
+            if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
+                if not scores.empty:
+                    if index == 0:
+                        n_studies += 1
+                    for index, row in scores.iterrows():
+                        if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
+                            alt = get_alternate_dna_sequence(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
+                            if alt:
+                                if len(exp["targetGenes"][0]["sequence"]) <= Seq_length:
+                                    avail += 1 
+                                    ref = exp["targetGenes"][0]["sequence"]
+                                    x = [ref, alt, annotation]
+                                    y = row[target]
+                                    data.append([x,y])
+                            else:
+                                print(f"Error: Could not retrieve alternate sequence: {urn_id}")
+                        else:
+                            print(f"Error: Missing values: {urn_id}")
+                else:
+                    print(f"Error: Scores dataframe is empty: {urn_id}")
+            else:
+                print(f"Error: Could not retrieve scores for: {urn_id}")
+    print(f"Total number of studies: {n_studies}/{limit}")
+    print(f"Total number of MAVEs: {avail}/{total}")
+    return data
