@@ -57,7 +57,7 @@ for trait in set(disease_to_efo.values()):
                 print(f"Alternate sequence: {alternate}")
 
                 x = [reference, alternate, trait]
-                y = summary_stats['score']
+                y = summary_stats['P-Value']
                 data.append([x,y])   
 save_as_jsonl(data,'./root/data/gwas.jsonl')
 
