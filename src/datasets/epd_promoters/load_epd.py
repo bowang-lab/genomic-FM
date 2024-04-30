@@ -157,7 +157,7 @@ def get_eukaryote_promoters(Seq_length=1024, limit=None):
                 if interval is not None:
                     interval = interval.resize(Seq_length)
                     extended_sequence = fasta_extractor.extract(interval)
-                    promoter_data.append([[species, gene_name, extended_sequence], interval])
+                    promoter_data.append([species, gene_name, extended_sequence, interval])
 
         if promoter_data:
             intervals = [data[-1] for data in promoter_data] 
