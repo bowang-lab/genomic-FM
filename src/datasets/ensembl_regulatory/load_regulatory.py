@@ -132,7 +132,7 @@ def get_eukaryote_regulatory(sequence_length=1024, limit=None):
 
                 # Extract the sequence
                 sequence = fasta_extractor.extract(interval)
-                feature_data.append((species, feature_type, sequence, interval))
+                feature_data.append([[species, feature_type, sequence], interval])
 
             if feature_data:
                 # Generate random sequences, passing intervals to avoid overlapping with known regions

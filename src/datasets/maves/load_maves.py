@@ -198,6 +198,6 @@ def get_maves(Seq_length=1024, limit = None, target='score'):
                     print(f"Error: Scores dataframe is empty: {urn_id}")
             else:
                 print(f"Error: Could not retrieve scores for: {urn_id}")
-    print(f"Total number of studies: {n_studies}/{limit}")
+    print(f"Total number of studies: {n_studies}/{len(urn_ids)}")
     print(f"Total number of MAVEs: {avail}/{total}")
     return data
