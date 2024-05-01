@@ -1,14 +1,7 @@
-digenic_hyena-tiny:
+oligogenic_hyena-tiny:
   class: OligogenicDataWrapper
   task: classification
   Seq_length: 1024
-  model_initiator_name: hyenadna-tiny-1k
-  output_size: 2
-  
-regulatory_hyena-tiny:
-  class: EnsemblRegulatoryDataWrapper
-  task: classification
-  Seq_length: 2048
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
   
@@ -28,13 +21,6 @@ gwas_pval_hyena-tiny:
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
   
-promoter_hyena-tiny:
-  class: PromoterDataWrapper
-  task: classification
-  Seq_length: 2048
-  model_initiator_name: hyenadna-tiny-1k
-  output_size: 2
-
 clinvar_CLNSIG_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification

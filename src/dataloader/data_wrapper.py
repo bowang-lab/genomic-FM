@@ -20,7 +20,7 @@ from ..datasets.epd_promoters.load_epd import parse_epd, download_epd, species_t
 from ..blast_search import run_blast_query
 import random
 from ..datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map
-from src.datasets.ncbi_reference_genome.get_accession import search_species, get_chromosome_name
+from ..datasets.ncbi_reference_genome.get_accession import search_species, get_chromosome_name
 
 from tqdm import tqdm
 import random 
@@ -85,135 +85,7 @@ class OligogenicDataWrapper:
         data += negative_examples
         random.shuffle(data)
         return data
-
-class PromoterDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
-        self.num_records = num_records
-        self.epd_promoter_path = download_epd()
-        self.species_to_taxids = create_species_taxid_map()
-        self.all_records = all_records
-
-    def __call__(self, *args: Any) -> Any:
-        return self.get_data(*args)
-
-    def get_data(self, Seq_length=20):
-        combined_tuples = []
-
-        for eukaryote_species, species_id in species_to_epd.items():
-            if "non-coding" in eukaryote_species:
-                eukaryote_species = eukaryote_species.replace(' (non-coding)','')
-
-            print(f"Processing {eukaryote_species}")
-            species_dir = os.path.join('./root/data/epd', species_id)
-            file_path = next(iter(glob.glob(f"{species_dir}/*.dat")), None)
-            
-            tax_id = self.species_to_taxids[eukaryote_species]
-            fasta_paths = glob.glob(os.path.join("./root/data", tax_id, "ncbi_dataset/data/GC*/GC*fna"))
-
-
-            if not file_path or not fasta_paths:
-                print(f"Required files missing for {eukaryote_species}. Skipping...")
-                continue
-
-            fasta_extractor = FastaStringExtractor(fasta_paths[0])
-            eukaryote_promoters = parse_epd(file_path)
-            promoter_data = []
-
-            for index, promoter in enumerate(tqdm(eukaryote_promoters, desc="Extracting promoters")):
-                if not self.all_records and index >= self.num_records:
-                    break
-
-                species, gene_name, sequence = promoter['Species'], promoter['Gene Name'], promoter['Sequence'].upper()
-
-                if sequence: 
-                    interval = run_blast_query(sequence, fasta_paths[0])
-                    if interval is not None:
-                        interval = interval.resize(Seq_length)
-                        extended_sequence = fasta_extractor.extract(interval)
-                        promoter_data.append((species, gene_name, extended_sequence, interval))
-
-            if promoter_data:
-                intervals = [data[-1] for data in promoter_data] 
-                random_sequences = RandomSequenceExtractor(fasta_paths[0]).extract_random_sequence(
-                    length_range=(Seq_length, Seq_length),
-                    num_sequences=len(promoter_data),
-                    known_regions=intervals
-                )
-                combined_tuples.extend([[[data[0], data[1], data[2]], 1] for data in promoter_data])
-                combined_tuples.extend([[[data[0], data[1], seq], 0] for data, seq in zip(promoter_data, random_sequences)])
-            random.shuffle(combined_tuples)
-
-        return combined_tuples
-
-class EnsemblRegulatoryDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
-        self.num_records = num_records
-        self.ensembl_regulatory_path = download_regulatory_gff()
-        self.all_records = all_records
-        self.species_list = ensembl_regulatory_species
-
-    def __call__(self, *args: Any) -> Any:
-        return self.get_data(*args)
-
-    def get_data(self, Seq_length=20):
-        feature_types = ["enhancer", "TF_binding_site", "CTCF_binding_site", "open_chromatin_region"]
-        combined_data = []
-
-        for species in self.species_list:
-            print(f"Processing regulatory regions for {species}")
-            tax_id = search_species(species)
-            fasta_paths = glob.glob(os.path.join("./root/data", tax_id[0], "ncbi_dataset/data/GC*/GC*fna"))
-
-            if not fasta_paths :
-                print(f"Required genomic fasta file is missing for {species}. Skipping...")
-                continue
-
-            fasta_extractor = FastaStringExtractor(fasta_paths[0])
-            ncbi_ids = [key for key in fasta_extractor.fasta.keys() if key.startswith(('NC', 'NL'))]
-            ncbi_chromosome_mapping = {}
-
-            for ncbi_id in ncbi_ids:
-                chromosome_name = get_chromosome_name(ncbi_id)
-                ncbi_chromosome_mapping[ncbi_id] = chromosome_name
-            chromosome_ncbi_mapping = {value: key for key, value in ncbi_chromosome_mapping.items()}
-
-            random_extractor = RandomSequenceExtractor(fasta_paths[0])
-
-            for feature_type in feature_types:
-                features = get_feature_type(feature_type, species)
-                print(f"Processing {len(features)} features of type {feature_type}:")
-
-                feature_data = []
-                for index, row in tqdm(features.iterrows()):
-                    if not self.all_records and index >= self.num_records:
-                        break
-
-                    if row['seqid'] not in chromosome_ncbi_mapping.keys():
-                        continue 
-                    
-                    chrom = chromosome_ncbi_mapping[row['seqid']]
-                    start = int(row['start'])
-                    end = int(row['end'])
-                    interval = Interval(chrom, start, end).resize(Seq_length)
-
-                    # Extract the sequence
-                    sequence = fasta_extractor.extract(interval)
-                    feature_data.append((species, feature_type, sequence, interval))
-
-                if feature_data:
-                    # Generate random sequences, passing intervals to avoid overlapping with known regions
-                    intervals = [data[-1] for data in feature_data]
-                    random_sequences = random_extractor.extract_random_sequence(
-                        length_range=(Seq_length, Seq_length),
-                        num_sequences=len(feature_data),
-                        known_regions=intervals
-                    )
-
-                    combined_data.extend([[[data[0], data[1], data[2]], 1] for data in feature_data])
-                    combined_data.extend([[[data[0], data[1], rand_seq], 0] for data, rand_seq in zip(feature_data, random_sequences)])
-
-        return combined_data
-        
+     
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
