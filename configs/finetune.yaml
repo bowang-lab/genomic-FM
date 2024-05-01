@@ -1,3 +1,26 @@
+oligogenic_hyena-tiny:
+  class: OligogenicDataWrapper
+  task: classification
+  Seq_length: 1024
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2
+  
+mave_score_hyena-tiny:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 2048
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+  
+gwas_pval_hyena-tiny:
+  class: GWASDataWrapper
+  task: regression
+  target: P-Value
+  Seq_length: 2048
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+  
 clinvar_CLNSIG_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification

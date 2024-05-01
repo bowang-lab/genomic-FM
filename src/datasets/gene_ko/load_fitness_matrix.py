@@ -3,7 +3,6 @@ import zipfile
 import os
 import pandas as pd
 
-
 def read_tsv_file(filename="root/data/Project_score_combined_Sanger_v2_Broad_21Q2_fitness_scores_scaled_bayesian_factors_20240111.tsv"):
     """
     Read a TSV file into a Pandas DataFrame, using the second row as the header and

@@ -39,10 +39,14 @@ def download_file(dir_path='./root/data/dida',
 
     print("All files have been downloaded.")
 
-def map_digenic_variants(digenic_variants, variants):
+def get_digenic_variants():
     """
     Function to parse GeneA and GeneB, find matching variants 
     """
+    # Load the datasets
+    digenic_variants = pd.read_csv('./root/data/dida/variants.tsv', sep='\t',index_col=False)
+    variants = pd.read_csv('./root/data/dida/variants_full.tsv', sep='\t')
+
     # Ensure the Coordinate column in variants_full is correctly formatted
     variants['Coordinate'] = variants['Chromosome'].astype(str) + ':' + \
                                   variants['Genomic position'].astype(str) + ':' + \
@@ -67,18 +71,3 @@ def map_digenic_variants(digenic_variants, variants):
                     'Alt allele': match['Alt allele'].values[0]
                 })
     return pd.DataFrame(mapped_variants)
-
-def get_digenic_variants(digenic_variants):
-    """
-    Extracts all unique risk digenic variants from the DIDA.
-
-    Parameters:
-    - digenic_variants (pd.DataFrame): The DIDA dataframe.
-
-    Returns:
-    - list: A list of all unique digenic variants from DIDA.
-    """
-    unique_variants = digenic_variants['#Combination_id'].unique().tolist()
-    return unique_variants
-
-

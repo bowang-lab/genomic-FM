@@ -3,7 +3,6 @@ import tarfile
 import os
 import pandas as pd
 
-
 def download_file(url: str, download_path: str, data_path: str):
     """Download a file from a given URL."""
     print(f"Downloading {url} to {os.path.join(data_path, download_path)}")

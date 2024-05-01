@@ -5,7 +5,6 @@ from kipoiseq import Interval
 import pandas as pd
 import os
 
-
 def create_fitness_scores_dataframe(fitness_url="https://cog.sanger.ac.uk/cmp/download/Project_Score2_fitness_scores_Sanger_v2_Broad_21Q2_20240111.zip"):
     # check if the file already exists
     if os.path.exists('root/data/fitness_scores.csv'):

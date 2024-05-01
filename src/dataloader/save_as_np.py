@@ -7,6 +7,7 @@ from tqdm import tqdm
 from sklearn.decomposition import PCA
 
 
+
 def apply_pca_torch(data, n_components=16):
     # Ensure data is a torch tensor and optionally move data to GPU
     data_tensor = torch.tensor(data).float()
@@ -48,8 +49,6 @@ def apply_pca(data, n_components=16):
     pca_transformed_data = pca_transformed_data.reshape(data.shape[:-1] + (-1,))  # Reshape back to (num_samples, 1024, n_components)
 
     return pca_transformed_data
-
-
 
 def get_mapped_class(data, task='classification'):
     x_class = {}
