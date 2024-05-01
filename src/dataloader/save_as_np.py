@@ -7,6 +7,34 @@ from tqdm import tqdm
 from sklearn.decomposition import PCA
 
 
+def apply_pca_torch(data, n_components=16):
+    # Ensure data is a torch tensor and optionally move data to GPU
+    data_tensor = torch.tensor(data).float()
+    if torch.cuda.is_available():
+        data_tensor = data_tensor.cuda()
+
+    # Reshape the data
+    reshaped_data = data_tensor.reshape(-1, data_tensor.shape[-1])  # Reshape to (num_samples * 1024, 128)
+
+    # Center the data by subtracting the mean
+    mean = torch.mean(reshaped_data, dim=0)
+    data_centered = reshaped_data - mean
+
+    # Compute SVD
+    U, S, V = torch.svd(data_centered)
+
+    # Compute PCA by projecting the data onto the principal components
+    pca_transformed_data = torch.mm(data_centered, V[:, :n_components])
+
+    # Reshape back to the original shape
+    pca_transformed_data = pca_transformed_data.reshape(data_tensor.shape[:-1] + (-1,))  # Reshape back to (num_samples, 1024, n_components)
+
+    # Optionally move data back to CPU
+    pca_transformed_data = pca_transformed_data.cpu()
+
+    return pca_transformed_data.numpy()  # Convert to numpy if needed
+
+
 def apply_pca(data, n_components=16):
     # Reshape the data
     reshaped_data = data.reshape(-1, data.shape[-1])  # Reshape to (num_samples * 1024, 128)
@@ -138,8 +166,8 @@ def save_data(data, base_filename='data', base_index=0, base_dir='root/data/npy_
     ##########################
     # Try pca
     ##########################
-    seq1s = apply_pca(np.array(seq1s),n_components=pca_components)
-    seq2s = apply_pca(np.array(seq2s),n_components=pca_components)
+    seq1s = apply_pca_torch(np.array(seq1s),n_components=pca_components)
+    seq2s = apply_pca_torch(np.array(seq2s),n_components=pca_components)
 
     # Save each component of the chunk
     filename = f'{base_filename}_seq1_{base_index}.npy'
