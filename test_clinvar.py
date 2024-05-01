@@ -19,7 +19,7 @@ def non_SNP_variant(record):
 filtered_records = filter_records(res, lambda record: non_SNP_variant(record))
 
 # Select the first record from the filtered records
-record = filtered_records[0]
+record = filtered_records[3]
 print(record)
 
 

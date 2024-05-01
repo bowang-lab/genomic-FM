@@ -88,7 +88,10 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     if not has_cache(cache_dir, dataset):
         # Create data module
         cls = getattr(data_wrapper, info.pop('class'))
-        DATA = cls()
+        if 'num_records' in info and 'all_records' in info:
+            DATA = cls(num_records=info.pop('num_records'), all_records=info.pop('all_records'))
+        else:
+            DATA = cls()
         data = DATA.get_data(**info)
         x_class, y_class = map_to_class(data, task, dataset)
         print(f"Mapped x_class: {x_class}")
