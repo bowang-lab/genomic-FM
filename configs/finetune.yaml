@@ -83,5 +83,6 @@ cellpassport_hyena-tiny:
   class: CellPassportDataWrapper
   task: classification
   Seq_length: 2048
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
