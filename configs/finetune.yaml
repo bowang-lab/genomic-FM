@@ -4,7 +4,7 @@ oligogenic_hyena-tiny:
   Seq_length: 1024
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
-  
+
 mave_score_hyena-tiny:
   class: MAVEDataWrapper
   task: regression
@@ -12,7 +12,7 @@ mave_score_hyena-tiny:
   Seq_length: 2048
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
-  
+
 gwas_pval_hyena-tiny:
   class: GWASDataWrapper
   task: regression
@@ -20,7 +20,7 @@ gwas_pval_hyena-tiny:
   Seq_length: 2048
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
-  
+
 clinvar_CLNSIG_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification
@@ -86,3 +86,5 @@ cellpassport_hyena-tiny:
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
+  num_records: 100
+  all_records: False

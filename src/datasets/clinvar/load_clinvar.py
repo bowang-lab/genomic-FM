@@ -14,14 +14,19 @@ def download_file(vcf_file_path='./root/data/clinvar_20240416.vcf',
         print(f"{vcf_file_path} not found. Starting download...")
 
         # URL for the VCF file
-        url = f'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/{vcf_gz_path}'
+        url = f'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/weekly/{vcf_gz_path}'
 
         try:
             # Download the file
             response = requests.get(url)
-            compressed_file_path = os.path.join(os.path.dirname(vcf_file_path), vcf_gz_path)
-            with open(compressed_file_path, 'wb') as f:
-                f.write(response.content)
+            if response.status_code != 200:
+                # use wget to download the file
+                print(f"Downloading file using wget: {url}")
+                subprocess.run(['wget', '-O', vcf_file_path, url])
+            else:
+                compressed_file_path = os.path.join(os.path.dirname(vcf_file_path), vcf_gz_path)
+                with open(compressed_file_path, 'wb') as f:
+                    f.write(response.content)
 
             # Unzip the file
             with gzip.open(compressed_file_path, 'rb') as f_in:

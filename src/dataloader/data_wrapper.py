@@ -11,31 +11,25 @@ from ..datasets.cellpassport.load_cell_passport import (
     read_vcf,
     extract_cell_line_annotation_from_vcf_file
 )
-from ..datasets.ensembl_regulatory.load_regulatory import download_regulatory_gff, ensembl_regulatory_species, get_feature_type
 from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
 from ..datasets.maves.load_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
 from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
 from ..datasets.olida.load_olida import get_variant_combinations, load_and_process_negative_pairs
-from ..datasets.epd_promoters.load_epd import parse_epd, download_epd, species_to_epd
-from ..blast_search import run_blast_query
 import random
-from ..datasets.ncbi_reference_genome.download_ncbi import create_species_taxid_map
-from ..datasets.ncbi_reference_genome.get_accession import search_species, get_chromosome_name
+
 
 from tqdm import tqdm
-import random 
-import glob 
+import random
+import glob
 import os
-from pyliftover import LiftOver
 import pandas as pd
-from kipoiseq import Interval
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
            'Mus musculus','Oncorhynchus mykiss', 'Plasmodium falciparum', 'Rattus norvegicus', 'Saccharomyces cerevisiae', 'Salmo salar', 'Schizosaccharomyces pombe', 'Sus scrofa', 'Scophthalmus maximus', 'Zea mays']
 ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substantia_nigra',
                         'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         'Uterus', 'Vagina', 'Whole_Blood']
-        
+
 class OligogenicDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
@@ -79,13 +73,13 @@ class OligogenicDataWrapper:
 
                 except Exception as e:
                     print(f"Skipping variant combination due to error: {e}")
-                    continue  
+                    continue
 
         negative_examples = load_and_process_negative_pairs(Seq_length=Seq_length)
         data += negative_examples
         random.shuffle(data)
         return data
-     
+
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
@@ -116,7 +110,7 @@ class MAVEDataWrapper:
                             if pd.notna(row['hgvs_nt']) and pd.notna(row[target]):
                                 reference = exp['targetGenes'][0]['sequence']
                                 alternate = get_alternate_dna_sequence(reference, row['hgvs_nt'])
-                                
+
                                 if alternate:
                                     if len(reference) <= Seq_length:
                                         x = [reference, alternate, annotation]
@@ -137,11 +131,11 @@ class GWASDataWrapper:
 
     def get_data(self, Seq_length=20, target='P-Value'):
         # return (x, y) pairs
-        data = []        
+        data = []
         disease_to_efo = self.gwas_trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
         for trait in tqdm(set(disease_to_efo.values())):
             traits = [key for key, value in disease_to_efo.items() if value == trait]
-            risk_snps = get_risk_snps(self.gwas_catalog, trait)                
+            risk_snps = get_risk_snps(self.gwas_catalog, trait)
             for index, row in risk_snps.iterrows():
                 rsSNP = row['SNPS']
                 snp_details = extract_snp_details(self.gwas_catalog, rsSNP, trait)
@@ -149,18 +143,18 @@ class GWASDataWrapper:
                     summary_stats = get_summary_stats_for_snp(snp_details, trait)
                     if summary_stats:
                         record = {
-                            'Chromosome': snp_details['Chromosome'], 
+                            'Chromosome': snp_details['Chromosome'],
                             'Position': int(snp_details['Position']),
-                            'Reference Base': snp_details['Reference'],  
+                            'Reference Base': snp_details['Reference'],
                             'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
                             'ID': rsSNP
                         }
                         reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
                         x = [reference, alternate, trait]
                         y = summary_stats[target]
-                        data.append([x,y])   
+                        data.append([x,y])
         return data
-        
+
 class ClinVarDataWrapper:
     def __init__(self, num_records=30000, all_records=True):
         self.clinvar_vcf_path = load_clinvar.download_file()
@@ -259,10 +253,10 @@ class CellPassportDataWrapper:
         self.cell_passport_files = download_and_extract_cell_passport_file()
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
-        
+
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
-    
+
     def get_data(self, Seq_length=20):
         data = []
         for cell_line_file in tqdm(self.cell_passport_files):
@@ -287,10 +281,10 @@ class eQTLDataWrapper:
         self.num_records = num_records
         self.genome_extractor = GenomeSequenceExtractor()
         self.all_records = all_records
-        
+
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
-    
+
     def get_data(self, Seq_length=20, target='slope'):
         data = []
         for organism in tqdm(ORGANISM):
@@ -320,10 +314,10 @@ class sQTLDataWrapper:
         self.num_records = num_records
         self.genome_extractor = GenomeSequenceExtractor()
         self.all_records = all_records
-        
+
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
-    
+
     def get_data(self, Seq_length=20, target='slope'):
         data = []
         for organism in tqdm(ORGANISM):
