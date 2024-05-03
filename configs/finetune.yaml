@@ -86,3 +86,5 @@ cellpassport_hyena-tiny:
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
+  num_records: 100
+  all_records: False

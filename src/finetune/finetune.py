@@ -7,12 +7,16 @@ from ..dataloader.memmap_dataset import MemMapDataset
 from ..dataloader.efficient_iteratable_dataset import EffIterableDataset
 from ..model_wrapper.pl_model import MyLightningModule
 from ..model_wrapper.linear_nn import LinearNN
+from ..model_wrapper.cnn_head import CNN_Head
 import argparse
 from torch.utils.data import random_split
 import yaml
 from ..dataloader import data_wrapper as data_wrapper
 from pytorch_lightning.loggers import WandbLogger
 import psutil
+import os
+import time
+
 
 def get_memory_usage():
     # Get the memory details
@@ -62,12 +66,13 @@ def parse_args():
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
     parser.add_argument("--disk_chunk", type=int, default=2500, help="Number of chunks to split the data into for saving to disk")
     parser.add_argument("--cache_dir", type=str, default="root/data/npy_output", help="Directory to save the cached embeddings")
+
     args = parser.parse_args()
     return args
 
 def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output"):
     if logger_name == "wandb":
-        run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}"
+        run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
     else:
         wandb_logger = None
@@ -77,7 +82,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     info = info[dataset]
     # Create model
     pca_components = info.pop('pca_components')
-    model = LinearNN(model_initiator_name=info.pop('model_initiator_name'),
+    model = CNN_Head(model_initiator_name=info.pop('model_initiator_name'),
                      output_size=info.pop('output_size'),
                      base_model_output_size=pca_components)
     task = info.pop('task')
@@ -123,6 +128,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     # Initialize your Lightning Module
 
     lightning_module = MyLightningModule(model=model, task=task, learning_rate=lr)
+
 
     trainer_args = {
         'max_epochs': epochs,
