@@ -35,3 +35,7 @@ webdataset
 
 # Olmo
 boto3
+
+# Vector index
+pip install faiss-gpu
+pip install faiss-cpu
