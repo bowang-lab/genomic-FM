@@ -55,6 +55,7 @@ class IterableDataset(torch.utils.data.IterableDataset):
             self.x_class_mapping, self.y_class_mapping = map_to_class(data, task=task)
             print(f"x_class_mapping: {self.x_class_mapping}")
             print(f"y_class_mapping: {self.y_class_mapping}")
+
         self.data = data
         self.transform = transform
         print(f"Total data: {len(self.data)}")

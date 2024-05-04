@@ -100,7 +100,7 @@ def compute_and_save_confusion_matrix(labels_int, labels_str, filename='confusio
 
 from src.variants_vector_index.vector_loader import VectorLoader
 
-vec_loader = VectorLoader()
+vec_loader = VectorLoader(from_cache=True)
 
 ######
 # test cluster visualization
@@ -116,9 +116,11 @@ compute_and_save_confusion_matrix(vec_loader.labels, assignments)
 # Test query_vectors
 ######
 
-query_vector = vec_loader.vectors[0]
-query_vector_label = vec_loader.labels[0]
-distances, result_labels, indices = vec_loader.query_vectors(query_vector, k=5)
+query_vector = vec_loader.vectors[1]
+query_vector_label = vec_loader.labels[1]
+distances, result_labels, indices = vec_loader.query_vectors(query_vector, k=1)
+mapped_result_labels = np.array([i.item() for i in result_labels])
+print(f"Unique Counts: {np.unique(mapped_result_labels, return_counts=True)}")
 print(f"Query vector label: {query_vector_label}")
 print(f"Distances: {distances}")
 print(f"Result labels: {result_labels}")

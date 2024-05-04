@@ -203,3 +203,106 @@ def load_data(seq1_paths, seq2_paths, annot_paths, label_paths):
     annot = np.load(annot_paths, mmap_mode='r')
     y = np.load(label_paths, mmap_mode='r')
     return seq1, seq2, annot, y
+
+
+def save_data_delta(data, base_filename='data', base_index=0, base_dir='root/data/npy_output',pca_components=16):
+
+    base_filename = f'{base_dir}/{base_filename}'
+    seq1_paths = None
+    annot_paths = None
+    label_paths = None
+    # Check if the data list is empty
+    if not data:
+        raise ValueError("Data list is empty.")
+
+    num_items = len(data)
+    print(f"Saving {num_items} items to {base_filename}...")
+    # Determine the data types from the first element
+    x, first_y = data[0]
+    first_int_val = x[1]
+    dtype_int_val = np.array(first_int_val).dtype
+    dtype_y = np.array(first_y).dtype
+
+    chunk = data
+    seq1s = [np.array(d[0][0]) for d in chunk]
+    annotation = np.array([d[0][1] for d in chunk], dtype=dtype_int_val)
+    y = np.array([d[1] for d in chunk], dtype=dtype_y)
+
+    ##########################
+    # Try pca
+    ##########################
+    seq1s = apply_pca_torch(np.array(seq1s),n_components=pca_components)
+
+    # Save each component of the chunk
+    filename = f'{base_filename}_seq1_{base_index}.npy'
+    with open(filename, 'wb') as f:
+        element = np.array(seq1s, dtype=np.float32)
+        data_to_save = element.tobytes()
+        f.write(data_to_save)
+    filename = f'{base_filename}_annot_{base_index}.npy'
+    with open(filename, 'wb') as f:
+        data_to_save = np.array(annotation, dtype=dtype_int_val).tobytes()
+        f.write(data_to_save)
+    filename = f'{base_filename}_y_{base_index}.npy'
+    with open(filename, 'wb') as f:
+        data_to_save = np.array(y, dtype=dtype_y).tobytes()
+        f.write(data_to_save)
+
+    seq1_paths = f'{base_filename}_seq1_{base_index}.npy'
+    annot_paths = f'{base_filename}_annot_{base_index}.npy'
+    label_paths = f'{base_filename}_y_{base_index}.npy'
+    print(f"Dtype of annotation: {dtype_int_val} and dtype of y: {dtype_y}")
+    return seq1_paths, annot_paths, label_paths
+
+
+def map_to_class_delta(data, task='classification', dataset_name="test", path='root/data/npy_output'):
+    # x = (reference, alternate, annotation)
+    # map x annotation to corresponding class label
+    # y = target， e.g. beneign or pathogenic, slope, p_val, splice_change
+    # for classification task, map y to corresponding class label
+    # for regression task, keep y as it is
+    # save the mapping as a file
+    x_class = {}
+    y_class = {}
+    x_count = 0
+    y_count = 0
+    for i in range(len(data)):
+        element = data[i]
+        x, y = element
+        annotation = x[1]
+        if annotation not in x_class:
+            x_class[annotation] = x_count
+            x_count += 1
+        x[1] = x_class[annotation]
+        if task == 'classification':
+            if y not in y_class:
+                y_class[y] = y_count
+                y_count += 1
+            element[1] = y_class[y]
+        if task == 'regression':
+            # ensure y is torch tensor float
+            element[1] = torch.tensor([y], dtype=np.float32)
+    with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
+        yaml.dump(x_class, f)
+    with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
+        yaml.dump(y_class, f)
+    return x_class, y_class
+
+
+def get_cache_delta(base_filename, cache_dir='root/data/npy_output'):
+    if has_cache(cache_dir, base_filename):
+        print(f"Cache file {base_filename} already exists.")
+        # get a list of files under the directory
+        files = os.listdir(cache_dir)
+        seq1_paths = [f'{cache_dir}/{f}' for f in files if f.startswith(f'{base_filename}_seq1')]
+        annot_paths = [f'{cache_dir}/{f}' for f in files if f.startswith(f'{base_filename}_annot')]
+        label_paths = [f'{cache_dir}/{f}' for f in files if f.startswith(f'{base_filename}_y')]
+    else:
+        seq1_paths = None
+        annot_paths = None
+        label_paths = None
+    # sort the paths
+    seq1_paths = sorted(seq1_paths)
+    annot_paths = sorted(annot_paths)
+    label_paths = sorted(label_paths)
+    return seq1_paths, annot_paths, label_paths
