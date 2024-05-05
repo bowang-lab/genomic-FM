@@ -69,6 +69,13 @@ class BaseModel(torch.nn.Module):
             new_data.append([[seq1,seq2,x[2]],y])
         return new_data
 
+    def cache_embed_delta_with_annotation(self,data):
+        new_data = []
+        for x, y in tqdm(data, desc="Caching embeddings"):
+            seq1, seq2 = self.model(x[0]), self.model(x[1])
+            new_data.append([[seq1-seq2,x[2]],y])
+        return new_data
+
     def cache_embed_delta(self, data, pca_components=16):
         # Step 1: Collect all differences
         differences = []

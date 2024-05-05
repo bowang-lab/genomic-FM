@@ -28,7 +28,7 @@ clinvar_CLNSIG_hyena-tiny:
   Seq_length: 1024
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
-  num_records: 5000
+  num_records: 50000
   all_records: False
 
 clinvar_CLNDN_hyena-tiny:
