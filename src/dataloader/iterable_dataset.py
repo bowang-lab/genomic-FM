@@ -1,6 +1,7 @@
 import torch
 import math
 import numpy as np
+from tqdm import tqdm
 
 def map_to_class(data, task='classification'):
     # x = (reference, alternate, annotation)
@@ -39,7 +40,7 @@ def transform(data):
     return x, y
 
 class IterableDataset(torch.utils.data.IterableDataset):
-    def __init__(self, data, task='classification', transform=None, skip_mapping=False):
+    def __init__(self, data, task='classification', transform=None, skip_mapping=False, load_to_ram=False):
         if not skip_mapping:
             sample_data = data[0]
             sample_x, sample_y = sample_data
@@ -55,6 +56,10 @@ class IterableDataset(torch.utils.data.IterableDataset):
             self.x_class_mapping, self.y_class_mapping = map_to_class(data, task=task)
             print(f"x_class_mapping: {self.x_class_mapping}")
             print(f"y_class_mapping: {self.y_class_mapping}")
+        if load_to_ram:
+            self.data = []
+            for i in tqdm(range(len(data)), desc="Pre-Loading data to RAM"):
+                self.data.append(data[i])
 
         self.data = data
         self.transform = transform

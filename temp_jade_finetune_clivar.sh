@@ -2,11 +2,11 @@
 # set the number of nodes
 #SBATCH --nodes=1
 # set max wallclock time
-#SBATCH --time=24:00:00
+#SBATCH --time=140:00:00
 # set name of job
 #SBATCH --job-name=jobzl432
 # set number of GPUs
-#SBATCH --gres=gpu:8 -p big
+#SBATCH --gres=gpu:1 -p small
 # set RAM size
 # mail alert at start, end and abortion of execution
 #SBATCH --mail-type=ALL
@@ -22,4 +22,4 @@ wandb offline
 # python test_clivar.py
 # srun python temp_sanity_check_species_list.py
 # python test_finetune.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=6
-python test_finetune_delta.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=8 --num_workers=16
+python test_finetune_delta.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16

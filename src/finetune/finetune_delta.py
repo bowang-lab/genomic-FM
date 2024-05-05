@@ -69,7 +69,7 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=False):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True):
     if logger_name == "wandb":
         run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
@@ -107,8 +107,14 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         print(">>>>End of caching")
     if cache_data_ram:
         destination_path = '/dev/shm/'
-        subprocess.run(["cp", "-r", cache_dir, destination_path], check=True)
-        cache_dir = destination_path + cache_dir.split('/')[-1]
+        # check is the /dev/shm/ is mounted
+        if not os.path.exists(destination_path):
+            print("RAM disk is not mounted, loading data to RAM at dataloader level,"
+                  "this will be slower than loading to RAM disk!")
+        else:
+            subprocess.run(["cp", "-r", cache_dir, destination_path], check=True)
+            cache_dir = destination_path + cache_dir.split('/')[-1]
+            cache_data_ram = False
     seq1_path, annot_path, label_path = get_cache_delta(dataset, cache_dir)
     memmap_data = MemMapDatasetDelta(path_seq1=seq1_path,
                                 seq_shape=(info['Seq_length'], pca_components),
@@ -118,7 +124,8 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
                                        transform=None,
-                                       skip_mapping=True)
+                                       skip_mapping=True,
+                                       load_to_ram=cache_data_ram)
     # split the data
     print("split_ratio: ", split_ratio)
     train_data, val_data, test_data = random_split(iterable_dataset,
