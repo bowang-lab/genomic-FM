@@ -9,7 +9,7 @@ mave_score_hyena-tiny:
   class: MAVEDataWrapper
   task: regression
   target: score
-  Seq_length: 2048
+  Seq_length: 1024
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
   
@@ -17,7 +17,7 @@ gwas_pval_hyena-tiny:
   class: GWASDataWrapper
   task: regression
   target: P-Value
-  Seq_length: 2048
+  Seq_length: 1024
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
   
@@ -82,6 +82,6 @@ sqlt_splice-change_hyena-tiny:
 cellpassport_hyena-tiny:
   class: CellPassportDataWrapper
   task: classification
-  Seq_length: 2048
+  Seq_length: 1024
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
