@@ -4,6 +4,8 @@ import importlib
 import os
 import sys
 from tqdm import tqdm
+import numpy as np
+
 SUPORTED_MODELS = ['dnabert2', 'dnabert6','gena-lm-bigbird-base-t2t',
                    'gena-lm-bert-large-t2', 'hyenadna-large-1m',
                    'hyenadna-tiny-1k',
@@ -66,3 +68,55 @@ class BaseModel(torch.nn.Module):
             seq1, seq2 = self.model(x[0]), self.model(x[1])
             new_data.append([[seq1,seq2,x[2]],y])
         return new_data
+
+    def cache_embed_delta_with_annotation(self,data):
+        new_data = []
+        for x, y in tqdm(data, desc="Caching embeddings"):
+            seq1, seq2 = self.model(x[0]), self.model(x[1])
+            new_data.append([[seq1-seq2,x[2]],y])
+        return new_data
+
+    def cache_embed_delta(self, data, pca_components=16):
+        # Step 1: Collect all differences
+        differences = []
+        labels = []
+        for x, y in tqdm(data, desc="Caching embeddings"):
+            seq1, seq2 = self.model(x[0]), self.model(x[1])
+            differences.append(seq2 - seq1)
+            labels.append(y)
+
+        # Step 2: Convert list to tensor
+        differences_tensor = np.stack(differences)
+
+        # Step 3: Apply PCA to the collected differences
+        reduced_data = apply_pca_torch(differences_tensor, n_components=pca_components)
+
+        return reduced_data, labels
+
+
+def apply_pca_torch(data, n_components=16):
+    # Ensure data is a torch tensor and optionally move data to GPU
+    data_tensor = torch.tensor(data).float()
+    if torch.cuda.is_available():
+        data_tensor = data_tensor.cuda()
+
+    # Reshape the data
+    reshaped_data = data_tensor.reshape(-1, data_tensor.shape[-1])  # Reshape to (num_samples * 1024, 128)
+
+    # Center the data by subtracting the mean
+    mean = torch.mean(reshaped_data, dim=0)
+    data_centered = reshaped_data - mean
+
+    # Compute SVD
+    U, S, V = torch.svd(data_centered)
+
+    # Compute PCA by projecting the data onto the principal components
+    pca_transformed_data = torch.mm(data_centered, V[:, :n_components])
+
+    # Reshape back to the original shape
+    pca_transformed_data = pca_transformed_data.reshape(data_tensor.shape[:-1] + (-1,))  # Reshape back to (num_samples, 1024, n_components)
+
+    # Optionally move data back to CPU
+    pca_transformed_data = pca_transformed_data.cpu()
+
+    return pca_transformed_data.numpy()  # Convert to numpy if needed

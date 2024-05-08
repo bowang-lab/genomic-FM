@@ -2,10 +2,9 @@ import torch
 import pytorch_lightning as pl
 from ..dataloader.iterable_dataset import IterableDataset
 from ..dataloader.pl_data_module import MyDataModule
-from ..dataloader.save_as_np import save_data, get_cache, map_to_class, get_mapped_class, map_to_given_class, has_cache
-from ..dataloader.memmap_dataset import MemMapDataset
-from ..dataloader.efficient_iteratable_dataset import EffIterableDataset
-from ..model_wrapper.pl_model import MyLightningModule
+from ..dataloader.save_as_np import save_data_delta, get_cache_delta, map_to_class, has_cache
+from ..dataloader.memmap_dataset_delta import MemMapDatasetDelta
+from ..model_wrapper.pl_model_delta import MyLightningModuleDelta
 from ..model_wrapper.linear_nn import LinearNN
 from ..model_wrapper.cnn_head import CNN_Head
 import argparse
@@ -16,7 +15,7 @@ from pytorch_lightning.loggers import WandbLogger
 import psutil
 import os
 import time
-
+import subprocess
 
 def get_memory_usage():
     # Get the memory details
@@ -65,12 +64,12 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading")
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
     parser.add_argument("--disk_chunk", type=int, default=2500, help="Number of chunks to split the data into for saving to disk")
-    parser.add_argument("--cache_dir", type=str, default="root/data/npy_output", help="Directory to save the cached embeddings")
+    parser.add_argument("--cache_dir", type=str, default="root/data/npy_output_delta", help="Directory to save the cached embeddings")
 
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output"):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True):
     if logger_name == "wandb":
         run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
@@ -102,12 +101,22 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         print(f"Mapped x_class: {x_class}")
         print(f"Mapped y_class: {y_class}")
         for i in range(0, len(data), disk_chunk):
-            embeddings = model.cache_embed(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
-            save_data(embeddings, base_filename=dataset, base_index=i,pca_components=pca_components)
+            embeddings = model.cache_embed_delta_with_annotation(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
+            save_data_delta(embeddings, base_filename=dataset, base_index=i,pca_components=pca_components,
+                            base_dir=cache_dir)
         print(">>>>End of caching")
-    seq1_path, seq2_path, annot_path, label_path = get_cache(dataset, cache_dir)
-    memmap_data = MemMapDataset(path_seq1=seq1_path,
-                                path_seq2=seq2_path,
+    if cache_data_ram:
+        destination_path = '/dev/shm/'
+        # check is the /dev/shm/ is mounted
+        if not os.path.exists(destination_path):
+            print("RAM disk is not mounted, loading data to RAM at dataloader level,"
+                  "this will be slower than loading to RAM disk!")
+        else:
+            subprocess.run(["cp", "-r", cache_dir, destination_path], check=True)
+            cache_dir = destination_path + cache_dir.split('/')[-1]
+            cache_data_ram = False
+    seq1_path, annot_path, label_path = get_cache_delta(dataset, cache_dir)
+    memmap_data = MemMapDatasetDelta(path_seq1=seq1_path,
                                 seq_shape=(info['Seq_length'], pca_components),
                                 chunk_size=info['Seq_length'],
                                 annotation_paths=annot_path,
@@ -115,7 +124,8 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
                                        transform=None,
-                                       skip_mapping=True)
+                                       skip_mapping=True,
+                                       load_to_ram=cache_data_ram)
     # split the data
     print("split_ratio: ", split_ratio)
     train_data, val_data, test_data = random_split(iterable_dataset,
@@ -127,7 +137,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
                                num_workers=num_workers, transform=None)
     # Initialize your Lightning Module
 
-    lightning_module = MyLightningModule(model=model, task=task, learning_rate=lr)
+    lightning_module = MyLightningModuleDelta(model=model, task=task, learning_rate=lr)
 
 
     trainer_args = {

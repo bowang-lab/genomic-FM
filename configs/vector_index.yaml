@@ -9,7 +9,7 @@ mave_score_hyena-tiny:
   class: MAVEDataWrapper
   task: regression
   target: score
-  Seq_length: 1024
+  Seq_length: 2048
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
 
@@ -17,7 +17,7 @@ gwas_pval_hyena-tiny:
   class: GWASDataWrapper
   task: regression
   target: P-Value
-  Seq_length: 1024
+  Seq_length: 2048
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
 
@@ -28,7 +28,8 @@ clinvar_CLNSIG_hyena-tiny:
   Seq_length: 1024
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 4
+  num_records: 50000
+  all_records: False
 
 clinvar_CLNDN_hyena-tiny:
   class: ClinVarDataWrapper
@@ -82,7 +83,7 @@ sqlt_splice-change_hyena-tiny:
 cellpassport_hyena-tiny:
   class: CellPassportDataWrapper
   task: classification
-  Seq_length: 1024
+  Seq_length: 2048
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2

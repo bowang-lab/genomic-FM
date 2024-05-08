@@ -6,7 +6,7 @@ from torchmetrics import Accuracy
 from torchmetrics import AUROC
 
 
-class MyLightningModule(pl.LightningModule):
+class MyLightningModuleDelta(pl.LightningModule):
     def __init__(self, model, task='classification', learning_rate=1e-3):
         super().__init__()
         self.model = model
@@ -24,12 +24,10 @@ class MyLightningModule(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        ref = batch[0][0]
-        alt = batch[0][1]
-        annotation = batch[0][2]
+        seq = batch[0][0]
+        annotation = batch[0][1]
         y = batch[1].squeeze(1)
-        # logits =  self.forward(alt) - self.forward(ref)
-        logits =  self.forward(alt - ref)
+        logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if self.task == 'classification':
             preds = torch.argmax(logits, dim=1)
@@ -41,12 +39,10 @@ class MyLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        ref = batch[0][0]
-        alt = batch[0][1]
-        annotation = batch[0][2]
+        seq = batch[0][0]
+        annotation = batch[0][1]
         y = batch[1].squeeze(1)
-        # logits = self.forward(alt) - self.forward(ref)
-        logits =  self.forward(alt - ref)
+        logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if  self.task == 'classification':
             preds = torch.argmax(logits, dim=1)
@@ -58,12 +54,11 @@ class MyLightningModule(pl.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        ref = batch[0][0]
-        alt = batch[0][1]
-        annotation = batch[0][2]
+        seq = batch[0][0]
+        annotation = batch[0][1]
         y = batch[1]
         # logits = self.forward(alt) - self.forward(ref)
-        logits =  self.forward(alt - ref)
+        logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if self.task == 'classification':
             preds_auc = torch.sigmoid(logits)
