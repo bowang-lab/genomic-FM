@@ -16,6 +16,7 @@ from pytorch_lightning.loggers import WandbLogger
 import psutil
 import os
 import time
+import numpy as np
 
 
 def get_memory_usage():
@@ -106,12 +107,14 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             save_data(embeddings, base_filename=dataset, base_index=i,pca_components=pca_components)
         print(">>>>End of caching")
     seq1_path, seq2_path, annot_path, label_path = get_cache(dataset, cache_dir)
+    y_type = np.float32 if task == 'regression' else np.int64
     memmap_data = MemMapDataset(path_seq1=seq1_path,
                                 path_seq2=seq2_path,
                                 seq_shape=(info['Seq_length'], pca_components),
                                 chunk_size=info['Seq_length'],
                                 annotation_paths=annot_path,
-                                label_paths=label_path)
+                                label_paths=label_path,
+                                label_dtype=y_type)
     iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
                                        transform=None,
