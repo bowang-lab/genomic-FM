@@ -16,6 +16,8 @@ import psutil
 import os
 import time
 import subprocess
+import numpy as np
+
 
 def get_memory_usage():
     # Get the memory details
@@ -81,12 +83,14 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     info = info[dataset]
     # Create model
     pca_components = info.pop('pca_components')
-    model = CNN_Head(model_initiator_name=info.pop('model_initiator_name'),
+    model = LinearNN(model_initiator_name=info.pop('model_initiator_name'),
                      output_size=info.pop('output_size'),
                      base_model_output_size=pca_components)
     task = info.pop('task')
 
-
+    cache_dir = cache_dir + "_" +dataset
+    if not os.path.exists(cache_dir):
+        os.mkdir(cache_dir)
 
     # save and cache the data in batches
     if not has_cache(cache_dir, dataset):
@@ -97,7 +101,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         else:
             DATA = cls()
         data = DATA.get_data(**info)
-        x_class, y_class = map_to_class(data, task, dataset)
+        x_class, y_class = map_to_class(data, task, dataset,path=cache_dir)
         print(f"Mapped x_class: {x_class}")
         print(f"Mapped y_class: {y_class}")
         for i in range(0, len(data), disk_chunk):
@@ -116,11 +120,13 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             cache_dir = destination_path + cache_dir.split('/')[-1]
             cache_data_ram = False
     seq1_path, annot_path, label_path = get_cache_delta(dataset, cache_dir)
+    y_type = np.float32 if task == 'regression' else np.int64
     memmap_data = MemMapDatasetDelta(path_seq1=seq1_path,
                                 seq_shape=(info['Seq_length'], pca_components),
                                 chunk_size=info['Seq_length'],
                                 annotation_paths=annot_path,
-                                label_paths=label_path)
+                                label_paths=label_path,
+                                label_dtype=y_type)
     iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
                                        transform=None,

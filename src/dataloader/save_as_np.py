@@ -105,11 +105,12 @@ def map_to_class(data, task='classification', dataset_name="test", path='root/da
             element[1] = y_class[y]
         if task == 'regression':
             # ensure y is torch tensor float
-            element[1] = torch.tensor([y], dtype=np.float32)
+            element[1] = torch.tensor(y, dtype=torch.float32)
     with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
         yaml.dump(x_class, f)
     with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
         yaml.dump(y_class, f)
+
     return x_class, y_class
 
 def has_cache(cache_dir, base_filename):
@@ -135,6 +136,7 @@ def get_cache(base_filename, cache_dir='root/data/npy_output'):
     seq2_paths = sorted(seq2_paths)
     annot_paths = sorted(annot_paths)
     label_paths = sorted(label_paths)
+    # get the type of x and y
     return seq1_paths, seq2_paths, annot_paths, label_paths
 
 def save_data(data, base_filename='data', base_index=0, base_dir='root/data/npy_output',pca_components=16):
@@ -280,8 +282,7 @@ def map_to_class_delta(data, task='classification', dataset_name="test", path='r
                 y_count += 1
             element[1] = y_class[y]
         if task == 'regression':
-            # ensure y is torch tensor float
-            element[1] = torch.tensor([y], dtype=np.float32)
+            element[1] = torch.tensor(y, dtype=torch.float32)
     with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
         yaml.dump(x_class, f)
     with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
@@ -305,4 +306,5 @@ def get_cache_delta(base_filename, cache_dir='root/data/npy_output'):
     seq1_paths = sorted(seq1_paths)
     annot_paths = sorted(annot_paths)
     label_paths = sorted(label_paths)
+
     return seq1_paths, annot_paths, label_paths

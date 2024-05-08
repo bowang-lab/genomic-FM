@@ -61,6 +61,8 @@ eqtl_slope_hyena-tiny:
 sqtl_pval_hyena-tiny:
   class: sQTLDataWrapper
   task: regression
+  Seq_length: 1024
+  pca_components: 16
   target: p_val
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
@@ -68,6 +70,8 @@ sqtl_pval_hyena-tiny:
 sqtl_slope_hyena-tiny:
   class: sQTLDataWrapper
   task: regression
+  Seq_length: 1024
+  pca_components: 16
   target: slope
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
@@ -75,16 +79,16 @@ sqtl_slope_hyena-tiny:
 sqlt_splice-change_hyena-tiny:
   class: sQTLDataWrapper
   task: regression
+  Seq_length: 1024
+  pca_components: 16
   target: splice_change
   model_initiator_name: hyenadna-tiny-1k
-  output_size: 2
+  output_size: 1
 
 cellpassport_hyena-tiny:
   class: CellPassportDataWrapper
   task: classification
-  Seq_length: 2048
+  Seq_length: 1024
   pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
-  num_records: 100
-  all_records: False

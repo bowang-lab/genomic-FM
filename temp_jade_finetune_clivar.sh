@@ -22,4 +22,7 @@ wandb offline
 # python test_clivar.py
 # srun python temp_sanity_check_species_list.py
 # python test_finetune.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=6
-python test_finetune_delta.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16
+# python test_finetune_delta.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16
+# python test_finetune_delta.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4
+# python test_finetune_delta.py --dataset='sqlt_splice-change_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4
+python test_finetune_delta.py --dataset='sqtl_slope_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4

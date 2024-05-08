@@ -332,6 +332,8 @@ class sQTLDataWrapper:
                 slop = row['slope']
                 p_val = row['pval_nominal']
                 reference, alternate = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
+                if reference is None:
+                    continue
                 x = [reference, alternate, organism]
                 if target == 'slope':
                     y = slop
