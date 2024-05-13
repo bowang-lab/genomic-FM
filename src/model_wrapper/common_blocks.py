@@ -199,3 +199,19 @@ class MaxPool(torch.nn.Module):
         x = F.max_pool1d(x, self.kernel_size, self.stride, return_indices=False)
         x = rearrange(x, "b d l -> b l d")
         return x
+
+class FeedforwardNetwork(nn.Module):
+    def __init__(self, input_size, output_size):
+        hidden_size = 2*input_size
+        super(FeedforwardNetwork, self).__init__()
+        # Define the first layer (input to hidden)
+        self.hidden = nn.Linear(input_size, hidden_size)
+        # Define the second layer (hidden to output)
+        self.output = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        # Forward pass through the first layer, then apply ReLU activation
+        x = F.relu(self.hidden(x))
+        # Forward pass through the output layer
+        x = self.output(x)
+        return x

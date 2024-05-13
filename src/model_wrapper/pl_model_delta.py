@@ -39,6 +39,7 @@ class MyLightningModuleDelta(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+
         seq = batch[0][0]
         annotation = batch[0][1]
         y = batch[1].squeeze(1)
@@ -48,6 +49,8 @@ class MyLightningModuleDelta(pl.LightningModule):
             preds = torch.argmax(logits, dim=1)
         else:
             preds = logits
+        print(f"value of pred 0,1: {preds[0]},{preds[1]}")
+        print(f"value of y 0,1: {y[0]},{y[1]}")
         acc = self.accuracy(preds, y)
         self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         self.log('val_acc', acc, on_step=True, on_epoch=True, prog_bar=True, logger=True)

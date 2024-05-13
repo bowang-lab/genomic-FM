@@ -1,12 +1,12 @@
 from .base_model import BaseModel
 import torch
 import torch.nn as nn
-from .common_blocks import ConvBlock
+from .common_blocks import ConvBlock, FeedforwardNetwork
 import math
 
 
 class CNN_Head(BaseModel):
-    def __init__(self, model_initiator_name, output_size, base_model_output_size=None, num_cnn_layers=5, kernel_sizes=[5]):
+    def __init__(self, model_initiator_name, output_size, base_model_output_size=None, num_cnn_layers=5, kernel_sizes=[5], ff=True):
         super().__init__(model_initiator_name)
 
         # Freeze all parameters in the base model
@@ -33,12 +33,13 @@ class CNN_Head(BaseModel):
             divisible_by=2,
         )
         self.conv_layers = ConvBlock(filter_list, kernel_sizes)
-        self.linear = nn.Linear(base_model_output_size, output_size)
+        self.linear = nn.Linear(base_model_output_size, output_size) if not ff else FeedforwardNetwork(base_model_output_size, output_size)
         self.output_size = output_size
 
     def forward(self, x):
         x = self.conv_layers(x)
         x = torch.mean(x, dim=1)
+        # x = x.reshape(x.size(0), -1)
         x = self.linear(x)
         return x
 
