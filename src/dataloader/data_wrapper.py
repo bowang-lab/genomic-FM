@@ -1,6 +1,7 @@
 from typing import Any
 from ..sequence_extractor import GenomeSequenceExtractor, FastaStringExtractor, RandomSequenceExtractor
 from ..datasets.clinvar import load_clinvar
+from pyliftover import LiftOver
 from ..datasets.gene_ko.get_gene_knock_out import (
     create_fitness_scores_dataframe,
     create_variant_sequence_and_reference_sequence_for_gene

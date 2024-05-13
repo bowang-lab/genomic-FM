@@ -1,4 +1,4 @@
-import pandas as pd
+mport pandas as pd
 import re
 from pyliftover import LiftOver
 from src.sequence_extractor import GenomeSequenceExtractor
