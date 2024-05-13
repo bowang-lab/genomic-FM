@@ -83,7 +83,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     info = info[dataset]
     # Create model
     pca_components = info.pop('pca_components')
-    model = LinearNN(model_initiator_name=info.pop('model_initiator_name'),
+    model = CNN_Head(model_initiator_name=info.pop('model_initiator_name'),
                      output_size=info.pop('output_size'),
                      base_model_output_size=pca_components)
     task = info.pop('task')
@@ -91,7 +91,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     cache_dir = cache_dir + "_" +dataset
     if not os.path.exists(cache_dir):
         os.mkdir(cache_dir)
-
+    print(cache_dir)
     # save and cache the data in batches
     if not has_cache(cache_dir, dataset):
         # Create data module

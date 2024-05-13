@@ -8,7 +8,9 @@ from sklearn.decomposition import PCA
 
 
 
-def apply_pca_torch(data, n_components=16):
+def apply_pca_torch(data, n_components=16, return_original=False):
+    if return_original:
+        return data
     # Ensure data is a torch tensor and optionally move data to GPU
     data_tensor = torch.tensor(data).float()
     if torch.cuda.is_available():
@@ -90,6 +92,13 @@ def map_to_class(data, task='classification', dataset_name="test", path='root/da
     y_class = {}
     x_count = 0
     y_count = 0
+    y_values = [element[1] for element in data if task == 'regression']
+    if task == 'regression':
+        mean_y = np.mean(y_values)
+        std_y = np.std(y_values)
+        y_class['mean'] = mean_y.item()
+        y_class['std'] = std_y.item()
+
     for i in range(len(data)):
         element = data[i]
         x, y = element
@@ -105,7 +114,8 @@ def map_to_class(data, task='classification', dataset_name="test", path='root/da
             element[1] = y_class[y]
         if task == 'regression':
             # ensure y is torch tensor float
-            element[1] = torch.tensor(y, dtype=torch.float32)
+            y_standardized = (y - mean_y) / std_y
+            element[1] = torch.tensor(y_standardized, dtype=torch.float32)
     with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
         yaml.dump(x_class, f)
     with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
@@ -259,34 +269,43 @@ def save_data_delta(data, base_filename='data', base_index=0, base_dir='root/dat
 
 def map_to_class_delta(data, task='classification', dataset_name="test", path='root/data/npy_output'):
     # x = (reference, alternate, annotation)
-    # map x annotation to corresponding class label
-    # y = target， e.g. beneign or pathogenic, slope, p_val, splice_change
-    # for classification task, map y to corresponding class label
-    # for regression task, keep y as it is
-    # save the mapping as a file
+    # y = target，e.g., benign or pathogenic, slope, p_val, splice_change
     x_class = {}
     y_class = {}
     x_count = 0
     y_count = 0
-    for i in range(len(data)):
-        element = data[i]
-        x, y = element
+    y_values = [element[1] for element in data if task == 'regression']  # Collect y for regression to standardize
+
+    if task == 'regression':
+        mean_y = np.mean(y_values)
+        std_y = np.std(y_values)
+        y_class['mean'] = mean_y
+        y_class['std'] = std_y
+
+    for i, element in enumerate(data):
+        x, y = element[0], element[1]
         annotation = x[1]
+
         if annotation not in x_class:
             x_class[annotation] = x_count
             x_count += 1
         x[1] = x_class[annotation]
+
         if task == 'classification':
             if y not in y_class:
                 y_class[y] = y_count
                 y_count += 1
             element[1] = y_class[y]
-        if task == 'regression':
-            element[1] = torch.tensor(y, dtype=torch.float32)
+        elif task == 'regression':
+            # Standardize y
+            y_standardized = (y - mean_y) / std_y
+            element[1] = torch.tensor(y_standardized, dtype=torch.float32)
+
     with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
         yaml.dump(x_class, f)
     with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
         yaml.dump(y_class, f)
+
     return x_class, y_class
 
 

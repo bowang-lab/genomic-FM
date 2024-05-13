@@ -2,11 +2,11 @@
 # set the number of nodes
 #SBATCH --nodes=1
 # set max wallclock time
-#SBATCH --time=140:00:00
+#SBATCH --time=24:00:00
 # set name of job
 #SBATCH --job-name=jobzl432
 # set number of GPUs
-#SBATCH --gres=gpu:1 -p small
+#SBATCH --gres=gpu:8 -p big
 # set RAM size
 # mail alert at start, end and abortion of execution
 #SBATCH --mail-type=ALL
@@ -18,11 +18,11 @@ cd /jmain02/home/J2AD015/axf03/zxl79-axf03/repository/genomic-FM-run-exp/genomic
 wandb offline
 
 # python test_finetune.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=8 --num_workers=16
-# python test_finetune.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=12
+# python test_finetune_delta.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=12
 # python test_clivar.py
 # srun python temp_sanity_check_species_list.py
 # python test_finetune.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=6
-# python test_finetune_delta.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16
+srun python test_finetune_delta.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=8 --num_workers=4
 # python test_finetune_delta.py --dataset='cellpassport_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4
 # python test_finetune_delta.py --dataset='sqlt_splice-change_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4
-python test_finetune_delta.py --dataset='sqtl_slope_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4
+# python test_finetune_delta.py --dataset='sqtl_slope_hyena-tiny' --epochs=100 --gpus=1 --num_workers=4

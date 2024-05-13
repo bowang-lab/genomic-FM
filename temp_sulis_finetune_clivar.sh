@@ -16,7 +16,7 @@ module load CUDA/11.7.0 GCCcore/11.3.0 GCC/11.3.0 OpenMPI/4.1.4 Python/3.10.4
 source ~/torch_1_13_1/bin/activate
 cd ~/repositories/genomic-FM
 
-srun python test_finetune.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=1 --num_workers=8
+srun python test_finetune.py --dataset='clinvar_CLNSIG_hyena-tiny' --epochs=100 --gpus=8 --num_workers=8
 # accelerate launch --main_process_port 12701 --multi_gpu main.py --model vanilla_vae
 # accelerate launch --main_process_port 12701 --multi_gpu main.py --model un_unet
 # accelerate launch --main_process_port 12902 --multi_gpu main.py --model un_unet
