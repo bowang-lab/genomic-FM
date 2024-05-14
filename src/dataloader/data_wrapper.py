@@ -138,7 +138,7 @@ class GWASDataWrapper:
     def get_data(self, Seq_length=20, target='P-Value'):
         # return (x, y) pairs
         if os.path.exists('./root/data/gwas.jsonl'):
-            data = load_json('./root/data/gwas.jsonl')
+            data = read_jsonl('./root/data/gwas.jsonl')
         else:
             data = []
             disease_to_efo = self.trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
