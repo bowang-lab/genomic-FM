@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH -t 3-12:0:0
-#SBATCH -J oligogenic
+#SBATCH -J gwas
 #SBATCH -p gpu_bwanggroup
 #SBATCH --gres=gpu:1 
 #SBATCH --mem=50G
 #SBATCH -c 20
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=vallisubasri@gmail.com
-#SBATCH --output=root/oligogenic_output_%j.log 
-#SBATCH --error=root/oligogenic_error_%j.log  
+#SBATCH --output=root/gwas_output_%j.log 
+#SBATCH --error=root/gwas_error_%j.log  
 
 # log the sbatch environment
 echo "start time: $(date)"
@@ -31,5 +31,5 @@ wandb offline
 
 which python
 
-python test_finetune_delta.py --dataset='oligogenic_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16
+python test_finetune_delta.py --dataset='gwas_pval_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16
 

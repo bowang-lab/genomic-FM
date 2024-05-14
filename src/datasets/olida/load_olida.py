@@ -1,4 +1,4 @@
-mport pandas as pd
+import pandas as pd
 import re
 from pyliftover import LiftOver
 from src.sequence_extractor import GenomeSequenceExtractor
@@ -162,13 +162,14 @@ def extract_negative_pairs(extractor, num_pairs, length_range=(200, 1000), min_s
             negative_pairs.append((seq1, seq2))
     return negative_pairs
 
-def load_and_process_negative_pairs(file_path='./root/data/1KGP_negative_pairs.txt', Seq_length=20, num_records=None):
+def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38_v2_combs.txt', Seq_length=20, num_records=None, genome='hg38'):
     # Load the data
     data = []
     data_1kgp = pd.read_csv(file_path, delimiter='\t', index_col=False)
 
     # Initialize the LiftOver object for hg19 to hg38
-    lo = LiftOver('hg19', 'hg38')
+    if genome == "hg19":
+        lo = LiftOver('hg19', 'hg38')
     genome_extractor = GenomeSequenceExtractor()
 
     # Iterate through each row in the DataFrame
@@ -182,19 +183,22 @@ def load_and_process_negative_pairs(file_path='./root/data/1KGP_negative_pairs.t
                     raise ValueError(f"Invalid or missing variant data in row: {row}")
                 
                 # Extracting chromosome and position data
-                chrom, pos, ref, alt, zygosity = row[gene_variant].split(':')
-                
-                pos = int(pos) - 1  # Convert to 0-based for pyliftover
+                chrom, pos, ref, alt, zygosity = row[gene_variant].split('/')[0].split(':')
 
-                # Convert hg19 to hg38
-                converted = lo.convert_coordinate('chr' + chrom, pos)
-                if not converted:
-                    raise ValueError(f"Conversion failed for {chrom}:{pos+1}")
+                if genome == "hg19":                
+                    pos = int(pos) - 1  # Convert to 0-based for pyliftover
 
-                # Get the new chromosome and position
-                new_chrom, new_pos, _, _ = converted[0]
-                new_pos += 1  # Convert back to 1-based
-                
+                    # Convert hg19 to hg38
+                    converted = lo.convert_coordinate('chr' + chrom, pos)
+                    if not converted:
+                        raise ValueError(f"Conversion failed for {chrom}:{pos+1}")
+
+                    # Get the new chromosome and position
+                    new_chrom, new_pos, _, _ = converted[0]
+                    new_pos += 1  # Convert back to 1-based
+                else:
+                    new_chrom = chrom ; new_pos = pos                
+
                 # Create record for sequence extraction
                 record = {
                     'Chromosome': new_chrom.replace('chr', ''),  # Remove 'chr' if not needed

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH -t 3-12:0:0
-#SBATCH -J clinvar
+#SBATCH -J maves
 #SBATCH -p gpu_bwanggroup
 #SBATCH --gres=gpu:1 
 #SBATCH --mem=100G
