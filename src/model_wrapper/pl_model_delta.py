@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import torch.optim as optim
 from torchmetrics import Accuracy
 from torchmetrics import AUROC
+# from torchmetrics.classification import MulticlassAUROC
 
 
 class MyLightningModuleDelta(pl.LightningModule):
@@ -17,6 +18,7 @@ class MyLightningModuleDelta(pl.LightningModule):
             # warning: AUROC is very slow to compute, so it should be used sparingly for test set evaluation
             self.accuracy = Accuracy(task="multiclass", num_classes=model.output_size)
             self.test_accuracy = AUROC(task="multiclass", num_classes=model.output_size)
+            # self.test_accuracy = MulticlassAUROC(num_classes=model.output_size)
         elif task == 'regression':
             self.accuracy = nn.MSELoss()
             self.test_accuracy = nn.MSELoss()
@@ -59,19 +61,19 @@ class MyLightningModuleDelta(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         seq = batch[0][0]
         annotation = batch[0][1]
-        y = batch[1]
+        y = batch[1].squeeze(1)
         # logits = self.forward(alt) - self.forward(ref)
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if self.task == 'classification':
             preds_auc = torch.sigmoid(logits)
             auc = self.test_accuracy(preds_auc, y)
-            self.log('test_auc', auc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            # self.log('test_auc', auc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
             preds = torch.argmax(logits, dim=1)
         else:
             preds = logits
-        acc = self.test_accuracy(preds, y)
-        self.log('test_acc', acc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            auc = self.test_accuracy(preds, y)
+        self.log('test_acc', auc, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         self.log('test_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 

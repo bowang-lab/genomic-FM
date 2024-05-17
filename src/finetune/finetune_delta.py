@@ -67,11 +67,12 @@ def parse_args():
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
     parser.add_argument("--disk_chunk", type=int, default=2500, help="Number of chunks to split the data into for saving to disk")
     parser.add_argument("--cache_dir", type=str, default="root/data/npy_output_delta", help="Directory to save the cached embeddings")
-
+    parser.add_argument("--mode", type=str, default="train", help="Mode to run the script (train, test)")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint")
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None):
     if logger_name == "wandb":
         run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
@@ -157,8 +158,13 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     else:
         trainer_args['accelerator'] = 'cpu'
     # Create the Trainer
-    trainer = pl.Trainer(**trainer_args)
-    trainer.fit(lightning_module, data_module)
+    if mode == "train":
+        trainer = pl.Trainer(**trainer_args)
+        trainer.fit(lightning_module, data_module)
+    elif mode == "test":
+        lightning_module = MyLightningModuleDelta.load_from_checkpoint(model=model, checkpoint_path=checkpoint)
+        trainer = pl.Trainer(**trainer_args)
+        trainer.test(lightning_module, data_module)
 
 
 def main():
@@ -174,7 +180,9 @@ def main():
                  args.num_workers,
                  args.logger,
                  args.disk_chunk,
-                 args.cache_dir)
+                 args.cache_dir,
+                 mode=args.mode,
+                 checkpoint=args.checkpoint)
 
 if __name__ == "__main__":
     main()

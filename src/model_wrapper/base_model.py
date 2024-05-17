@@ -52,10 +52,14 @@ class BaseModel(torch.nn.Module):
         # Prepend the model directory to the model args
         model_args = {k: v for k, v in model_info.items() if k != '_target_'}
         embedders_dir = "./root/models"
-        modified_path = model_args['model_path'].format(embedders_dir=embedders_dir)
-        # remove dollar sign
-        model_args['model_path'] = modified_path[1:]
-        print(f"Model args: {model_args}")
+        if 'model_path' in model_args:
+            modified_path = model_args['model_path'].format(embedders_dir=embedders_dir)
+            # remove dollar sign
+            model_args['model_path'] = modified_path[1:]
+            print(f"Model args: {model_args}")
+            if not os.path.exists(model_args['model_path']):
+                # create the directory
+                os.makedirs(model_args['model_path'])
         return ModelClass(**model_args)
 
     def forward(self, x):
@@ -72,7 +76,7 @@ class BaseModel(torch.nn.Module):
     def cache_embed_delta_with_annotation(self,data):
         new_data = []
         for x, y in tqdm(data, desc="Caching embeddings"):
-            seq1, seq2 = self.model(x[0]), self.model(x[1])
+            seq1, seq2 = self.model(x[0],upsample_embeddings=True), self.model(x[1],upsample_embeddings=True)
             new_data.append([[seq1-seq2,x[2]],y])
         return new_data
 
@@ -81,7 +85,7 @@ class BaseModel(torch.nn.Module):
         differences = []
         labels = []
         for x, y in tqdm(data, desc="Caching embeddings"):
-            seq1, seq2 = self.model(x[0]), self.model(x[1])
+            seq1, seq2 = self.model(x[0],upsample_embeddings=True), self.model(x[1],upsample_embeddings=True)
             differences.append(seq2 - seq1)
             labels.append(y)
 
@@ -89,7 +93,7 @@ class BaseModel(torch.nn.Module):
         differences_tensor = np.stack(differences)
 
         # Step 3: Apply PCA to the collected differences
-        reduced_data = apply_pca_torch(differences_tensor, n_components=pca_components)
+        reduced_data = apply_pca(differences_tensor, n_components=pca_components)
 
         return reduced_data, labels
 

@@ -26,7 +26,7 @@ import pandas as pd
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
            'Mus musculus','Oncorhynchus mykiss', 'Plasmodium falciparum', 'Rattus norvegicus', 'Saccharomyces cerevisiae', 'Salmo salar', 'Schizosaccharomyces pombe', 'Sus scrofa', 'Scophthalmus maximus', 'Zea mays']
-ORGANISM = ['Adipose_Subcutaneous']
+ORGANISM = ['Adipose_Visceral_Omentum']
 # ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substantia_nigra',
                         # 'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         # 'Uterus', 'Vagina', 'Whole_Blood']
@@ -321,10 +321,12 @@ class sQTLDataWrapper:
 
     def get_data(self, Seq_length=20, target='slope'):
         data = []
+
         for organism in tqdm(ORGANISM):
             records = process_sqtl_data(organism=organism)
             if self.all_records:
                 self.num_records = len(records)
+            num_pos = 0
             for i in range(self.num_records):
                 row = records.iloc[i]
                 record = row['record']
@@ -332,15 +334,30 @@ class sQTLDataWrapper:
                 splice_position_distance_change = int(splice_position[2]) - int(splice_position[1])
                 slop = row['slope']
                 p_val = row['pval_nominal']
+                p_threshold = row['pval_nominal_threshold']
                 reference, alternate = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
                 if reference is None:
                     continue
                 x = [reference, alternate, organism]
                 if target == 'slope':
-                    y = slop
+                    if slop < 0:
+                        y = "negative"
+                    else:
+                        y = "positive"
+                        num_pos += 1
+                    # y = slop
                 elif target == 'p_val':
-                    y = p_val
+                    if p_val < p_threshold:
+                        y = "significant"
+                    else:
+                        y = "not_significant"
+                    # y = p_val
                 elif target == 'splice_change':
-                    y = splice_position_distance_change
+                    if splice_position_distance_change < 0:
+                        y = "negative"
+                    else:
+                        y = "positive"
+                    # y = splice_position_distance_change
                 data.append([x, y])
+            print(f"Number of positive examples: {num_pos} out of {self.num_records} total")
         return data

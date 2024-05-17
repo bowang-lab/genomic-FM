@@ -243,7 +243,7 @@ def save_data_delta(data, base_filename='data', base_index=0, base_dir='root/dat
     ##########################
     # Try pca
     ##########################
-    seq1s = apply_pca_torch(np.array(seq1s),n_components=pca_components)
+    seq1s = apply_pca(np.array(seq1s),n_components=pca_components)
 
     # Save each component of the chunk
     filename = f'{base_filename}_seq1_{base_index}.npy'
