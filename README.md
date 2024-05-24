@@ -16,3 +16,24 @@ All the tasks are formulated as a classification problem or regression problem. 
 | GWAS        | Genome-Wide Association Study Prediction        | (ref, alt, trait) | Expression p-val/beta/odds ratio           | 306,890 SNPs, 53,933 traits/diseases   |
 | MAVEs        | Multiplex Assays of Variant Effect Prediction        | (ref, alt, annotation) | Variant Effect Score           | 3,166,541/6,456,426 variants, 1304/1373 studies    |
 | Oligogenic Variants       | Oligogenic Variant Effect Prediction        | (ref, alt, disease) | Classification: 2 classes           | 1808 variants combinations, 219 diseases    |
+
+
+## Draft
+
+1. Variant Prediction
+    - Variants Type Prediction with supervised learning
+    Task: 9 different tasks
+
+2. Variant Representation with Genomic LLM
+    - raw
+    - finetuned
+    metric: within class distance vs between class distance
+
+3. Variant Indexing
+    - Indexing of Variants
+    metric: Query time, Accuracy (defined by classes)
+
+
+* Context Length
+* Number of Layers
+* Type of heads

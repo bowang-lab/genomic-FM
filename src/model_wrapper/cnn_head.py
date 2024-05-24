@@ -6,12 +6,17 @@ import math
 
 
 class CNN_Head(BaseModel):
-    def __init__(self, model_initiator_name, output_size, base_model_output_size=None, num_cnn_layers=5, kernel_sizes=[5], ff=True):
+    def __init__(self, model_initiator_name, output_size, base_model_output_size=None, num_cnn_layers=5, kernel_sizes=[5], ff=True, dropout_rate=0.5,full_size_file_tuning=False):
         super().__init__(model_initiator_name)
 
+        self.full_size_file_tuning = full_size_file_tuning
         # Freeze all parameters in the base model
-        for param in self.model.model.parameters():
-            param.requires_grad = False
+        if not full_size_file_tuning:
+            for param in self.model.model.parameters():
+                param.requires_grad = False
+        else:
+            for param in self.model.model.parameters():
+                param.requires_grad = True
 
         if base_model_output_size is None:
 
@@ -35,11 +40,16 @@ class CNN_Head(BaseModel):
         self.conv_layers = ConvBlock(filter_list, kernel_sizes)
         self.linear = nn.Linear(base_model_output_size, output_size) if not ff else FeedforwardNetwork(base_model_output_size, output_size)
         self.output_size = output_size
+        self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, x):
+        if self.full_size_file_tuning:
+            x = torch.tensor(self.model.embed(x[1],upsample_embeddings=True))-torch.tensor(self.model.embed(x[0],upsample_embeddings=True))
+            x = x.squeeze(1)
         x = self.conv_layers(x)
         x = torch.mean(x, dim=1)
         # x = x.reshape(x.size(0), -1)
+        x = self.dropout(x)
         x = self.linear(x)
         return x
 
