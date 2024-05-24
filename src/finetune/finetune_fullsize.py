@@ -4,7 +4,7 @@ from ..dataloader.iterable_dataset import IterableDataset
 from ..dataloader.pl_data_module import MyDataModule
 from ..dataloader.save_as_np import save_data_delta, get_cache_delta, map_to_class, has_cache
 from ..dataloader.memmap_dataset_delta import MemMapDatasetDelta
-from ..model_wrapper.pl_model_delta import MyLightningModuleDelta
+from ..model_wrapper.pl_model_fullsize import MyLightningModuleFullsize
 from ..model_wrapper.linear_nn import LinearNN
 from ..model_wrapper.cnn_head import CNN_Head
 import argparse
@@ -72,9 +72,9 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None, fullsize=True):
     if logger_name == "wandb":
-        run_name = f"Formal_{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
+        run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
         wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
     else:
         wandb_logger = None
@@ -86,16 +86,14 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     pca_components = info.pop('pca_components')
     model = CNN_Head(model_initiator_name=info.pop('model_initiator_name'),
                      output_size=info.pop('output_size'),
-                     base_model_output_size=pca_components)
+                     base_model_output_size=pca_components,full_size_file_tuning=fullsize)
     task = info.pop('task')
 
     cache_dir = cache_dir + "_" +dataset
     if not os.path.exists(cache_dir):
         os.mkdir(cache_dir)
     print(cache_dir)
-    # save and cache the data in batches
-    if not has_cache(cache_dir, dataset):
-        # Create data module
+    if fullsize:
         cls = getattr(data_wrapper, info.pop('class'))
         if 'num_records' in info and 'all_records' in info:
             DATA = cls(num_records=info.pop('num_records'), all_records=info.pop('all_records'))
@@ -103,6 +101,17 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             DATA = cls()
         data = DATA.get_data(**info)
         x_class, y_class = map_to_class(data, task, dataset,path=cache_dir)
+
+    # save and cache the data in batches
+    if not has_cache(cache_dir, dataset) and not fullsize:
+        cls = getattr(data_wrapper, info.pop('class'))
+        if 'num_records' in info and 'all_records' in info:
+            DATA = cls(num_records=info.pop('num_records'), all_records=info.pop('all_records'))
+        else:
+            DATA = cls()
+        data = DATA.get_data(**info)
+        x_class, y_class = map_to_class(data, task, dataset,path=cache_dir)
+        # Create data module
         print(f"Mapped x_class: {x_class}")
         print(f"Mapped y_class: {y_class}")
         for i in range(0, len(data), disk_chunk):
@@ -110,7 +119,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             save_data_delta(embeddings, base_filename=dataset, base_index=i,pca_components=pca_components,
                             base_dir=cache_dir)
         print(">>>>End of caching")
-    if cache_data_ram:
+    if cache_data_ram and not fullsize:
         destination_path = '/dev/shm/'
         # check is the /dev/shm/ is mounted
         if not os.path.exists(destination_path):
@@ -120,14 +129,17 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             subprocess.run(["cp", "-r", cache_dir, destination_path], check=True)
             cache_dir = destination_path + cache_dir.split('/')[-1]
             cache_data_ram = False
-    seq1_path, annot_path, label_path = get_cache_delta(dataset, cache_dir)
-    y_type = np.float32 if task == 'regression' else np.int64
-    memmap_data = MemMapDatasetDelta(path_seq1=seq1_path,
-                                seq_shape=(info['Seq_length'], pca_components),
-                                chunk_size=info['Seq_length'],
-                                annotation_paths=annot_path,
-                                label_paths=label_path,
-                                label_dtype=y_type)
+    if fullsize:
+        memmap_data = data
+    else:
+        seq1_path, annot_path, label_path = get_cache_delta(dataset, cache_dir)
+        y_type = np.float32 if task == 'regression' else np.int64
+        memmap_data = MemMapDatasetDelta(path_seq1=seq1_path,
+                                    seq_shape=(info['Seq_length'], pca_components),
+                                    chunk_size=info['Seq_length'],
+                                    annotation_paths=annot_path,
+                                    label_paths=label_path,
+                                    label_dtype=y_type)
     iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
                                        transform=None,
@@ -144,7 +156,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
                                num_workers=num_workers, transform=None)
     # Initialize your Lightning Module
 
-    lightning_module = MyLightningModuleDelta(model=model, task=task, learning_rate=lr)
+    lightning_module = MyLightningModuleFullsize(model=model, task=task, learning_rate=lr)
 
 
     trainer_args = {

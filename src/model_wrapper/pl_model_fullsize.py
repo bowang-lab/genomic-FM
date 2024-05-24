@@ -7,7 +7,7 @@ from torchmetrics import AUROC
 # from torchmetrics.classification import MulticlassAUROC
 
 
-class MyLightningModuleDelta(pl.LightningModule):
+class MyLightningModuleFullsize(pl.LightningModule):
     def __init__(self, model, task='classification', learning_rate=1e-3):
         super().__init__()
         self.model = model
@@ -26,9 +26,9 @@ class MyLightningModuleDelta(pl.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        seq = batch[0][0]
-        annotation = batch[0][1]
-        y = batch[1].squeeze(1)
+        seq = batch[0][:2]
+        annotation = batch[0][2]
+        y = batch[1]
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if self.task == 'classification':
@@ -41,10 +41,9 @@ class MyLightningModuleDelta(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-
-        seq = batch[0][0]
-        annotation = batch[0][1]
-        y = batch[1].squeeze(1)
+        seq = batch[0][:2]
+        annotation = batch[0][2]
+        y = batch[1]
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if  self.task == 'classification':
@@ -59,9 +58,9 @@ class MyLightningModuleDelta(pl.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        seq = batch[0][0]
-        annotation = batch[0][1]
-        y = batch[1].squeeze(1)
+        seq = batch[0][:2]
+        annotation = batch[0][2]
+        y = batch[1]
         # logits = self.forward(alt) - self.forward(ref)
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
