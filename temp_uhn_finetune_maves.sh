@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH -t 3-12:0:0
-#SBATCH -J clinvar
+#SBATCH -J maves
 #SBATCH -p gpu_bwanggroup
 #SBATCH --gres=gpu:1 
-#SBATCH --mem=140G
+#SBATCH --mem=100G
 #SBATCH -c 20
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=vallisubasri@gmail.com
-#SBATCH --output=root/clinvar_output_%j.log 
-#SBATCH --error=root/clinvar_error_%j.log  
+#SBATCH --output=root/maves_output_%j.log 
+#SBATCH --error=root/maves_error_%j.log  
 
 # log the sbatch environment
 echo "start time: $(date)"
@@ -28,7 +28,6 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate genomic-fm
 wandb offline
 
-#python test_bend_wrapper.py
+python test_finetune_delta.py --dataset='mave_score_hyena-tiny' --epochs=1 --gpus=1 --num_workers=16
 
-python test_finetune_delta.py --dataset='clinvar_CLNDN_hyena-tiny' --epochs=100 --gpus=1 --num_workers=16
 

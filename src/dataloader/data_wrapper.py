@@ -85,7 +85,6 @@ class OligogenicDataWrapper:
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.urn_ids = get_all_urn_ids()
         self.all_records = all_records
 
     def __call__(self, *args: Any) -> Any:
@@ -98,8 +97,9 @@ class MAVEDataWrapper:
         else:
             data = []
             limit=len(self.urn_ids)
+            urn_ids = get_all_urn_ids()
 
-            for urn_id in tqdm(self.urn_ids[:limit], desc="Processing URN IDs"):
+            for urn_id in tqdm(urn_ids[:limit], desc="Processing URN IDs"):
                 score_set = get_score_set(urn_id)
                 for exp in score_set:
                     urn_id = exp.get('urn', None)
