@@ -37,6 +37,7 @@ clinvar_CLNDN_hyena-tiny:
   class: ClinVarDataWrapper
   task: classification
   target: CLNDN
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 13209 # number of unique diseases in the dataset
 
