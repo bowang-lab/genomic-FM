@@ -1,4 +1,5 @@
 from typing import Any
+from ..utils import save_as_jsonl, read_jsonl
 from ..sequence_extractor import GenomeSequenceExtractor, FastaStringExtractor, RandomSequenceExtractor
 from ..datasets.clinvar import load_clinvar
 from ..datasets.gene_ko.get_gene_knock_out import (
@@ -125,37 +126,41 @@ class MAVEDataWrapper:
 
     def get_data(self, Seq_length=20, target='score'):
         # return (x, y) pairs
-        data = []
-        limit=len(self.urn_ids)
+        if os.path.exists('./root/data/maves.jsonl'):
+            data = read_jsonl('./root/data/maves.jsonl')
+        else:
+            data = []
+            limit=len(self.urn_ids)
 
-        for urn_id in tqdm(self.urn_ids[:limit], desc="Processing URN IDs"):
-            score_set = get_score_set(urn_id)
-            for exp in score_set:
-                urn_id = exp.get('urn', None)
-                title = exp.get('title', None)
-                description = exp.get('description', None)
-                sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
-                annotation = ': '.join([title, description])
-                scores = get_scores(urn_id)
+            for urn_id in tqdm(self.urn_ids[:limit], desc="Processing URN IDs"):
+                score_set = get_score_set(urn_id)
+                for exp in score_set:
+                    urn_id = exp.get('urn', None)
+                    title = exp.get('title', None)
+                    description = exp.get('description', None)
+                    sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
+                    annotation = ': '.join([title, description])
+                    scores = get_scores(urn_id)
 
-                if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
-                    if not scores.empty:
-                        for index, row in scores.iterrows():
-                            if pd.notna(row['hgvs_nt']) and pd.notna(row[target]):
-                                reference = exp['targetGenes'][0]['sequence']
-                                alternate = get_alternate_dna_sequence(reference, row['hgvs_nt'])
+                    if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
+                        if not scores.empty:
+                            for index, row in scores.iterrows():
+                                if pd.notna(row['hgvs_nt']) and pd.notna(row[target]):
+                                    reference = exp['targetGenes'][0]['sequence']
+                                    alternate = get_alternate_dna_sequence(reference, row['hgvs_nt'])
 
-                                if alternate:
-                                    if len(reference) <= Seq_length:
-                                        x = [reference, alternate, annotation]
-                                        y = row[target]
-                                        data.append([x,y])
+                                    if alternate:
+                                        if len(reference) <= Seq_length:
+                                            x = [reference, alternate, annotation]
+                                            y = row[target]
+                                            data.append([x,y])
+            save_as_jsonl('./root/data/maves.jsonl')
         return data
 
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=True):
         self.num_records = num_records
-        self.gwas_catalogue = download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv', gwas_path='alternative')
+        self.gwas_catalog = download_file(file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv', gwas_path='alternative')
         self.trait_mappings = download_file(file_path='./root/data/gwas_catalog_trait-mappings_r2024-03-01.tsv', gwas_path='trait_mappings')
         self.all_records = all_records
         self.genome_extractor = GenomeSequenceExtractor()
@@ -165,28 +170,32 @@ class GWASDataWrapper:
 
     def get_data(self, Seq_length=20, target='P-Value'):
         # return (x, y) pairs
-        data = []
-        disease_to_efo = self.gwas_trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
-        for trait in tqdm(set(disease_to_efo.values())):
-            traits = [key for key, value in disease_to_efo.items() if value == trait]
-            risk_snps = get_risk_snps(self.gwas_catalog, trait)
-            for index, row in risk_snps.iterrows():
-                rsSNP = row['SNPS']
-                snp_details = extract_snp_details(self.gwas_catalog, rsSNP, trait)
-                if snp_details:
-                    summary_stats = get_summary_stats_for_snp(snp_details, trait)
-                    if summary_stats:
-                        record = {
-                            'Chromosome': snp_details['Chromosome'],
-                            'Position': int(snp_details['Position']),
-                            'Reference Base': snp_details['Reference'],
-                            'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
-                            'ID': rsSNP
-                        }
-                        reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
-                        x = [reference, alternate, trait]
-                        y = summary_stats[target]
-                        data.append([x,y])
+        if os.path.exists('./root/data/gwas.jsonl'):
+            data = load_json('./root/data/gwas.jsonl')
+        else:
+            data = []
+            disease_to_efo = self.trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
+            for trait in tqdm(set(disease_to_efo.values())):
+                traits = [key for key, value in disease_to_efo.items() if value == trait]
+                risk_snps = get_risk_snps(self.gwas_catalog, trait)
+                for index, row in risk_snps.iterrows():
+                    rsSNP = row['SNPS']
+                    snp_details = extract_snp_details(self.gwas_catalog, rsSNP, trait)
+                    if snp_details:
+                        summary_stats = get_summary_stats_for_snp(snp_details, trait)
+                        if summary_stats:
+                            record = {
+                                'Chromosome': snp_details['Chromosome'],
+                                'Position': int(snp_details['Position']),
+                                'Reference Base': snp_details['Reference'],
+                                'Alternate Base': [snp_details['Risk Allele'][0]],  # Adjust as needed
+                                'ID': rsSNP
+                            }
+                            reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
+                            x = [reference, alternate, trait]
+                            y = summary_stats[target]
+                            data.append([x,y])
+                            save_as_jsonl(data,'./root/data/gwas.jsonl')
         return data
 
 class ClinVarDataWrapper:

@@ -2,6 +2,7 @@ oligogenic_hyena-tiny:
   class: OligogenicDataWrapper
   task: classification
   Seq_length: 1024
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
 
@@ -9,7 +10,8 @@ mave_score_hyena-tiny:
   class: MAVEDataWrapper
   task: regression
   target: score
-  Seq_length: 2048
+  Seq_length: 1024
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
 
@@ -17,7 +19,8 @@ gwas_pval_hyena-tiny:
   class: GWASDataWrapper
   task: regression
   target: P-Value
-  Seq_length: 2048
+  Seq_length: 1024
+  pca_components: 16
   model_initiator_name: hyenadna-tiny-1k
   output_size: 1
 
