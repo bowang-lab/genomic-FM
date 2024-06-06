@@ -1,9 +1,10 @@
 import requests
 import os
+import zipfile
 
-def download_zenodo_files(record_id, save_dir='./root/data'):
+def download_zenodo_files(record_id='11502840', save_dir='./root/data'):
     """
-    Download all files from a Zenodo record into a specified directory.
+    Download all files from a Zenodo record into a specified directory and unzip if any zipped file is present.
 
     :param record_id: The Zenodo record ID to download files from.
     :param save_dir: The directory where files will be saved. Defaults to './root/data'.
@@ -37,7 +38,13 @@ def download_zenodo_files(record_id, save_dir='./root/data'):
             with open(file_path, 'wb') as f:
                 f.write(file_response.content)
 
-        print('All files downloaded successfully.')
+            # Check if the file is a zip file and unzip it
+            if zipfile.is_zipfile(file_path):
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(save_dir)
+                os.remove(file_path)  # Remove the zip file after extracting
+
+        print('All files downloaded and unzipped successfully.')
 
     except requests.RequestException as e:
         print(f"An error occurred: {e}")
