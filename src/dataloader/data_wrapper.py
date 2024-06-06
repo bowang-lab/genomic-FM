@@ -17,6 +17,7 @@ from ..datasets.maves.load_maves import get_all_urn_ids, get_score_set, get_scor
 from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
 from ..datasets.olida.load_olida import get_variant_combinations, load_and_process_negative_pairs
 import random
+from ..datasets.verified_GV.load_real_clinvar import load_real_clinvar
 
 
 from tqdm import tqdm
@@ -27,10 +28,42 @@ import pandas as pd
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
            'Mus musculus','Oncorhynchus mykiss', 'Plasmodium falciparum', 'Rattus norvegicus', 'Saccharomyces cerevisiae', 'Salmo salar', 'Schizosaccharomyces pombe', 'Sus scrofa', 'Scophthalmus maximus', 'Zea mays']
-ORGANISM = ['Adipose_Visceral_Omentum']
+ORGANISM = ['Whole_Blood']
+CELL_LINE = 0
 # ORGANISM = ['Adipose_Subcutaneous', 'Adipose_Visceral_Omentum', 'Adrenal_Gland', 'Artery_Aorta', 'Artery_Coronary', 'Artery_Tibial', 'Brain_Amygdala', 'Brain_Anterior_cingulate_cortex_BA24', 'Brain_Caudate_basal_ganglia', 'Brain_Cerebellar_Hemisphere', 'Brain_Cerebellum', 'Brain_Cortex', 'Brain_Frontal_Cortex_BA9', 'Brain_Hippocampus', 'Brain_Hypothalamus', 'Brain_Nucleus_accumbens_basal_ganglia', 'Brain_Putamen_basal_ganglia', 'Brain_Spinal_cord_cervical_c-1', 'Brain_Substantia_nigra',
                         # 'Breast_Mammary_Tissue', 'Cells_Cultured_fibroblasts', 'Cells_EBV-transformed_lymphocytes', 'Colon_Sigmoid', 'Colon_Transverse', 'Esophagus_Gastroesophageal_Junction', 'Esophagus_Mucosa', 'Esophagus_Muscularis', 'Heart_Atrial_Appendage', 'Heart_Left_Ventricle', 'Kidney_Cortex', 'Liver', 'Lung', 'Minor_Salivary_Gland', 'Muscle_Skeletal', 'Nerve_Tibial', 'Ovary', 'Pancreas', 'Pituitary', 'Prostate', 'Skin_Not_Sun_Exposed_Suprapubic', 'Skin_Sun_Exposed_Lower_leg', 'Small_Intestine_Terminal_Ileum', 'Spleen', 'Stomach', 'Testis', 'Thyroid',
                         # 'Uterus', 'Vagina', 'Whole_Blood']
+DISEASE_SUBSET = ['Lung_cancer','EGFR-related_lung_cancer','Lung_carcinoma','Autoimmune_interstitial_lung_disease-arthritis_syndrome','Global_developmental_delay_-_lung_cysts_-_overgrowth_-_Wilms_tumor_syndrome','Small_cell_lung_carcinoma','Chronic_lung_disease','Lung_adenocarcinoma','Lung_disease','Non-small_cell_lung_carcinoma','LUNG_CANCER','Squamous_cell_lung_carcinoma']
+
+
+class RealClinVar:
+    def __init__(self, num_records=10, all_records=True):
+        self.records = load_real_clinvar()
+        self.genome_extractor = GenomeSequenceExtractor()
+
+    def __call__(self, *args: Any) -> Any:
+        return self.get_data(*args)
+
+    def get_data(self, Seq_length=20, target='CLASS'):
+        data = []
+        for record in self.records:
+            ref,alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
+            if ref is None:
+                continue
+            x = [ref, alt, 0]
+            if target=='CLASS':
+                y = record['class']
+            elif target=='PHENOTYPE':
+                y = record['phenotype']
+                if y == '.':
+                    continue
+            data.append([x, y])
+        return data
+
+
+
+
+
 
 class OligogenicDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
@@ -192,7 +225,7 @@ class ClinVarDataWrapper:
         # Join the parts back together
         return '_'.join(parts)
 
-    def get_data(self, Seq_length=20, target='CLNSIG'):
+    def get_data(self, Seq_length=20, target='CLNSIG', disease_subset=False):
         # return (x, y) pairs
         data = []
         for record in tqdm(self.records):
@@ -221,10 +254,27 @@ class ClinVarDataWrapper:
                         if disease != 'not_provided':
                             data.append([x, self.convert_disease_name(disease)])
                             break
+        if disease_subset:
+            data_subset = []
+            # get the length of records with the disease subset
+            for i in range(len(data)):
+                if data[i][1] in DISEASE_SUBSET:
+                    data[i][1]  = DISEASE_SUBSET[0]
+                    data_subset.append(data[i])
+            num_record_with_dis_subset = len(data_subset)
+            # get the same number of other records
+            for i in range(len(data)):
+                if num_record_with_dis_subset == 0:
+                    break
+                if data[i][1] not in DISEASE_SUBSET:
+                    data[i][1] = 'Other_disease'
+                    data_subset.append(data[i])
+                num_record_with_dis_subset -= 1
+            return data_subset
         return data
 
 class GeneKoDataWrapper:
-    def __init__(self, num_records=100, all_records=True):
+    def __init__(self, num_records=1000, all_records=True):
         self.num_records = num_records
         self.fitness_scores = create_fitness_scores_dataframe()
         self.genome_extractor = GenomeSequenceExtractor()
@@ -235,7 +285,7 @@ class GeneKoDataWrapper:
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, insert_Ns=False):
+    def get_data(self, Seq_length=20, insert_Ns=True):
         # return (x, y) pairs
         data = []
         for i in tqdm(range(self.num_records)):
@@ -246,8 +296,8 @@ class GeneKoDataWrapper:
                 continue
             cell_line, cell_line_score = self.flatten(gene)
 
-            x = [ref, alt, cell_line]
-            y = cell_line_score
+            x = [ref, alt, cell_line[CELL_LINE]]
+            y = cell_line_score[CELL_LINE]
             data.append([x, y])
         return data
 
@@ -303,20 +353,30 @@ class eQTLDataWrapper:
                 print(f"No records found for {organism}")
             if self.all_records:
                 self.num_records = len(records)
+            num_pos = 0
             for i in range(self.num_records):
                 row = records.iloc[i]
                 record = row['record']
                 slop = row['slope']
                 p_val = row['pval_nominal']
+                p_threshold = row['pval_nominal_threshold']
                 reference, alternate = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
                 if reference is None:
                     continue
                 x = [reference, alternate, organism]
                 if target == 'slope':
-                    y = slop
+                    if slop < 0:
+                        y = "negative"
+                    else:
+                        y = "positive"
+                        num_pos += 1
                 elif target == 'p_val':
-                    y = p_val
+                    if p_val < p_threshold:
+                        y = "significant"
+                    else:
+                        y = "not_significant"
                 data.append([x, y])
+            print(f"Number of positive examples: {num_pos} out of {self.num_records} total")
         return data
 
 class sQTLDataWrapper:

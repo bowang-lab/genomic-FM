@@ -1,11 +1,14 @@
 import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
 from sklearn.metrics import confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 import seaborn as sns
 import numpy as np
+from sklearn.decomposition import PCA
+from matplotlib.colors import ListedColormap
+import time
 
-def plot_clusters(vectors, labels, assignments, use_tsne=False, filename="test_cluster_visualization.pdf"):
+
+def plot_clusters(vectors, labels, assignments, filename="test_cluster_visualization.pdf"):
     """
     Visualizes the correlation between cluster assignments and true labels using a confusion matrix.
 
@@ -22,12 +25,6 @@ def plot_clusters(vectors, labels, assignments, use_tsne=False, filename="test_c
       The filename where the plot will be saved.
     """
 
-    if use_tsne:
-        print("Applying t-SNE...")
-        tsne = TSNE(n_components=2, random_state=42)
-        vectors = tsne.fit_transform(vectors)
-        print("t-SNE application complete.")
-
     # Convert labels and assignments to string to avoid data type issues
     labels = np.array(labels).astype(str)
     assignments = np.array(assignments).astype(str)
@@ -43,8 +40,46 @@ def plot_clusters(vectors, labels, assignments, use_tsne=False, filename="test_c
     plt.ylabel('True Labels')
 
     plt.savefig(filename)
-    plt.show()
+    # plt.show()
 
+def plot_clusters_scatter(vectors, labels, filename="plot_clusters_scatter.pdf"):
+    """
+    Visualizes the 2D distribution of the data using PCA and labels the points according to the real labels.
+
+    Parameters:
+    - vectors: array-like, shape (n_samples, n_features)
+      The data points to be plotted.
+    - labels: list or array, shape (n_samples,)
+      The ground truth labels for the data points.
+    - filename: str, optional
+      The filename where the plot will be saved.
+    """
+    unique_labels = np.unique(labels)
+    num_unique_labels = len(unique_labels)
+
+    # Generate a continuous colormap and then create a discrete colormap from it
+    continuous_cmap = plt.cm.get_cmap('tab20', 256)  # Switched to 'tab20' for more distinct colors
+    discrete_cmap = ListedColormap(continuous_cmap(np.linspace(0, 1, num_unique_labels)))  # Corrected linspace range
+
+    # Map each unique label to a specific color
+    label_to_color = dict(zip(unique_labels, discrete_cmap.colors))
+    color_labels = [label_to_color[label] for label in labels]
+    labels = np.array(labels)
+    # Perform PCA to reduce the dimensionality to 2D
+    pca = PCA(n_components=2)
+    reduced_vectors = pca.fit_transform(vectors)
+
+    plt.figure(figsize=(6, 6))
+    for i, label in enumerate(unique_labels):
+        idx = np.where(labels == label)
+        plt.scatter(reduced_vectors[idx, 0], reduced_vectors[idx, 1], label=label, color=discrete_cmap.colors[i], alpha=0.6)
+
+    plt.title('2D Distribution of Data with PCA')
+    plt.xlabel('PCA Component 1')
+    plt.ylabel('PCA Component 2')
+    plt.legend(title='Classes', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(filename)
 
 def compute_confusion_matrix(labels_int, labels_str):
     # Convert integer labels and string labels to numpy arrays if they aren't already
@@ -100,14 +135,17 @@ def compute_and_save_confusion_matrix(labels_int, labels_str, filename='confusio
 
 from src.variants_vector_index.vector_loader import VectorLoader
 
-vec_loader = VectorLoader(from_cache=True)
-
+vec_loader = VectorLoader(dataset='real_clinvar_hyena-tiny')
+# vec_loader = VectorLoader(dataset='real_clinvar_dnabert2',
+#                           checkpoint='/jmain02/home/J2AD015/axf03/zxl79-axf03/repository/genomic-FM-run-exp/genomic-FM/Run-GFM/eyrvqq7f/checkpoints/epoch=99-step=431100.ckpt')
+# vec_loader = VectorLoader(dataset='real_clinvar_dnabert2')
 ######
 # test cluster visualization
 ######
 print(f"num of classes in labels: {len(set(vec_loader.labels))}")
+plot_clusters_scatter(vec_loader.vectors, vec_loader.labels)
 
-assignments, dis = vec_loader.perform_clustering(n_clusters=4)
+assignments, dis = vec_loader.perform_clustering(n_clusters=5)
 compute_and_save_confusion_matrix(vec_loader.labels, assignments)
 # plot_clusters(vec_loader.vectors, vec_loader.labels, assignments)
 
@@ -118,9 +156,16 @@ compute_and_save_confusion_matrix(vec_loader.labels, assignments)
 
 query_vector = vec_loader.vectors[1]
 query_vector_label = vec_loader.labels[1]
-distances, result_labels, indices = vec_loader.query_vectors(query_vector, k=1)
-mapped_result_labels = np.array([i.item() for i in result_labels])
+start_time = time.time()
+distances, result_labels, indices = vec_loader.query_vectors(query_vector, k=20)
+end_time = time.time()
+query_time = end_time - start_time
+# mapped_result_labels = np.array([i.item() for i in result_labels])
+mapped_result_labels = result_labels
 print(f"Unique Counts: {np.unique(mapped_result_labels, return_counts=True)}")
 print(f"Query vector label: {query_vector_label}")
 print(f"Distances: {distances}")
 print(f"Result labels: {result_labels}")
+print("========================")
+print(f"Query vector size: {query_vector.shape}")
+print(f"Query time: {query_time} seconds")

@@ -1,0 +1,133 @@
+## 512
+clinvar_CLNDN-512_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 512
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2 # number of unique diseases in the dataset
+
+
+clinvar_CLNDN-512_dnabert2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 512
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: dnabert2
+  output_size: 2 # number of unique diseases in the dataset
+
+clinvar_CLNDN-512_nt:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 512
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_human_ref
+  output_size: 2 # number of unique diseases in the dataset
+
+
+clinvar_CLNDN-512_ntv2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 512
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 2 # number of unique diseases in the dataset
+
+
+## 256
+clinvar_CLNDN-256_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 256
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2 # number of unique diseases in the dataset
+
+
+clinvar_CLNDN-256_dnabert2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 256
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: dnabert2
+  output_size: 2 # number of unique diseases in the dataset
+
+clinvar_CLNDN-256_nt:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 256
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_human_ref
+  output_size: 2 # number of unique diseases in the dataset
+
+
+clinvar_CLNDN-256_ntv2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 256
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 2 # number of unique diseases in the dataset
+
+## 128
+clinvar_CLNDN-128_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 128
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2 # number of unique diseases in the dataset
+
+
+clinvar_CLNDN-128_dnabert2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 128
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: dnabert2
+  output_size: 2 # number of unique diseases in the dataset
+
+clinvar_CLNDN-128_nt:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 128
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_human_ref
+  output_size: 2 # number of unique diseases in the dataset
+
+
+clinvar_CLNDN-128_ntv2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 128
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 2 # number of unique diseases in the dataset
+
+######
+
+# OligogenicDataWrapper

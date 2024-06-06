@@ -5,16 +5,28 @@ import yaml
 
 def run():
     run = wandb.init()
-    run_training(dataset=wandb.config.dataset,
+    run_training(
+                 dataset="clinvar_CLNDN_hyena-tiny",
+                #  dataset="clinvar_CLNDN_hyena-tiny",
+                #  dataset="clinvar_CLNDN_hyena-tiny",
+                #  dataset="clinvar_CLNDN_hyena-tiny",
                  lr=wandb.config.lr,
-                 epochs=wandb.config.epochs,
-                 config_path=wandb.config.config_path,
-                 batch_size=wandb.config.batch_size,
-                 gpus=0,
+                 epochs=100,
+                 gpus=1,
                  seed=42,
+                 config_path="configs/finetune_hyena.yaml",
+                #  config_path="configs/finetune_dnabert2.yaml",
+                #  config_path="configs/finetune_nt.yaml",
+                #  config_path="configs/finetune_ntv2.yaml",
                  split_ratio=[0.8, 0.1, 0.1],
-                 num_workers=0,
-                 logger_name="wandb")
+                 batch_size=wandb.config.batch_size,
+                 num_workers=8,
+                 logger_name="wandb",
+                 disk_chunk=2500,
+                 cache_dir="root/data/npy_output_delta",
+                 model='train',
+                 checkpoint=None)
+
 
 def main():
     with open("configs/finetune_sweep.yaml", 'r') as f:

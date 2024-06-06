@@ -5,6 +5,7 @@ import os
 import sys
 from tqdm import tqdm
 import numpy as np
+from ..dataloader.save_as_np import apply_pca
 
 SUPORTED_MODELS = ['dnabert2', 'dnabert6','gena-lm-bigbird-base-t2t',
                    'gena-lm-bert-large-t2', 'hyenadna-large-1m',
@@ -77,6 +78,11 @@ class BaseModel(torch.nn.Module):
         new_data = []
         for x, y in tqdm(data, desc="Caching embeddings"):
             seq1, seq2 = self.model(x[0],upsample_embeddings=True), self.model(x[1],upsample_embeddings=True)
+            # if the length of seq1 and seq2 are not equal, truncate the longer sequence
+            if seq1.shape[1] != seq2.shape[1]:
+                min_length = min(seq1.shape[1], seq2.shape[1])
+                seq1 = seq1[:, :min_length]
+                seq2 = seq2[:, :min_length]
             new_data.append([[seq1-seq2,x[2]],y])
         return new_data
 
@@ -86,6 +92,9 @@ class BaseModel(torch.nn.Module):
         labels = []
         for x, y in tqdm(data, desc="Caching embeddings"):
             seq1, seq2 = self.model(x[0],upsample_embeddings=True), self.model(x[1],upsample_embeddings=True)
+            min_length = min(seq1.shape[1], seq2.shape[1])
+            seq1 = seq1[:, :min_length]
+            seq2 = seq2[:, :min_length]
             differences.append(seq2 - seq1)
             labels.append(y)
 

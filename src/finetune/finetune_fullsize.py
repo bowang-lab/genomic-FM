@@ -2,7 +2,7 @@ import torch
 import pytorch_lightning as pl
 from ..dataloader.iterable_dataset import IterableDataset
 from ..dataloader.pl_data_module import MyDataModule
-from ..dataloader.save_as_np import save_data_delta, get_cache_delta, map_to_class, has_cache
+from ..dataloader.save_as_np import save_data_delta, get_cache_delta, map_to_class, has_cache, apply_pca
 from ..dataloader.memmap_dataset_delta import MemMapDatasetDelta
 from ..model_wrapper.pl_model_fullsize import MyLightningModuleFullsize
 from ..model_wrapper.linear_nn import LinearNN
@@ -65,7 +65,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--num_workers", type=int, default=0, help="Number of workers for data loading")
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
-    parser.add_argument("--disk_chunk", type=int, default=2500, help="Number of chunks to split the data into for saving to disk")
+    parser.add_argument("--disk_chunk", type=int, default=100, help="Number of chunks to split the data into for saving to disk")
     parser.add_argument("--cache_dir", type=str, default="root/data/npy_output_delta", help="Directory to save the cached embeddings")
     parser.add_argument("--mode", type=str, default="train", help="Mode to run the script (train, test)")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint")
@@ -75,7 +75,7 @@ def parse_args():
 def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None, fullsize=True):
     if logger_name == "wandb":
         run_name = f"{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
-        wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
+        wandb_logger = WandbLogger(name=run_name, project="RUN-GFM")
     else:
         wandb_logger = None
     # Load configuration file
@@ -86,13 +86,14 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
     pca_components = info.pop('pca_components')
     model = CNN_Head(model_initiator_name=info.pop('model_initiator_name'),
                      output_size=info.pop('output_size'),
-                     base_model_output_size=pca_components,full_size_file_tuning=fullsize)
+                     base_model_output_size=pca_components)
     task = info.pop('task')
 
     cache_dir = cache_dir + "_" +dataset
     if not os.path.exists(cache_dir):
         os.mkdir(cache_dir)
     print(cache_dir)
+    print(f">>>> Disc Chunk: {disk_chunk}")
     if fullsize:
         cls = getattr(data_wrapper, info.pop('class'))
         if 'num_records' in info and 'all_records' in info:
@@ -130,7 +131,15 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             cache_dir = destination_path + cache_dir.split('/')[-1]
             cache_data_ram = False
     if fullsize:
-        memmap_data = data
+        new_data = []
+        for i in range(0, len(data), disk_chunk):
+            embeddings = model.cache_embed_delta_with_annotation(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
+            seq1s = [np.array(d[0][0]) for d in embeddings]
+            seq1s = apply_pca(np.array(seq1s),n_components=pca_components)
+            for i, d in enumerate(embeddings):
+                d[0][0] = seq1s[i]
+            new_data.extend(embeddings)
+        memmap_data = new_data
     else:
         seq1_path, annot_path, label_path = get_cache_delta(dataset, cache_dir)
         y_type = np.float32 if task == 'regression' else np.int64
@@ -140,6 +149,7 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
                                     annotation_paths=annot_path,
                                     label_paths=label_path,
                                     label_dtype=y_type)
+    print(memmap_data[0])
     iterable_dataset = IterableDataset(data=memmap_data,
                                        task=task,
                                        transform=None,

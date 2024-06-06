@@ -5,8 +5,10 @@ import torch.optim as optim
 from torchmetrics import Accuracy
 from torchmetrics import AUROC
 # from torchmetrics.classification import MulticlassAUROC
-
-
+def log(t, eps=1e-20):
+    return torch.log(t.clamp(min=eps))
+def poisson_loss(pred, target):
+    return (pred - target * log(pred)).mean()
 class MyLightningModuleDelta(pl.LightningModule):
     def __init__(self, model, task='classification', learning_rate=1e-3):
         super().__init__()
@@ -22,6 +24,10 @@ class MyLightningModuleDelta(pl.LightningModule):
         elif task == 'regression':
             self.accuracy = nn.MSELoss()
             self.test_accuracy = nn.MSELoss()
+        elif task == 'multi-value-regression':
+            self.accuracy = poisson_loss
+            self.accuracy = poisson_loss
+
     def forward(self, x):
         return self.model(x)
 

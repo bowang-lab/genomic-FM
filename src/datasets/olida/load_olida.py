@@ -24,7 +24,7 @@ def load_data(file_path):
 def get_gene_pairs():
     genepairs_df = load_data(files["genepairs"])
     genes_df = load_data(files["genes"])
-    
+
     split_genes = genepairs_df['Genes'].str.split(';', expand=True)
     if split_genes.shape[1] >= 2:
         genepairs_df['GeneName1'], genepairs_df['GeneName2'] = split_genes[0].str.strip(), split_genes[1].str.strip()
@@ -175,14 +175,15 @@ def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38
     # Iterate through each row in the DataFrame
     for _, row in data_1kgp.iterrows():
         try:
-            variant_combo_alternate = [] 
+            variant_combo_alternate = []
             variant_combo_reference = []
             for gene_variant in ['GeneA_variant', 'GeneB_variant']:
                 # Check if the gene_variant data is not NaN and is a string
                 if pd.isna(row[gene_variant]) or not isinstance(row[gene_variant], str):
                     raise ValueError(f"Invalid or missing variant data in row: {row}")
-                
+
                 # Extracting chromosome and position data
+
                 chrom, pos, ref, alt, zygosity = row[gene_variant].split('/')[0].split(':')
 
                 if genome == "hg19":                
@@ -198,6 +199,7 @@ def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38
                     new_pos += 1  # Convert back to 1-based
                 else:
                     new_chrom = chrom ; new_pos = pos                
+
 
                 # Create record for sequence extraction
                 record = {
@@ -233,10 +235,11 @@ def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38
 def get_olida(Seq_length, limit=None):
     variant_combinations = get_variant_combinations()
     data = []
+    genome_extractor = GenomeSequenceExtractor(Seq_length)
     for index, variant_combo in tqdm(enumerate(variant_combinations)):
         if limit and index >= limit:
             break
-        
+
         variant_combo_reference = []
         variant_combo_alternate = []
         if variant_combo['FINALmeta'] >= 1:
@@ -252,8 +255,7 @@ def get_olida(Seq_length, limit=None):
                                 'Alternate Base': variant_combo[variant]['Alt_Allele'],
                                 'ID': variant_combo['OLIDA_ID']
                             }
-                        
-                        genome_extractor = GenomeSequenceExtractor(Seq_length)
+
                         reference, alternate = genome_extractor.extract_sequence_from_record(record, Seq_length)
                         variant_combo_reference.append(reference)
                         variant_combo_alternate.append(alternate)
@@ -267,7 +269,7 @@ def get_olida(Seq_length, limit=None):
 
             except Exception as e:
                 print(f"Skipping variant combination due to error: {e}")
-                continue  
+                continue
 
     negative_examples = load_and_process_negative_pairs(Seq_length=Seq_length)
     data += negative_examples
