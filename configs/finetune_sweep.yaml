@@ -1,15 +1,11 @@
+controller:
+  type: local
 method: random
 metric:
   name: val_loss_epoch
   goal: minimize
 parameters:
-  dataset:
-    values: ['clinvar_CLNSIG_hyena-tiny']
-  config_path:
-    values: ['configs/finetune.yaml']
   lr:
     values: [0.0001, 0.0005, 0.001, 0.005, 0.01]
   batch_size:
-    values: [16, 32]
-  epochs:
-    values: [5, 10, 20]
+    values: [16, 32, 64]

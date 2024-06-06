@@ -27,9 +27,56 @@ clinvar_CLNSIG_hyena-tiny:
   target: CLNSIG
   Seq_length: 1024
   pca_components: 16
+  final_pca_components: 1
   model_initiator_name: hyenadna-tiny-1k
-  num_records: 50000
+  num_records: 40000
   all_records: False
+  output_size: 4
+
+real_clinvar_hyena-tiny:
+  class: RealClinVar
+  task: classification
+  target: CLASS
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+
+real_clinvar_random:
+  class: RealClinVar
+  task: classification
+  target: CLASS
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+
+real_clinvar_dnabert2:
+  class: RealClinVar
+  task: classification
+  target: CLASS
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: dnabert2
+  output_size: 4
+
+real_clinvar_nt:
+  class: RealClinVar
+  task: classification
+  target: CLASS
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: nt_transformer_human_ref
+  output_size: 4
+
+real_clinvar_ntv2:
+  class: RealClinVar
+  task: classification
+  target: CLASS
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 4
 
 clinvar_CLNDN_hyena-tiny:
   class: ClinVarDataWrapper

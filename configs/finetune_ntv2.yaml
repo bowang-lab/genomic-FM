@@ -1,0 +1,41 @@
+clinvar_CLNDN_ntv2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 1024
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 2 # number of unique diseases in the dataset
+
+
+sqtl_pval_ntv2:
+  class: sQTLDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 16
+  target: p_val
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 2
+
+geneko-single_ntv2:
+  class: GeneKoDataWrapper
+  task: regression
+  Seq_length: 1024
+  insert_Ns: False
+  model_initiator_name: nt_transformer_v2_500m
+  pca_components: 16
+  output_size: 1
+
+clinvar_CLNSIG_ntv2:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNSIG
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: nt_transformer_v2_500m
+  output_size: 4
+
+######
+
+# OligogenicDataWrapper

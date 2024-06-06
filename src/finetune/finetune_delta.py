@@ -75,7 +75,7 @@ def parse_args():
 def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None):
     if logger_name == "wandb":
         run_name = f"Formal_{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
-        wandb_logger = WandbLogger(name=run_name, project="Genomic-FM")
+        wandb_logger = WandbLogger(name=run_name, project="Run-GFM")
     else:
         wandb_logger = None
     # Load configuration file
@@ -105,7 +105,9 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         x_class, y_class = map_to_class(data, task, dataset,path=cache_dir)
         print(f"Mapped x_class: {x_class}")
         print(f"Mapped y_class: {y_class}")
-        for i in range(0, len(data), disk_chunk):
+        start_idx =  0
+        end_idx = len(data)
+        for i in range(0+start_idx, end_idx, disk_chunk):
             embeddings = model.cache_embed_delta_with_annotation(data[i:i+disk_chunk]) # Pre-compute embeddings for the data
             save_data_delta(embeddings, base_filename=dataset, base_index=i,pca_components=pca_components,
                             base_dir=cache_dir)
@@ -117,6 +119,8 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
             print("RAM disk is not mounted, loading data to RAM at dataloader level,"
                   "this will be slower than loading to RAM disk!")
         else:
+            # clear the cache directory first
+            # subprocess.run(["rm", "-r", destination_path], check=True)
             subprocess.run(["cp", "-r", cache_dir, destination_path], check=True)
             cache_dir = destination_path + cache_dir.split('/')[-1]
             cache_data_ram = False
@@ -164,6 +168,9 @@ def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batc
         trainer.test(lightning_module, data_module)
     elif mode == "test":
         lightning_module = MyLightningModuleDelta.load_from_checkpoint(model=model, checkpoint_path=checkpoint)
+        trainer = pl.Trainer(**trainer_args)
+        trainer.test(lightning_module, data_module)
+    elif mode == "random":
         trainer = pl.Trainer(**trainer_args)
         trainer.test(lightning_module, data_module)
 

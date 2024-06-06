@@ -1,0 +1,100 @@
+clinvar_CLNDN_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNDN
+  Seq_length: 1024
+  pca_components: 16
+  disease_subset: True
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2 # number of unique diseases in the dataset
+
+
+sqtl_pval_hyena-tiny:
+  class: sQTLDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 16
+  target: p_val
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2
+
+
+geneko-single_hyena-tiny:
+  class: GeneKoDataWrapper
+  task: regression
+  Seq_length: 1024
+  insert_Ns: False
+  model_initiator_name: hyenadna-tiny-1k
+  pca_components: 16
+  output_size: 1
+
+##
+clinvar_CLNSIG_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNSIG
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+
+######
+clinvar_CLNSIG_hyena-tiny:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNSIG
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 4
+
+geneko_hyena-tiny:
+  class: GeneKoDataWrapper
+  task: multi-value-regression
+  Seq_length: 1024
+  insert_Ns: False
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1107
+  pca_components: 16
+
+geneko-single_hyena-tiny:
+  class: GeneKoDataWrapper
+  task: regression
+  Seq_length: 1024
+  insert_Ns: False
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1107
+  pca_components: 16
+  output_size: 1
+
+eqtl_pval_hyena-tiny:
+  class: eQTLDataWrapper
+  task: regression
+  target: p_val
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+eqtl_slope_hyena-tiny:
+  class: eQTLDataWrapper
+  task: regression
+  target: slope
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 1
+
+cellpassport_hyena-tiny:
+  class: CellPassportDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 128
+  model_initiator_name: hyenadna-tiny-1k
+  output_size: 2
+
+# DNAbert2
+sqtl_slope_dnabert2:
+  class: sQTLDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 16
+  target: slope
+  model_initiator_name: dnabert2
+  output_size: 2

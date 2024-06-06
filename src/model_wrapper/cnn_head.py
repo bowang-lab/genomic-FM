@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from .common_blocks import ConvBlock, FeedforwardNetwork
 import math
-
+from ..dataloader.save_as_np import apply_pca
 
 class CNN_Head(BaseModel):
     def __init__(self, model_initiator_name, output_size, base_model_output_size=None, num_cnn_layers=5, kernel_sizes=[5], ff=True, dropout_rate=0.5,full_size_file_tuning=False):
@@ -51,6 +51,11 @@ class CNN_Head(BaseModel):
         # x = x.reshape(x.size(0), -1)
         x = self.dropout(x)
         x = self.linear(x)
+        return x
+    def cache_embed_cnn_delta(self, data, pca_components=16):
+        x = self.conv_layers(data)
+        x = x.detach().numpy()
+        x = apply_pca(x, n_components=pca_components)
         return x
 
 

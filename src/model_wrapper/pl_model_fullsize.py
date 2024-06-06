@@ -5,14 +5,19 @@ import torch.optim as optim
 from torchmetrics import Accuracy
 from torchmetrics import AUROC
 # from torchmetrics.classification import MulticlassAUROC
-
-
+def log(t, eps=1e-20):
+    return torch.log(t.clamp(min=eps))
+def poisson_loss(pred, target):
+    return (pred - target * log(pred)).mean()
 class MyLightningModuleFullsize(pl.LightningModule):
     def __init__(self, model, task='classification', learning_rate=1e-3):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
-        self.loss_function = nn.CrossEntropyLoss() if task == 'classification' else nn.MSELoss()
+        if task == 'multi-value-regression':
+            self.loss_function = poisson_loss
+        else:
+            self.loss_function = nn.CrossEntropyLoss() if task == 'classification' else nn.MSELoss()
         self.task = task
         if task == 'classification':
             # warning: AUROC is very slow to compute, so it should be used sparingly for test set evaluation
@@ -22,13 +27,18 @@ class MyLightningModuleFullsize(pl.LightningModule):
         elif task == 'regression':
             self.accuracy = nn.MSELoss()
             self.test_accuracy = nn.MSELoss()
+        elif task == 'multi-value-regression':
+            self.loss_function = poisson_loss
+            self.accuracy = nn.MSELoss()
+            self.test_accuracy = nn.MSELoss()
+
     def forward(self, x):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        seq = batch[0][:2]
-        annotation = batch[0][2]
-        y = batch[1]
+        seq = batch[0][0].squeeze(1)
+        annotation = batch[0][1]
+        y = batch[1].squeeze(1)
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if self.task == 'classification':
@@ -41,9 +51,10 @@ class MyLightningModuleFullsize(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        seq = batch[0][:2]
-        annotation = batch[0][2]
-        y = batch[1]
+
+        seq = batch[0][0].squeeze(1)
+        annotation = batch[0][1]
+        y = batch[1].squeeze(1)
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)
         if  self.task == 'classification':
@@ -58,9 +69,9 @@ class MyLightningModuleFullsize(pl.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        seq = batch[0][:2]
-        annotation = batch[0][2]
-        y = batch[1]
+        seq = batch[0][0].squeeze(1)
+        annotation = batch[0][1]
+        y = batch[1].squeeze(1)
         # logits = self.forward(alt) - self.forward(ref)
         logits =  self.forward(seq)
         loss = self.loss_function(logits, y)

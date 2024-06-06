@@ -93,6 +93,7 @@ def map_to_class(data, task='classification', dataset_name="test", path='root/da
     x_count = 0
     y_count = 0
     y_values = [element[1] for element in data if task == 'regression']
+    y_buffer = [] if task == 'multi-value-regression' else None
     if task == 'regression':
         mean_y = np.mean(y_values)
         std_y = np.std(y_values)
@@ -103,19 +104,23 @@ def map_to_class(data, task='classification', dataset_name="test", path='root/da
         element = data[i]
         x, y = element
         annotation = x[2]
-        if annotation not in x_class:
-            x_class[annotation] = x_count
-            x_count += 1
-        x[2] = x_class[annotation]
-        if task == 'classification':
-            if y not in y_class:
-                y_class[y] = y_count
-                y_count += 1
-            element[1] = y_class[y]
-        if task == 'regression':
-            # ensure y is torch tensor float
-            y_standardized = (y - mean_y) / std_y
-            element[1] = torch.tensor(y_standardized, dtype=torch.float32)
+        if task == 'multi-value-regression':
+            element[1] = torch.tensor(y, dtype=torch.float32)
+            x[2] = 0
+        else:
+            if annotation not in x_class:
+                x_class[annotation] = x_count
+                x_count += 1
+            x[2] = x_class[annotation]
+            if task == 'classification':
+                if y not in y_class:
+                    y_class[y] = y_count
+                    y_count += 1
+                element[1] = y_class[y]
+            if task == 'regression':
+                # ensure y is torch tensor float
+                y_standardized = (y - mean_y) / std_y
+                element[1] = torch.tensor(y_standardized, dtype=torch.float32)
     with open(f'{path}/{dataset_name}_x_class.yaml', 'w') as f:
         yaml.dump(x_class, f)
     with open(f'{path}/{dataset_name}_y_class.yaml', 'w') as f:
