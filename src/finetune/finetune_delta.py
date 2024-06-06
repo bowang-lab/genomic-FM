@@ -69,13 +69,14 @@ def parse_args():
     parser.add_argument("--cache_dir", type=str, default="root/data/npy_output_delta", help="Directory to save the cached embeddings")
     parser.add_argument("--mode", type=str, default="train", help="Mode to run the script (train, test)")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint")
+    parser.add_argument("--project", type=str, default="Run-GFM", help="Name of the project in wandb")
     args = parser.parse_args()
     return args
 
-def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None):
+def run_training(dataset, lr, epochs, gpus, seed, config_path, split_ratio, batch_size, num_workers, logger_name, disk_chunk, cache_dir="root/data/npy_output", cache_data_ram=True, mode="train", checkpoint=None, project=None):
     if logger_name == "wandb":
         run_name = f"Formal_{dataset}_lr={lr}_epochs={epochs}_gpus={gpus}_seed={seed}_Time={time.time()}"
-        wandb_logger = WandbLogger(name=run_name, project="Run-GFM")
+        wandb_logger = WandbLogger(name=run_name, project=project)
     else:
         wandb_logger = None
     # Load configuration file
@@ -190,7 +191,8 @@ def main():
                  args.disk_chunk,
                  args.cache_dir,
                  mode=args.mode,
-                 checkpoint=args.checkpoint)
+                 checkpoint=args.checkpoint,
+                 project=args.project)
 
 if __name__ == "__main__":
     main()
