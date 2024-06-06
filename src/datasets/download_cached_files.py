@@ -1,5 +1,5 @@
-import requests
 import os
+import requests
 import zipfile
 
 def download_zenodo_files(record_id='11502840', save_dir='./root/data'):
@@ -29,6 +29,11 @@ def download_zenodo_files(record_id='11502840', save_dir='./root/data'):
             file_name = file['key']
             file_path = os.path.join(save_dir, file_name)
 
+            # Check if the file already exists
+            if os.path.exists(file_path):
+                print(f'{file_name} already exists. Skipping download.')
+                continue
+
             # Download each file
             print(f'Downloading {file_name}...')
             file_response = requests.get(file_url)
@@ -42,9 +47,12 @@ def download_zenodo_files(record_id='11502840', save_dir='./root/data'):
             if zipfile.is_zipfile(file_path):
                 with zipfile.ZipFile(file_path, 'r') as zip_ref:
                     zip_ref.extractall(save_dir)
-                os.remove(file_path)  # Remove the zip file after extracting
+                # os.remove(file_path)  # Remove the zip file after extracting
 
         print('All files downloaded and unzipped successfully.')
 
     except requests.RequestException as e:
         print(f"An error occurred: {e}")
+
+# Example usage
+download_zenodo_files()
