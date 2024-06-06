@@ -49,5 +49,4 @@ pip install faiss-cpu
 # tqdm
 tqdm
 
-
-
+pytorch-lightning==1.9.3

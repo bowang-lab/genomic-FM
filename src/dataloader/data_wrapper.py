@@ -155,7 +155,9 @@ class MAVEDataWrapper:
                                             y = row[target]
                                             data.append([x,y])
             save_as_jsonl('./root/data/maves.jsonl')
-        return data
+        if self.all_records:
+            return data
+        return data[:self.num_records]
 
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=True):
@@ -171,7 +173,7 @@ class GWASDataWrapper:
     def get_data(self, Seq_length=20, target='P-Value'):
         # return (x, y) pairs
         if os.path.exists('./root/data/gwas.jsonl'):
-            data = load_json('./root/data/gwas.jsonl')
+            data = read_jsonl('./root/data/gwas.jsonl')
         else:
             data = []
             disease_to_efo = self.trait_mappings.set_index('Disease trait')['EFO term'].to_dict()
@@ -196,7 +198,9 @@ class GWASDataWrapper:
                             y = summary_stats[target]
                             data.append([x,y])
                             save_as_jsonl(data,'./root/data/gwas.jsonl')
-        return data
+        if self.all_records:
+            return data
+        return data[:self.num_records]
 
 class ClinVarDataWrapper:
     def __init__(self, num_records=30000, all_records=True):
