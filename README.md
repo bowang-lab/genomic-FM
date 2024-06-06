@@ -39,6 +39,7 @@ cached raw data files from zenodo. This will save you time and bandwidth.
 ```bash
 python download_data.py
 ```
+Instead you can manually download the data from the Zenodo repository [here](https://zenodo.org/records/11502840). And save it locally in the `genomic-FM/root/data` directory.
 
 #### Accessing the Data
 
