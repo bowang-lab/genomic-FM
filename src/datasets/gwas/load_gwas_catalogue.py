@@ -109,8 +109,9 @@ def get_risk_snps(gwas_catalog, trait, pvalue_text_filter=None):
                      for the specified trait, optionally filtered by P-VALUE (TEXT).
     """
     # Filter by trait
-    filtered_data = gwas_catalog[gwas_catalog['DISEASE/TRAIT'].str.contains(trait, case=False, na=False)]
-    
+    escaped_trait = re.escape(trait)
+    filtered_data = gwas_catalog[gwas_catalog['DISEASE/TRAIT'].str.contains(escaped_trait, case=False, na=False)]
+     
     # If a filter is provided, apply it
     if pvalue_text_filter:
         filtered_data = filtered_data[filtered_data['P-VALUE (TEXT)'].str.contains(pvalue_text_filter, case=False, na=False, regex=True)]

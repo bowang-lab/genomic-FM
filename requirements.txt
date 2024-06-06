@@ -32,6 +32,12 @@ mavehgvs
 
 # BEND
 webdataset
+git-lfs
+einops
+omegaconf
+
+# wandb
+wandb
 
 # Olmo
 boto3
@@ -39,3 +45,9 @@ boto3
 # Vector index
 pip install faiss-gpu
 pip install faiss-cpu
+
+# tqdm
+tqdm
+
+
+
