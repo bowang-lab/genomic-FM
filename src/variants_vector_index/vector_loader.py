@@ -12,7 +12,7 @@ from ..model_wrapper.cnn_head import CNN_Head
 
 class VectorLoader:
     def __init__(self, dataset="clinvar_CLNSIG_hyena-tiny",
-                config_path="/jmain02/home/J2AD015/axf03/zxl79-axf03/repository/genomic-FM-run-exp/genomic-FM/configs/vector_index.yaml",
+                config_path=None,
                 from_cache=False, cache_dir="root/data/npy_output_delta", checkpoint=None, random=False):
         # Load configuration file
         with open(config_path, 'r') as f:

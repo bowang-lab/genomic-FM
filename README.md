@@ -127,8 +127,8 @@ sqtl_pval_dnabert2:
 Run the following script to finetune the model. Note that ```--project``` is needed for specifying the project name in wandb. The project name should be unique to avoid conflicts with other users.
 ```bash
 wandb offline # if GPU compute cannot access the internet
-python test_finetune_delta.py --dataset='sqtl_pval_dnabert2' --epochs=100 --gpus=1 --num_workers=8 --config=configs/finetune_dnabert2.yaml --seed=0 --project='GV-Rep'
-python test_finetune_delta.py --dataset='clinvar_CLNSIG_dnabert2' --epochs=100 --gpus=8 --num_workers=8 --config=configs/finetune_dnabert2.yaml --seed=0 --project='GV-Rep'
+python finetune.py --dataset='sqtl_pval_dnabert2' --epochs=100 --gpus=1 --num_workers=8 --config=configs/finetune_dnabert2.yaml --seed=0 --project='GV-Rep'
+python finetune.py --dataset='clinvar_CLNSIG_dnabert2' --epochs=100 --gpus=8 --num_workers=8 --config=configs/finetune_dnabert2.yaml --seed=0 --project='GV-Rep'
 ```
 
 #### Genetic Variants Indexing
