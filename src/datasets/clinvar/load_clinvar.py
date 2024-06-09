@@ -2,7 +2,7 @@ import os
 import subprocess
 import requests
 import gzip
-import vcf
+import vcfpy as vcf
 
 def download_file(vcf_file_path='./root/data/clinvar_20240416.vcf',
                   vcf_gz_path='clinvar_20240416.vcf.gz'):

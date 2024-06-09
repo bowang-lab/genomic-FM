@@ -2,7 +2,7 @@ import os
 import requests
 import gzip
 import zipfile
-import vcf
+import vcfpy as vcf
 
 def download_and_extract_cell_passport_file(url="https://cog.sanger.ac.uk/cmp/download/mutations_wgs_vcf_20221123.zip",
                                             folder_path='./root/data/',
