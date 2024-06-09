@@ -22,7 +22,7 @@ Then, install the dependencies
 
 
 ```bash
-pip install torch==2.0.0 torchvision
+pip install torch==2.2.0 torchvision
 pip install -r requirements.txt
 ```
 
@@ -30,7 +30,17 @@ Finall add  the submodule if you want to use the Genomic Foundation Models
 ```bash
 git submodule update --init --recursive
 ```
+For the use of Indexing functionality, `Faiss` is needed. Please install it using the following command:
+```bash
+# CPU-only version
+$ conda install -c pytorch faiss-cpu=1.8.0
 
+# GPU(+CPU) version
+$ conda install -c pytorch -c nvidia faiss-gpu=1.8.0
+
+# GPU(+CPU) version with NVIDIA RAFT
+$ conda install -c pytorch -c nvidia -c rapidsai -c conda-forge faiss-gpu-raft=1.8.0
+```
 ### Usage
 
 #### Dataset Download

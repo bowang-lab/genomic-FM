@@ -1,8 +1,8 @@
 # Specify the version constraint for setuptools
-setuptools<58
+setuptools
 
 # Basic libraries for handling VCF files
-pyvcf
+vcfpy
 
 # Other useful libraries for data handling and analysis
 pandas
@@ -42,11 +42,10 @@ wandb
 # Olmo
 boto3
 
-# Vector index
-pip install faiss-gpu
-pip install faiss-cpu
 
 # tqdm
 tqdm
 
 pytorch-lightning==1.9.3
+
+# conda install -c pytorch faiss-cpu=1.8.0
