@@ -110,6 +110,9 @@ data_loader = GWASDataWrapper(num_records=NUM_RECORDS, all_records=ALL_RECORDS)
 data = data_loader.get_data(Seq_length=SEQ_LEN)
 print(data)
 ```
+
+### Reproduction of Experiment
+
 #### Model Finetuning
 Ensure you have 1 GPU available for model finetuning. Note that you should define the config file in yaml format before running the script. And example of the config file ```finetune_dnabert2.yaml``` is shown below:
 
