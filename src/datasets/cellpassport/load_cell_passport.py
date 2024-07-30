@@ -4,6 +4,7 @@ import gzip
 import zipfile
 import vcfpy as vcf
 
+
 def download_and_extract_cell_passport_file(url="https://cog.sanger.ac.uk/cmp/download/mutations_wgs_vcf_20221123.zip",
                                             folder_path='./root/data/',
                                             zip_file_name='mutations_wgs_vcf_20221123.zip'):
@@ -112,8 +113,8 @@ def read_vcf(vcf_file_path, num_records=5, all_records=False, selected_info_fiel
                     "Position": record.POS,
                     "ID": record.ID,
                     "Reference Base": record.REF,
-                    "Alternate Base": record.ALT,
-                    "Format": record.FORMAT.split(':')
+                    "Alternate Base": [alt.value for alt in record.ALT] if record.ALT else [''],
+                    "Format": record.FORMAT
                 }
 
                 info_fields = selected_info_fields if selected_info_fields is not None else record.INFO.keys()
@@ -121,15 +122,14 @@ def read_vcf(vcf_file_path, num_records=5, all_records=False, selected_info_fiel
                     record_data[field] = get_info_field(record, field)
 
                 # Extracting sample-specific data
-                samples_data = {}
-                for sample in record.samples:
-                    sample_data = {}
-                    for format_key, format_value in zip(record.FORMAT.split(':'), sample.data):
-                        sample_data[format_key] = format_value
-                    samples_data[sample.sample] = sample_data
+                # samples_data = {}
+                # for sample in record.samples:
+                #     sample_data = {}
+                #     for format_key, format_value in zip(record.FORMAT, sample.data):
+                #         sample_data[format_key] = format_value
+                #     samples_data[sample.sample] = sample_data
 
-                record_data["Samples"] = samples_data
-
+                # record_data["Samples"] = samples_data
                 records.append(record_data)
 
                 count += 1
