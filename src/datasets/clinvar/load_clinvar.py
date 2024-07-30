@@ -74,7 +74,8 @@ def read_vcf(vcf_file_path, num_records=5, all_records=False):
             "Position": record.POS,
             "ID": record.ID,
             "Reference Base": record.REF,
-            "Alternate Base": record.ALT
+            # "Alternate Base": [alt.value for alt in record.ALT] if len(record.ALT) >= 1 else [""],
+            "Alternate Base": [alt.value for alt in record.ALT] if record.ALT else [''],
         }
 
         info_fields = ['AF_ESP', 'AF_EXAC', 'AF_TGP', 'ALLELEID', 'CLNDN', 'CLNDNINCL', 'CLNDISDB', 'CLNDISDBINCL',
