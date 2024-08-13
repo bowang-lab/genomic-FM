@@ -60,7 +60,8 @@ class BaseModel(torch.nn.Module):
             print(f"Model args: {model_args}")
             if not os.path.exists(model_args['model_path']):
                 # create the directory
-                os.makedirs(model_args['model_path'])
+                print(f"{model_args['model_path']}")
+                # os.makedirs(model_args['model_path'])
         return ModelClass(**model_args)
 
     def forward(self, x):

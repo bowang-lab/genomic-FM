@@ -6,6 +6,7 @@ import pyfaidx
 import requests
 import gzip
 import random
+from .encoding_region_filter import is_encoding, load_gtf
 
 class RandomSequenceExtractor:
     def __init__(self, fasta_file):
@@ -45,13 +46,17 @@ class RandomSequenceExtractor:
                     selected_sequences.append(sequence)
 
         return selected_sequences
-     
+
 class GenomeSequenceExtractor:
-    def __init__(self, fasta_file='./root/data/hg38.fa'):
+    def __init__(self, fasta_file='./root/data/hg38.fa', encoding_region_filter=None):
         self.fasta_file = fasta_file
         if not os.path.exists(fasta_file):
             self.run_bash_commands()
         self.fasta_extractor = FastaStringExtractor(fasta_file)
+        if encoding_region_filter is not None:
+            self.GTF = load_gtf()
+        else:
+            self.GTF = None
 
     def run_bash_commands(self):
         try:
@@ -105,6 +110,8 @@ class GenomeSequenceExtractor:
         # Create a Variant object using kipoiseq, which represents the genetic variant
         variant = kipoiseq.Variant(f"chr{chr}", pos, ref, alt, id=f'rs{variant_id}')
         # Extract the reference and alternate sequences surrounding the variant
+        if self.GTF is not None:
+            return self.extract_sequence(variant, sequence_length=sequence_length), is_encoding(self.GTF, f"chr{chr}", pos, pos)
         return self.extract_sequence(variant, sequence_length=sequence_length)
 
 class FastaStringExtractor:
