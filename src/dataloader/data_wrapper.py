@@ -13,7 +13,7 @@ from ..datasets.cellpassport.load_cell_passport import (
     extract_cell_line_annotation_from_vcf_file
 )
 from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
-from ..datasets.maves.load_maves import get_all_urn_ids, get_score_set, get_scores, get_alternate_dna_sequence
+from ..datasets.maves.load_maves import get_maves
 from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
 from ..datasets.olida.load_olida import get_variant_combinations, load_and_process_negative_pairs
 import random
@@ -118,47 +118,28 @@ class OligogenicDataWrapper:
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
-        self.urn_ids = get_all_urn_ids()
         self.all_records = all_records
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20, target='score'):
-        # return (x, y) pairs
+    def get_data(self, Seq_length=20, target='score', sequence_type='dna', region_type=None):
         if os.path.exists('./root/data/maves.jsonl'):
             data = read_jsonl('./root/data/maves.jsonl')
         else:
-            data = []
-            limit=len(self.urn_ids)
+            if region_type is not None:
+                file_name = f'./root/data/maves_{sequence_type}_{region_type}_{Seq_length}.jsonl'
+            else:
+                file_name = f'./root/data/maves_{sequence_type}_{Seq_length}.jsonl'
+            data = get_maves(Seq_length=Seq_length, limit=None, target=target, sequence_type=sequence_type, region_type=region_type)
+            save_as_jsonl(data, file_name)
 
-            for urn_id in tqdm(self.urn_ids[:limit], desc="Processing URN IDs"):
-                score_set = get_score_set(urn_id)
-                for exp in score_set:
-                    urn_id = exp.get('urn', None)
-                    title = exp.get('title', None)
-                    description = exp.get('description', None)
-                    sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
-                    annotation = ': '.join([title, description])
-                    scores = get_scores(urn_id)
 
-                    if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
-                        if not scores.empty:
-                            for index, row in scores.iterrows():
-                                if pd.notna(row['hgvs_nt']) and pd.notna(row[target]):
-                                    reference = exp['targetGenes'][0]['sequence']
-                                    alternate = get_alternate_dna_sequence(reference, row['hgvs_nt'])
-
-                                    if alternate:
-                                        if len(reference) <= Seq_length:
-                                            x = [reference, alternate, annotation]
-                                            y = row[target]
-                                            data.append([x,y])
-            save_as_jsonl('./root/data/maves.jsonl')
         if self.all_records:
             return data
+        
         return data[:self.num_records]
-
+    
 class GWASDataWrapper:
     def __init__(self, num_records=2000, all_records=True):
         self.num_records = num_records

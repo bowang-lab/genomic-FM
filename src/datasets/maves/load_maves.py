@@ -6,7 +6,7 @@ import re
 from mavehgvs.patterns.dna import (
     dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c, dna_delins_c,
     dna_sub_gmo, dna_del_gmo, dna_ins_gmo, dna_dup_gmo, dna_delins_gmo,
-    dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n, dna_delins_n,
+    dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n, dna_delins_n,  dna_single_variant,
     dna_multi_variant, dna_equal_c, dna_equal_gmo, dna_equal_n
 )
 from tqdm import tqdm
@@ -129,7 +129,7 @@ def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
 
     prefix = hgvs_nt.split('.')[0] + '.'
     if prefix not in prefix_patterns:
-        print(f"Error: Prefix {prefix} not recognized.")
+        print(f"Error: Prefix {hgvs_nt} not recognized.")
         return None
 
     changes = re.findall(r'\[(.*?)\]', hgvs_nt)[0].split(';') if '[' in hgvs_nt else [hgvs_nt[len(prefix):]]
@@ -150,14 +150,14 @@ def get_alternate_dna_sequence(dna_sequence, hgvs_nt):
 
     return modified_sequence
 
-def get_maves(Seq_length=1024, limit = None, target='score'):
+def get_maves(Seq_length=1024, limit = None, target='score', sequence_type='dna', region_type=None):
     urn_ids = get_all_urn_ids()
     avail = 0
     total = 0
     n_studies = 0
     data = [] 
 
-    for study_num, urn_id in tqdm(enumerate(urn_ids)):
+    for study_num, urn_id in tqdm(enumerate(urn_ids), total=len(urn_ids), desc="Processing studies"):
         score_set = get_score_set(urn_id)
 
         if limit and study_num >= limit:
@@ -167,29 +167,37 @@ def get_maves(Seq_length=1024, limit = None, target='score'):
             if not exp.get('targetGenes'):  # Check if targetGenes is empty or not present
                 print(f"Warning: No target genes found for {urn_id}")
                 continue  # Skip this entry if no target genes
-
-            print(exp)
+            
             urn_id = exp.get('urn', None)
             title = exp.get('title', None)
             description = exp.get('description', None)
             numVariants = exp.get('numVariants', None)
-            sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
+            exp_sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
             annotation = ': '.join([title, description])
 
             total += int(numVariants)  
             scores = get_scores(urn_id)
-            if isinstance(scores, pd.DataFrame) and sequence_type == "dna":
+            if isinstance(scores, pd.DataFrame) and (exp_sequence_type == sequence_type):
                 if not scores.empty:
                     if index == 0:
                         n_studies += 1
                     for index, row in scores.iterrows():
                         if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
+                            # Filter based on sequence_type
+                            hgvs_prefix = row['hgvs_nt'].split('.')[0] 
+                            if region_type == 'coding' and hgvs_prefix != 'c':
+                                continue
+                            elif region_type == 'noncoding' and hgvs_prefix != 'n':
+                                continue
+
+                            print(exp)
+                            
                             alt = get_alternate_dna_sequence(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
                             if alt:
                                 if len(exp["targetGenes"][0]["sequence"]) <= Seq_length:
                                     avail += 1 
                                     ref = exp["targetGenes"][0]["sequence"]
-                                    x = [ref, alt, annotation]
+                                    x = [ref, alt, f"{annotation}, Sequence Type: {exp_sequence_type}, HGVS Prefix: {hgvs_prefix}"]
                                     y = row[target]
                                     data.append([x,y])
                             else:
