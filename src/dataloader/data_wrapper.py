@@ -131,7 +131,7 @@ class MAVEDataWrapper:
                 file_name = f'./root/data/maves_{sequence_type}_{region_type}_{Seq_length}.jsonl'
             else:
                 file_name = f'./root/data/maves_{sequence_type}_{Seq_length}.jsonl'
-            data = get_maves(Seq_length=Seq_length, limit=self.num_records, target=target, sequence_type=sequence_type, region_type=region_type)
+            data = get_maves(Seq_length=Seq_length, limit=None, target=target, sequence_type=sequence_type, region_type=region_type)
             save_as_jsonl(data, file_name)
 
 
