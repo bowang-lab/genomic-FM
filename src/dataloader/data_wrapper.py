@@ -127,11 +127,17 @@ class MAVEDataWrapper:
         if os.path.exists('./root/data/maves.jsonl'):
             data = read_jsonl('./root/data/maves.jsonl')
         else:
-            data = get_maves(Seq_length=Seq_length, limit=None, target=target, sequence_type=sequence_type, region_type=region_type)
-            save_as_jsonl(data, './root/data/maves.jsonl')
+            if region_type is not None:
+                file_name = f'./root/data/maves_{sequence_type}_{region_type}_{Seq_length}.jsonl'
+            else:
+                file_name = f'./root/data/maves_{sequence_type}_{Seq_length}.jsonl'
+            data = get_maves(Seq_length=Seq_length, limit=self.num_records, target=target, sequence_type=sequence_type, region_type=region_type)
+            save_as_jsonl(data, file_name)
+
 
         if self.all_records:
             return data
+        
         return data[:self.num_records]
     
 class GWASDataWrapper:

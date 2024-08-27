@@ -167,7 +167,7 @@ def get_maves(Seq_length=1024, limit = None, target='score', sequence_type='dna'
             if not exp.get('targetGenes'):  # Check if targetGenes is empty or not present
                 print(f"Warning: No target genes found for {urn_id}")
                 continue  # Skip this entry if no target genes
-            print(exp)
+            
             urn_id = exp.get('urn', None)
             title = exp.get('title', None)
             description = exp.get('description', None)
@@ -177,20 +177,21 @@ def get_maves(Seq_length=1024, limit = None, target='score', sequence_type='dna'
 
             total += int(numVariants)  
             scores = get_scores(urn_id)
-            if isinstance(scores, pd.DataFrame) and exp_sequence_type == sequence_type:
-                
+            if isinstance(scores, pd.DataFrame) and (exp_sequence_type == sequence_type):
                 if not scores.empty:
                     if index == 0:
                         n_studies += 1
                     for index, row in scores.iterrows():
                         if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
                             # Filter based on sequence_type
-                            hgvs_prefix = row['hgvs_nt'].split('.')[0] + '.'
+                            hgvs_prefix = row['hgvs_nt'].split('.')[0] 
                             if region_type == 'coding' and hgvs_prefix != 'c':
                                 continue
                             elif region_type == 'noncoding' and hgvs_prefix != 'n':
                                 continue
 
+                            print(exp)
+                            
                             alt = get_alternate_dna_sequence(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
                             if alt:
                                 if len(exp["targetGenes"][0]["sequence"]) <= Seq_length:
