@@ -198,3 +198,16 @@ The Clinician verified GV set is under the CC BY-SA 4.0 license, and the code is
 
 [^1]: [https://depmap.sanger.ac.uk/documentation/data-usage-policy/](https://depmap.sanger.ac.uk/documentation/data-usage-policy/)
 [^2]: [https://opensource.org/license/mit/](https://opensource.org/license/mit/)
+
+## 🎓 Citation
+
+Cite `GV-Rep` (NeurIPS 2024) when you use it in a project or a research paper:
+
+```
+@article{li2024gv,
+  title={GV-Rep: A Large-Scale Dataset for Genetic Variant Representation Learning},
+  author={Li, Zehui and Subasri, Vallijah and Stan, Guy-Bart and Zhao, Yiren and Wang, Bo},
+  journal={arXiv preprint arXiv:2407.16940},
+  year={2024}
+}
+```
