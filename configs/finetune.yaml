@@ -105,3 +105,12 @@ sqtl_slope_dnabert2:
   target: slope
   model_initiator_name: dnabert2
   output_size: 2
+
+heart_test_finetune:
+  class: sQTLDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 16
+  target: slope
+  model_initiator_name: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
+  output_size: 2
