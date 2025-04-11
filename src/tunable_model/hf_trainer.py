@@ -16,6 +16,7 @@ from transformers import (
     set_seed
 )
 current_dir = os.path.dirname(os.path.abspath(__file__))
+test_only = True
 # Navigate to the parent of the parent directory
 # olmo_repo_path = os.path.abspath(os.path.join(current_dir, "..", "..", "OLmo-GFM"))
 # sys.path.append(olmo_repo_path)
@@ -71,6 +72,12 @@ class MultitaskTrainer(transformers.Trainer):
         """
         self.task_num_classes = task_num_classes
         super().__init__(*args, **kwargs)
+
+    def _save_state_dict(self):
+        state_dict = super()._save_state_dict()
+        if hasattr(self.model, 'task_classification_heads'):
+            state_dict['task_classification_heads'] = self.model.task_classification_heads.state_dict()
+        return state_dict
 
     def compute_loss(self, model, inputs, return_outputs=False,**kwargs):
         """
@@ -245,6 +252,11 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
             "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species",
             trust_remote_code=True
         )
+        if test_only:
+            model = AutoModelForSequenceClassification.from_pretrained(
+               "/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213",
+                trust_remote_code=True
+            )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -253,6 +265,24 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
     multitask_datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
         tokenizer,tasks[0], seed=seed
     )
+    if test_only:
+        state_dict = torch.load("/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213/pytorch_model.bin")
+        # Check for task-specific heads in state_dict
+        task_head_keys = [k for k in state_dict.keys() if k.startswith('task_classification_heads.')]
+        if task_head_keys:
+            if not hasattr(model, 'task_classification_heads'):
+                model.task_classification_heads = torch.nn.ModuleDict()
+            # Create task-specific classification heads for each task
+            for task in tasks:
+                if task not in model.task_classification_heads:
+                    num_classes = task_num_classes.get(task, 2)
+                    model.task_classification_heads[task] = torch.nn.Linear(
+                        model.config.hidden_size,
+                        num_classes
+                    ).to(model.device)
+            # Filter and load only task-specific head parameters
+            task_head_state = {k.replace('task_classification_heads.', ''): v for k, v in state_dict.items() if k.startswith('task_classification_heads.')}
+            model.task_classification_heads.load_state_dict(task_head_state)
 
     # Prepare Training Arguments
     training_args = TrainingArguments(
@@ -261,7 +291,7 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
         max_grad_norm=1.0,
         per_device_train_batch_size=8,
         per_device_eval_batch_size=16,
-        num_train_epochs=10,
+        num_train_epochs=2,
         evaluation_strategy="no",
         save_strategy="epoch",
         metric_for_best_model="matthews_correlation",
@@ -287,7 +317,8 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
     )
 
     # Training
-    trainer.train()
+    if not test_only:
+        trainer.train()
 
     # Evaluation and Logging
     test_metrics = {}
