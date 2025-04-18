@@ -4,8 +4,8 @@ import requests
 import gzip
 import vcfpy as vcf
 
-def download_file(vcf_file_path='./root/data/clinvar_20250409.vcf',
-                  vcf_gz_path='clinvar_20250409.vcf.gz'):
+def download_file(vcf_file_path='./root/data/clinvar_20240416.vcf',
+                  vcf_gz_path='clinvar_20240416.vcf.gz'):
     # Create the directory if it does not exist
     os.makedirs(os.path.dirname(vcf_file_path), exist_ok=True)
 
@@ -14,7 +14,7 @@ def download_file(vcf_file_path='./root/data/clinvar_20250409.vcf',
         print(f"{vcf_file_path} not found. Starting download...")
 
         # URL for the VCF file
-        url = f'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/weekly/{vcf_gz_path}'
+        url = f'https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/weekly/{vcf_gz_path}'
 
         try:
             # Download the file
@@ -84,8 +84,6 @@ def read_vcf(vcf_file_path, num_records=5, all_records=False):
                        'ONCINCL', 'ONCREVSTAT', 'ONCCONF', 'ORIGIN', 'RS', 'SCIDN', 'SCIDNINCL', 'SCIDISDB',
                        'SCIDISDBINCL', 'SCIREVSTAT', 'SCI', 'SCIINCL']
 
-        # print available fields
-        # print(record.INFO.keys())
         for field in info_fields:
             record_data[field] = get_info_field(record, field)
 
