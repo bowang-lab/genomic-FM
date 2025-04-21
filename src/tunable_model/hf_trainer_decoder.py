@@ -17,7 +17,6 @@ from transformers import (
 )
 current_dir = os.path.dirname(os.path.abspath(__file__))
 test_only = False
-decoder = False
 # Navigate to the parent of the parent directory
 # olmo_repo_path = os.path.abspath(os.path.join(current_dir, "..", "..", "OLmo-GFM"))
 # sys.path.append(olmo_repo_path)
@@ -115,47 +114,17 @@ class MultitaskTrainer(transformers.Trainer):
                 attention_mask=inputs['alt_attention_mask'],
                 output_hidden_states=True
             )
-            logits = None
-            if not decoder:
-                last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
-                last_hidden_state_alt = outputs_alt.hidden_states[-1][:,0,:]
-                last_hidden_state = last_hidden_state_alt - last_hidden_state_ref
-                logits = torch.zeros(
-                    (len(task_names), self.task_num_classes[task_names[0]]),
-                    device=last_hidden_state.device
-                )
-                for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
-                    logits[i] = model.task_classification_heads[task](hidden_state)
-            else:
-                ref_input_ids = inputs['ref_input_ids']
-                ref_attention_mask = inputs['ref_attention_mask']
-                alt_input_ids = inputs['alt_input_ids']
-                alt_attention_mask = inputs['alt_attention_mask']
 
-                # shape: (batch_size, seq_len, hidden_dim)
-                hidden_ref = outputs_ref.decoder_hidden_states[-1]
-                hidden_alt = outputs_alt.decoder_hidden_states[-1]
+            last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
+            last_hidden_state_alt = outputs_alt.hidden_states[-1][:,0,:]
+            last_hidden_state = last_hidden_state_alt - last_hidden_state_ref
+            logits = torch.zeros(
+                (len(task_names), self.task_num_classes[task_names[0]]),
+                device=last_hidden_state.device
+            )
 
-                # compute true sequence lengths so we know where the "last" token is
-                ref_seq_lens = ref_attention_mask.sum(dim=-1)  # (batch_size,)
-                alt_seq_lens = alt_attention_mask.sum(dim=-1)  # (batch_size,)
-
-                # build an index for batch dimension
-                batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_ref.device)
-
-                # select the last‐token vector for each example
-                last_ref = hidden_ref[batch_index, ref_seq_lens - 1, :]  # (batch_size, hidden_dim)
-                last_alt = hidden_alt[batch_index, alt_seq_lens - 1, :]  # (batch_size, hidden_dim)
-
-                # take the difference
-                last_hidden_state = last_alt - last_ref   # (batch_size, hidden_dim)
-                # run each sample’s difference vector through its task head
-                # (task_names is a list of length batch_size, one task per example)
-                logits = torch.stack([
-                    model.task_classification_heads[task](last_hidden_state[i])
-                    for i, task in enumerate(task_names)
-                ], dim=0)  # (batch_size, num_classes)
-
+            for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
+                logits[i] = model.task_classification_heads[task](hidden_state)
 
             loss_fct = torch.nn.CrossEntropyLoss()
             loss = loss_fct(logits, labels)
@@ -229,49 +198,20 @@ class MultitaskTrainer(transformers.Trainer):
             if not hasattr(model, 'task_classification_heads'):
                 raise ValueError("Task-specific classification heads not found. They should be created during training.")
 
-            if not decoder:
-                # Get last hidden state
-                last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
-                last_hidden_state_alt = outputs_alt.hidden_states[-1][:,0,:]
-                last_hidden_state = last_hidden_state_alt - last_hidden_state_ref
+            # Get last hidden state
+            last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
+            last_hidden_state_alt = outputs_alt.hidden_states[-1][:,0,:]
+            last_hidden_state = last_hidden_state_alt - last_hidden_state_ref
 
-                # Prepare logits using task-specific heads
-                logits = torch.zeros(
-                    (len(task_names), self.task_num_classes[task_names[0]]),
-                    device=last_hidden_state.device
-                )
-                # Apply task-specific heads
-                for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
-                    logits[i] = model.task_classification_heads[task](hidden_state)
-            else:
-                ref_input_ids = inputs['ref_input_ids']
-                ref_attention_mask = inputs['ref_attention_mask']
-                alt_input_ids = inputs['alt_input_ids']
-                alt_attention_mask = inputs['alt_attention_mask']
+            # Prepare logits using task-specific heads
+            logits = torch.zeros(
+                (len(task_names), self.task_num_classes[task_names[0]]),
+                device=last_hidden_state.device
+            )
 
-                # shape: (batch_size, seq_len, hidden_dim)
-                hidden_ref = outputs_ref.decoder_hidden_states[-1]
-                hidden_alt = outputs_alt.decoder_hidden_states[-1]
-
-                # compute true sequence lengths so we know where the "last" token is
-                ref_seq_lens = ref_attention_mask.sum(dim=-1)  # (batch_size,)
-                alt_seq_lens = alt_attention_mask.sum(dim=-1)  # (batch_size,)
-
-                # build an index for batch dimension
-                batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_ref.device)
-
-                # select the last‐token vector for each example
-                last_ref = hidden_ref[batch_index, ref_seq_lens - 1, :]  # (batch_size, hidden_dim)
-                last_alt = hidden_alt[batch_index, alt_seq_lens - 1, :]  # (batch_size, hidden_dim)
-
-                # take the difference
-                last_hidden_state = last_alt - last_ref   # (batch_size, hidden_dim)
-                # run each sample’s difference vector through its task head
-                # (task_names is a list of length batch_size, one task per example)
-                logits = torch.stack([
-                    model.task_classification_heads[task](last_hidden_state[i])
-                    for i, task in enumerate(task_names)
-                ], dim=0)  # (batch_size, num_classes)
+            # Apply task-specific heads
+            for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
+                logits[i] = model.task_classification_heads[task](hidden_state)
 
             # Compute loss if needed
             loss = None
@@ -317,12 +257,6 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
                "/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213",
                 trust_remote_code=True
             )
-    elif model_type=='dnabert2':
-        # requiring transformer 4.29.0
-        # tiktoken gdown tiktoken datasets wandb
-        # pip uninstall triton
-        model = AutoModelForSequenceClassification.from_pretrained(f"zhihan1996/DNABERT-2-117M",num_labels=class_num,trust_remote_code=True)
-        tokenizer = AutoTokenizer.from_pretrained("zhihan1996/DNABERT-2-117M", trust_remote_code=True)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 

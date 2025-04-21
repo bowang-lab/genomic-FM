@@ -241,6 +241,32 @@ class ClinVarDataWrapper:
                         if disease != 'not_provided':
                             data.append([x, self.convert_disease_name(disease)])
                             break
+            elif target == 'DISEASE_PATHOGENICITY':
+                # 1) only keep records that have at least one valid disease in CLNDN
+                if ('CLNDN' in record and
+                    record['CLNDN'] and
+                    record['CLNDN'][0] is not None and
+                    record['CLNDN'][0] != 'not_provided'):
+                    # 2) pull the pathogenicity info
+                    sig = record.get('CLNSIG', [])
+                    if not sig:
+                        continue
+                    y0 = sig[0]
+                    # 3) filter out uncertain/conflicting entries
+                    if y0 in ("Uncertain_significance",
+                            "Conflicting_classifications_of_pathogenicity",
+                            "not_provided"):
+                        continue
+                    # 4) normalize combined categories
+                    if y0 == 'Pathogenic/Likely_pathogenic':
+                        y0 = 'Likely_pathogenic'
+                    elif y0 == 'Benign/Likely_benign':
+                        y0 = 'Likely_benign'
+                    # 5) only accept the four clean labels
+                    if y0 not in ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']:
+                        continue
+                    data.append([x, y0])
+
         if disease_subset and target == 'CLNDN':
             data_subset = []
             # get the length of records with the disease subset

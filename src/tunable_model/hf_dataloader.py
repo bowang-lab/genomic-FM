@@ -76,7 +76,7 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
         label_to_id = {label: idx for idx, label in enumerate(all_labels)}
         num_labels = len(all_labels)
         print(f"Found {num_labels} unique disease labels")
-    elif target == 'CLNSIG':
+    elif target == 'CLNSIG' or 'DISEASE_PATHOGENICITY':
         task_name = 'CLNSIG'
         all_labels = ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']
         label_to_id = {label: idx for idx, label in enumerate(all_labels)}
