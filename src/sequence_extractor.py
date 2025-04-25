@@ -120,7 +120,11 @@ class FastaStringExtractor:
         self._chromosome_sizes = {k: len(v) for k, v in self.fasta.items()}
         synonynms_file = './root/data/chromAliases.txt'
         if not os.path.exists(synonynms_file):
-            self.download_synonyms()
+            if os.path.exists('/mnt/data/genomic_fm/data/chromAliases.txt'):
+                synonynms_file = '/mnt/data/genomic_fm/data/chromAliases.txt'
+            else:
+                self.download_synonyms()
+                synonynms_file = './root/data/chromAliases.txt'
         # mapping the NCBI chromosome names to UCSC chromosome names if necessary
         self.chrom_synonyms = self.read_synonyms(synonynms_file)
 

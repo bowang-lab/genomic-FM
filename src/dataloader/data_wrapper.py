@@ -184,11 +184,13 @@ class GWASDataWrapper:
 
 class ClinVarDataWrapper:
     def __init__(self, num_records=30000, all_records=True):
-        self.clinvar_vcf_path = load_clinvar.download_file()
+        # self.clinvar_vcf_path = load_clinvar.download_file()
+        self.clinvar_vcf_path = load_clinvar.download_file(vcf_file_path='/mnt/data/genomic_fm/data/clinvar_20250409.vcf') # for amlt
         self.records = load_clinvar.read_vcf(self.clinvar_vcf_path,
                                              num_records=num_records,
                                              all_records=all_records)
-        self.genome_extractor = GenomeSequenceExtractor()
+        # self.genome_extractor = GenomeSequenceExtractor()
+        self.genome_extractor = GenomeSequenceExtractor('/mnt/data/genomic_fm/data/hg19.fa') # for amlt
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)

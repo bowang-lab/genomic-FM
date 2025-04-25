@@ -81,3 +81,7 @@ lightning_logs/
 # Slurm #
 ########
 slurm-*
+# amlt
+amlt_setup.sh
+amlt.yaml
+.amltignore

@@ -289,8 +289,7 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
     set_seed(seed)
 
     # Configuration
-    path_prefix = "/home/v-zehuili/repositories/genomic-FM/root"
-    cache_dir = f"{path_prefix}/cache_directory"
+    path_prefix = "/mnt/data/genomic_fm/finetune" # for amlt
     results_file = f"{path_prefix}/test_results_multitask.csv"
 
     # Model and Tokenizer Selection
