@@ -3,21 +3,49 @@ from torch import nn
 from typing import Any, Dict, List, Optional, Tuple, Union
 from transformers import PreTrainedModel
 
+class BertPooler(nn.Module):
+    """ some models needs a pooler layer applied to hidden states, some models do not need a pooler layer"""
+    def __init__(self, config):
+        super(BertPooler, self).__init__()
+        if hasattr(config,"hidden_size"):
+            hidden_size = config.hidden_size
+        else:
+            hidden_size = config.d_model
+        self.dense = nn.Linear(hidden_size, hidden_size)
+        self.activation = nn.Tanh()
+
+    def forward(self,
+                hidden_states: torch.Tensor,
+                pool: Optional[bool] = True) -> torch.Tensor:
+        # We "pool" the model by simply taking the hidden state corresponding
+        # to the first token.
+        pooled_output = self.dense(hidden_states)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
+
 class WrappedModelWithClassificationHead(nn.Module):
-    def __init__(self, base_model, num_classes, decoder=False):
+    def __init__(self, base_model, num_classes, decoder=False,hidden_states_pooler=True):
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
 
         # Get the hidden size from the base model configuration
         if hasattr(base_model, "config"):
-            hidden_size = base_model.config.hidden_size
+            if hasattr(self.base_model.config,"hidden_size"):
+                hidden_size = base_model.config.hidden_size
+            else:
+                hidden_size = base_model.config.d_model
         else:
             # Fallback if config is not available
             hidden_size = 768  # Default size, adjust as needed
-
-        # Create a classification head
+        if hidden_states_pooler:
+            # Add a pooler layer if needed
+            self.pooler = BertPooler(base_model.config)
+        else:
+            self.pooler = None
         self.classification_head = nn.Linear(hidden_size, num_classes)
+        # self.classification_head = nn.Linear(hidden_size, num_classes)
+
 
     def forward(self,
                 input_ids=None,
@@ -54,25 +82,47 @@ class WrappedModelWithClassificationHead(nn.Module):
             return_dict=True,
             # **kwargs
         )
-
+        # check the shape of outputs_ref.hidden_states and outputs_alt.hidden_states
+        # if it does not have the all layers, then add a dummy dimension by nest it in a list
+        # if not isinstance(outputs_ref.hidden_states, tuple):
+        if not isinstance(outputs_ref.hidden_states, tuple):
+            if hasattr(self.base_model.config,"hidden_size"):
+                outputs_ref.hidden_states = (outputs_ref.hidden_states,)
+        # if not isinstance(outputs_alt.hidden_states, tuple):
+        if not isinstance(outputs_alt.hidden_states, tuple):
+            if hasattr(self.base_model.config,"hidden_size"):
+                outputs_alt.hidden_states = (outputs_alt.hidden_states,)
         if not self.decoder:
             # For encoder models, take the [CLS] token (first token) from the last hidden state
+            # print(f"outputs_ref.hidden_states: {outputs_ref.hidden_states.shape}")
             last_hidden_state_ref = outputs_ref.hidden_states[-1][:, 0, :]
+            # last_hidden_state_ref = outputs_ref.hidden_states[-1].mean(dim=1)
             last_hidden_state_alt = outputs_alt.hidden_states[-1][:, 0, :]
+            # last_hidden_state_alt = outputs_alt.hidden_states[-1].mean(dim=1)
+            if self.pooler is not None:
+                # Apply pooler if needed
+                last_hidden_state_ref = self.pooler(last_hidden_state_ref)
+                last_hidden_state_alt = self.pooler(last_hidden_state_alt)
             difference = last_hidden_state_alt - last_hidden_state_ref
         else:
             # For decoder models, take the last token from the sequence
             # compute true sequence lengths
+
+            # ref_seq_lens = outputs_ref.attention_mask.sum(dim=-1)  # (batch_size,)
+            # alt_seq_lens = outputs_alt.attention_mask.sum(dim=-1)  # (batch_size,)
             ref_seq_lens = ref_attention_mask.sum(dim=-1)  # (batch_size,)
             alt_seq_lens = alt_attention_mask.sum(dim=-1)  # (batch_size,)
 
             # build an index for batch dimension
-            batch_index = torch.arange(ref_seq_lens.size(0), device=outputs_ref.decoder_hidden_states[-1].device)
+            batch_index = torch.arange(ref_seq_lens.size(0), device=outputs_ref.hidden_states[-1].device)
 
             # select the last‐token vector for each example
-            last_ref = outputs_ref.decoder_hidden_states[-1][batch_index, ref_seq_lens - 1, :]
-            last_alt = outputs_alt.decoder_hidden_states[-1][batch_index, alt_seq_lens - 1, :]
-
+            last_ref = outputs_ref.hidden_states[-1][batch_index, ref_seq_lens - 1, :]
+            last_alt = outputs_alt.hidden_states[-1][batch_index, alt_seq_lens - 1, :]
+            if self.pooler is not None:
+                # Apply pooler if needed
+                last_ref = self.pooler(last_ref)
+                last_alt = self.pooler(last_alt)
             # take the difference
             difference = last_alt - last_ref
 

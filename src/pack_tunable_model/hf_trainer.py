@@ -21,7 +21,7 @@ from accelerate import Accelerator
 from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator
 # Import our custom wrapper model
 from .wrap_model import WrappedModelWithClassificationHead
-
+# from .seq_pack import FramePackCausalLM
 
 class SafeDistributedTrainer(Trainer):
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
@@ -93,43 +93,54 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
-    path_prefix = "/mnt/data/genomic_fm/finetune" # for amlt
+    path_prefix = "/home/v-zehuili/mnt/data/genomic_fm/finetune" # for amlt
     # path_prefix = "/home/v-zehuili/repositories/amlt/codes/genomic-FM/root/clinvar_disease_classification"
     results_file = f"{path_prefix}/test_results_clinvar.csv"
 
     # Model and Tokenizer Selection
     model_path = None
     if model_type == 'olmo':
-        model_path = "/home/v-zehuili/finetune_nt_150M/step832510-unsharded"
+        model_path = "zehui127/Omni-DNA-116M"
         tokenizer_path = "zehui127/Omni-DNA-116M"
     elif model_type == 'nt':
         model_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
         tokenizer_path = model_path
         # if test_only:
             # model_path = "/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213"
+    elif model_type == 'seq_pack':
+        # model_path = "zehui127/Omni-DNA-116M"
+        model_path = 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'
+        # tokenizer_path = "zehui127/Omni-DNA-116M"
+        tokenizer_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
     elif model_type == 'dnabert2':
         model_path = "zhihan1996/DNABERT-2-117M"
+        tokenizer_path = model_path
+    elif model_type=='hyenaDNA':
+        model_path = "LongSafari/hyenadna-tiny-16k-seqlen-d128-hf"
         tokenizer_path = model_path
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
     # Load base model (not using AutoModelForSequenceClassification anymore)
+
     base_model = AutoModelForSequenceClassification.from_pretrained(
         model_path,
         trust_remote_code=True
     )
-
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         trust_remote_code=True
     )
 
-    tokenizer.model_max_length = 1000
-
     ########### Load Dataset old ##################
+        # dangerous zone: so we need to use main_process_first
+        # Code in this block is executed by rank-0 first,
+        # all other ranks are blocked until rank-0 exits the block.
     datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
         tokenizer, task, seed=seed
     )
+    tokenizer.model_max_length = max_seq_len
+        # << all ranks continue here >>
     num_classes = task_num_classes[task]
     ################### Main Process Only ###########################
     # if accelerator.is_main_process:
@@ -153,14 +164,13 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder)
 
     # Load saved model if testing only
-    if test_only and os.path.exists(f"{model_path}/classification_head.bin"):
-        print(f"Loading classification head from {model_path}")
-        head_state_dict = torch.load(f"{model_path}/classification_head.bin")
-        model.classification_head.load_state_dict(head_state_dict)
-
+    if test_only and os.path.exists(f"{model_path}"):
+        print(f"Loading weights from {state_dict}")
+        head_state_dict = torch.load(f"{state_dict}")
+        model.load_state_dict(head_state_dict)
     # Prepare Training Arguments
     training_args = TrainingArguments(
-        output_dir=f"{path_prefix}/clinvar_disease_classification",
+        output_dir=f"{path_prefix}/clinvar_disease_path_2_way_classification_nt_2_class",
         learning_rate=0.000005,
         max_grad_norm=1.0,
         per_device_train_batch_size=8,
@@ -174,6 +184,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         load_best_model_at_end=True,
         save_safetensors=False,
         remove_unused_columns=False,
+        dataloader_num_workers=12,
     )
     print(f"Training arguments prediction loss only: {training_args.prediction_loss_only}")
     # Data Collator
@@ -196,24 +207,21 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         # Save classification head explicitly (in case save_pretrained doesn't handle it)
 
     # Evaluation
-    if accelerator.is_main_process:
-        test_dataset = datasets.get(f"{task}_test")
-        if test_dataset:
-            test_metrics = trainer.evaluate(eval_dataset=test_dataset)
-            print(f"Test Metrics for {task}: {test_metrics}")
+    test_dataset = datasets.get(f"{task}_test")
+    test_metrics = trainer.evaluate(eval_dataset=test_dataset)
+    print(f"Test Metrics for {task}: {test_metrics}")
+    # log the test metrics
+    write_header = not os.path.exists(results_file)
+    with open(results_file, mode="a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            header = ["Seed", "Model Type", "Task", "Matthews Correlation"]
+            writer.writerow(header)
 
-            # Log results
-            write_header = not os.path.exists(results_file)
-            with open(results_file, mode="a", newline="") as f:
-                writer = csv.writer(f)
-                if write_header:
-                    header = ["Seed", "Model Type", "Task", "Matthews Correlation"]
-                    writer.writerow(header)
+        row = [seed, model_type, task, test_metrics.get("eval_matthews_correlation", "N/A")]
+        writer.writerow(row)
 
-                row = [seed, model_type, task, test_metrics.get("eval_matthews_correlation", "N/A")]
-                writer.writerow(row)
-
-            print(f"Test metrics appended to {results_file}")
+    print(f"Test metrics appended to {results_file}")
 
 def main():
     parser = argparse.ArgumentParser(description="Single-task fine-tune and evaluate model.")
