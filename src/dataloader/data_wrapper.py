@@ -502,7 +502,7 @@ class SmartVariantDataWrapper:
         if all_records:
             num_records = len(self.variants)
         self.num_records = min(num_records, len(self.variants))
-        self.genome_extractor = GenomeSequenceExtractor()
+        self.genome_extractor = GenomeSequenceExtractor('/mnt/data/genomic_fm/data/hg19.fa')
         print(
             f"Number of records: {self.num_records} "
             f"out of {len(self.variants)} in '{csv_path}'."
@@ -538,6 +538,6 @@ class SmartVariantDataWrapper:
             )
 
             y = float(row["smart_score"])
-            data.append(((ref_seq, alt_seq), y))
+            data.append(([ref_seq, alt_seq, None], y))
 
         return data

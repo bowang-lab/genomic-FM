@@ -5,8 +5,8 @@ from datasets import load_dataset
 import logging
 import typing
 from typing import Dict, Sequence
-from ..dataloader.data_wrapper import ClinVarDataWrapper
-
+from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper
+import random
 def split_train_val(dataset_train, val_split=0.1, seed=42):
     """
     Randomly split dataset into train and validation sets.
@@ -51,8 +51,9 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
     tokenizer.model_max_length = seq_length
     # Get ClinVar data
     # clinvar_wrapper = ClinVarDataWrapper(all_records=True) # full run
-    clinvar_wrapper = ClinVarDataWrapper(all_records=True, use_default_dir=True)
-    data = clinvar_wrapper.get_data(Seq_length=seq_length, target=target, disease_subset=disease_subset)
+    clinvar_wrapper = ClinVarDataWrapper(all_records=False, use_default_dir=False, num_records=1000000) # for testing
+    # data = clinvar_wrapper.get_data(Seq_length=seq_length, target=target, disease_subset=disease_subset)
+    data = clinvar_wrapper.get_data(Seq_length=seq_length, target=target)
     # Dictionary to store datasets
     multitask_datasets = {}
 
@@ -81,10 +82,13 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
     elif target == 'CLNSIG' or 'DISEASE_PATHOGENICITY':
         task_name = target
         # all_labels = ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']
+        # mapping Likely_benign and  Benign to Benign; mapping Likely_pathogenic and Pathogenic to Pathogenic
         all_labels = ['Benign', 'Pathogenic']
         label_to_id = {label: idx for idx, label in enumerate(all_labels)}
         print(label_to_id)
-        num_labels = len(all_labels)
+        label_to_id = {'Benign': 0, 'Pathogenic': 1, 'Likely_benign': 0, 'Likely_pathogenic': 1 }
+        # label_to_id = {'Benign': 0, 'Likely_benign': 0, 'Likely
+        num_labels = len(set(label_to_id.values()))
         print(f"Using {num_labels} pathogenicity classes")
     else:
         raise ValueError(f"Unsupported target: {target}")
@@ -109,14 +113,16 @@ def return_smart_dataset(
     tokenizer: PreTrainedTokenizer,
     csv_path: str,
     fasta_path: str | None = None,
-    threshold: float = 75.0,          # ↩︎ convert score → 1|0
+    threshold: float = 54.0,          # ↩︎ convert score → 1|0
     seq_length: int = 1024,
     val_split: float = 0.1,
     test_split: float = 0.1,
     seed: int = 42,
     all_records: bool = True,
     num_records: int | None = None,
+
 ):
+    task_name = 'CLNDN'
     # ----------------------- load & prepare raw examples -------------------
     tokenizer.model_max_length = seq_length
 
@@ -124,18 +130,21 @@ def return_smart_dataset(
         csv_path=csv_path,
         num_records=num_records or 0,
         all_records=all_records,
-        fasta_path=fasta_path,
     )
     raw = wrapper.get_data(Seq_length=seq_length)      # [( (ref,alt), score ), ...]
 
     # Binarise the target
     binarised: List[Tuple[Tuple[str, str], int]] = [
-        (seq_pair, 1 if score >= threshold else 0) for seq_pair, score in raw
+        [seq_pair, 1 if score >= threshold else 0] for seq_pair, score in raw
     ]
+    multitask_datasets = {}
 
     # ------------------------------ splitting ------------------------------
     random.seed(seed)
     random.shuffle(binarised)
+    all_labels = [0, 1]
+    label_to_id = {label: idx for idx, label in enumerate(all_labels)}
+    num_labels = len(all_labels)
 
     total = len(binarised)
     test_sz = int(total * test_split)
@@ -152,13 +161,13 @@ def return_smart_dataset(
     )
 
     # ------------------------------ datasets --------------------------------
-    train_ds = ClinVarDataset(train_data, tokenizer)
-    val_ds = ClinVarDataset(val_data, tokenizer)
-    test_ds = ClinVarDataset(test_data, tokenizer)
+    train_ds = ClinVarDataset(train_data, tokenizer,task_name,label_to_id)
+    val_ds = ClinVarDataset(val_data, tokenizer,task_name,label_to_id)
+    test_ds = ClinVarDataset(test_data, tokenizer,task_name,label_to_id)
     # Store datasets
-    multitask_datasets['train'] = train_dataset
-    multitask_datasets[f"{task_name}_val"] = val_dataset
-    multitask_datasets[f"{task_name}_test"] = test_dataset
+    multitask_datasets['train'] = train_ds
+    multitask_datasets[f"{task_name}_val"] = val_ds
+    multitask_datasets[f"{task_name}_test"] = test_ds
 
     # Track task info
     task_num_classes = {task_name: num_labels}
@@ -173,7 +182,7 @@ class ClinVarDataset(Dataset):
     def __init__(self, data, tokenizer, task_name, label_to_id):
         super(ClinVarDataset, self).__init__()
         self.task_name = task_name
-        self.num_labels = len(label_to_id)
+        self.num_labels = len(set(label_to_id.values()))
 
         # Process data
         ref_sequences = []

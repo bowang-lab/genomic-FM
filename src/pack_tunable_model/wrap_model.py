@@ -24,7 +24,7 @@ class BertPooler(nn.Module):
         return pooled_output
 
 class WrappedModelWithClassificationHead(nn.Module):
-    def __init__(self, base_model, num_classes, decoder=False,hidden_states_pooler=True):
+    def __init__(self, base_model, num_classes, decoder=False,hidden_states_pooler=False):
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
@@ -68,7 +68,7 @@ class WrappedModelWithClassificationHead(nn.Module):
         # Process reference sequence
         outputs_ref = self.base_model(
             input_ids=ref_input_ids,
-            attention_mask=ref_attention_mask,
+            attention_mask=ref_attention_mask, # disable for hyenaDNA
             output_hidden_states=True,
             return_dict=True,
             # **kwargs
@@ -77,7 +77,7 @@ class WrappedModelWithClassificationHead(nn.Module):
         # Process alternate sequence
         outputs_alt = self.base_model(
             input_ids=alt_input_ids,
-            attention_mask=alt_attention_mask,
+            attention_mask=alt_attention_mask,  # disable for hyenaDNA
             output_hidden_states=True,
             return_dict=True,
             # **kwargs

@@ -137,12 +137,12 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         # dangerous zone: so we need to use main_process_first
         # Code in this block is executed by rank-0 first,
         # all other ranks are blocked until rank-0 exits the block.
-    datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-        tokenizer, task, seed=seed
-    )
-    # datasets, task_num_classes, max_seq_len = return_smart_dataset(
-    #     tokenizer, '/home/v-zehuili/repositories/CardiacGVRep/root/smart_filtered_analysis/smart_filtered_analysis/smart_filtered_variants_all.csv'
+    # datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
+    #     tokenizer, task, seed=seed
     # )
+    datasets, task_num_classes, max_seq_len = return_smart_dataset(
+        tokenizer, '/mnt/data/genomic_fm/all_clinvar/unfiltered_variants.csv'
+    )
     tokenizer.model_max_length = max_seq_len
         # << all ranks continue here >>
     num_classes = task_num_classes[task]
@@ -168,13 +168,14 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder)
 
     # Load saved model if testing only
-    if test_only and os.path.exists(f"{model_path}"):
-        print(f"Loading weights from {state_dict}")
-        head_state_dict = torch.load(f"{state_dict}")
-        model.load_state_dict(head_state_dict)
+    # if test_only and os.path.exists(f"{model_path}"):
+    state_dict = f"/mnt/data/genomic_fm/all_clinvar/pretrain_model_dnabert2_CLNSIG/checkpoint-58330/pytorch_model.bin"
+    print(f"Loading weights from {state_dict}")
+    head_state_dict = torch.load(f"{state_dict}")
+    model.load_state_dict(head_state_dict)
     # Prepare Training Arguments
     training_args = TrainingArguments(
-        output_dir=f"{path_prefix}/pretrain_model_{model_type}_{task}",
+        output_dir=f"{path_prefix}/smart_pretrain_model_{model_type}_{task}_with_state_dict",
         learning_rate=0.000005,
         max_grad_norm=1.0,
         per_device_train_batch_size=8,
@@ -188,7 +189,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         load_best_model_at_end=True,
         save_safetensors=False,
         remove_unused_columns=False,
-        dataloader_num_workers=12,
+        dataloader_num_workers=8,
         # ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
     )
     print(f"Training arguments prediction loss only: {training_args.prediction_loss_only}")
@@ -247,7 +248,7 @@ def main():
     # Run with single task (CLNDN)
     # run_single_task_finetune('CLNDN', args.seed, args.model, args.decoder, args.test_only)
     # pathegenoic vs. benign
-    run_single_task_finetune('CLNSIG', args.seed, args.model, args.decoder, args.test_only)
+    run_single_task_finetune('CLNDN', args.seed, args.model, args.decoder, args.test_only)
 
 if __name__ == "__main__":
     main()
