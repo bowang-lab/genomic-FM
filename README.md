@@ -26,7 +26,7 @@ pip install torch==2.2.0 torchvision
 pip install -r requirements.txt
 ```
 
-Finall add  the submodule if you want to use the Genomic Foundation Models
+Finally add the submodule if you want to use the Genomic Foundation Models
 ```bash
 git submodule update --init --recursive
 ```
@@ -205,11 +205,9 @@ Cite `GV-Rep` (NeurIPS 2024) when you use it in a project or a research paper:
 
 ```
 @article{li2024gv,
-  title={GV-rep: A large-scale dataset for genetic variant representation learning},
+  title={GV-Rep: A Large-Scale Dataset for Genetic Variant Representation Learning},
   author={Li, Zehui and Subasri, Vallijah and Stan, Guy-Bart and Zhao, Yiren and Wang, Bo},
-  journal={Advances in Neural Information Processing Systems},
-  volume={37},
-  pages={134701--134720},
+  journal={arXiv preprint arXiv:2407.16940},
   year={2024}
 }
 ```

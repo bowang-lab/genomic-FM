@@ -48,7 +48,7 @@ class RandomSequenceExtractor:
         return selected_sequences
 
 class GenomeSequenceExtractor:
-    def __init__(self, fasta_file='./root/data/hg38.fa', encoding_region_filter=None):
+    def __init__(self, fasta_file='./root/data/hg19.fa', encoding_region_filter=None):
         self.fasta_file = fasta_file
         if not os.path.exists(fasta_file):
             self.run_bash_commands()
@@ -64,10 +64,10 @@ class GenomeSequenceExtractor:
             os.makedirs('./root/data', exist_ok=True)
 
             # Download the file
-            print("Downloading the hg38 file...")
-            url = 'http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz'
+            print("Downloading the hg19 file...")
+            url = 'http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz'
             response = requests.get(url)
-            compressed_file = './root/data/hg38.fa.gz'
+            compressed_file = './root/data/hg19.fa.gz'
             with open(compressed_file, 'wb') as f:
                 f.write(response.content)
             print("Download complete.")
@@ -120,11 +120,15 @@ class FastaStringExtractor:
         self._chromosome_sizes = {k: len(v) for k, v in self.fasta.items()}
         synonynms_file = './root/data/chromAliases.txt'
         if not os.path.exists(synonynms_file):
-            self.download_synonyms()
+            if os.path.exists('./root/data/chromAliases.txt'):
+                synonynms_file = './root/data/chromAliases.txt'
+            else:
+                self.download_synonyms()
+                synonynms_file = './root/data/chromAliases.txt'
         # mapping the NCBI chromosome names to UCSC chromosome names if necessary
         self.chrom_synonyms = self.read_synonyms(synonynms_file)
 
-    def download_synonyms(self,url="http://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/chromAlias.txt.gz"):
+    def download_synonyms(self,url="http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/chromAlias.txt.gz"):
         print("Downloading the chromAlias file...")
         response = requests.get(url)
         compressed_file = './root/data/chromAlias.txt.gz'
