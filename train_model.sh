@@ -5,7 +5,7 @@
 #SBATCH --mem=240G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
-#SBATCH --gres=gpu:4 # at most 4
+#SBATCH --gres=gpu:2 # match ddp.yaml num_processes
 #SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
 #SBATCH --output=logs/train_output_%j.log 
 #SBATCH --error=logs/train_error_%j.log  
@@ -38,12 +38,19 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "=================================="
 
 # Training parameters
-MODEL="nt"  # Options: nt, dnabert2, olmo
+MODEL="nt"  # Options: nt, olmo, hyenadna, caduceus, gena-lm (dnabert2 has Triton compatibility issues)
 WANDB_PROJECT="genomic-finetune-clinvar"
 
-# Run training for CLNDN task (pathogenic vs benign)
+# ============================================
+# PART 1: GENERAL CLINVAR TRAINING
+# ============================================
+echo "============================================"
+echo "PART 1: Starting General ClinVar Training"
+echo "============================================"
+
+# Run training for CLNDN task (pathogenic vs benign) on general ClinVar
 echo "=================================="
-echo "Starting CLNDN task training..."
+echo "Starting general ClinVar CLNDN task training..."
 echo "=================================="
 TASK="CLNDN"
 accelerate launch \
@@ -52,13 +59,13 @@ accelerate launch \
     --model "$MODEL" \
     --task "$TASK" \
     --seed 127 \
-    2>&1 | tee logs/training_${SLURM_JOB_ID}_CLNDN.log
+    2>&1 | tee logs/training_${SLURM_JOB_ID}_general_CLNDN.log
 
-echo "CLNDN training completed!"
+echo "General ClinVar CLNDN training completed!"
 
-# Run training for CLNSIG task (clinical significance)
+# Run training for CLNSIG task (clinical significance) on general ClinVar
 echo "=================================="
-echo "Starting CLNSIG task training..."
+echo "Starting general ClinVar CLNSIG task training..."
 echo "=================================="
 TASK="CLNSIG"
 accelerate launch \
@@ -67,7 +74,57 @@ accelerate launch \
     --model "$MODEL" \
     --task "$TASK" \
     --seed 127 \
-    2>&1 | tee logs/training_${SLURM_JOB_ID}_CLNSIG.log
+    2>&1 | tee logs/training_${SLURM_JOB_ID}_general_CLNSIG.log
 
-echo "CLNSIG training completed!"
+echo "General ClinVar CLNSIG training completed!"
+
+# ============================================
+# PART 2: SMART VARIANT HEART-SPECIFIC TRAINING
+# ============================================
+echo "============================================"
+echo "PART 2: Starting SMART Variant Training (Heart-specific)"
+echo "============================================"
+
+# Run training for CLNDN task (pathogenic vs benign) on SMART variants
+echo "=================================="
+echo "Starting SMART CLNDN task training..."
+echo "=================================="
+TASK="CLNDN"
+accelerate launch \
+    --config_file configs/ddp.yaml \
+    heart_finetune_smart.py \
+    --model "$MODEL" \
+    --task "$TASK" \
+    --seed 127 \
+    2>&1 | tee logs/training_${SLURM_JOB_ID}_smart_CLNDN.log
+
+echo "SMART CLNDN training completed!"
+
+# Run training for CLNSIG task (clinical significance) on SMART variants
+echo "=================================="
+echo "Starting SMART CLNSIG task training..."
+echo "=================================="
+TASK="CLNSIG"
+accelerate launch \
+    --config_file configs/ddp.yaml \
+    heart_finetune_smart.py \
+    --model "$MODEL" \
+    --task "$TASK" \
+    --seed 127 \
+    2>&1 | tee logs/training_${SLURM_JOB_ID}_smart_CLNSIG.log
+
+echo "SMART CLNSIG training completed!"
+
+echo "============================================"
 echo "All training tasks completed successfully!"
+echo "============================================"
+echo ""
+echo "Training Summary:"
+echo "1. General ClinVar training: Complete"
+echo "2. SMART variant CLNDN training: Complete"
+echo "3. SMART variant CLNSIG training: Complete"
+echo ""
+echo "Check the following log files for details:"
+echo "- logs/training_${SLURM_JOB_ID}_general_CLNSIG.log"
+echo "- logs/training_${SLURM_JOB_ID}_smart_CLNDN.log"
+echo "- logs/training_${SLURM_JOB_ID}_smart_CLNSIG.log"

@@ -112,6 +112,7 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
 def return_smart_dataset(
     tokenizer: PreTrainedTokenizer,
     csv_path: str,
+    task_name: str = 'CLNDN',  # Add task_name as a parameter
     fasta_path: str | None = None,
     threshold: float = 54.0,          # ↩︎ convert score → 1|0
     seq_length: int = 1024,
@@ -122,7 +123,6 @@ def return_smart_dataset(
     num_records: int | None = None,
 
 ):
-    task_name = 'CLNDN'
     # ----------------------- load & prepare raw examples -------------------
     tokenizer.model_max_length = seq_length
 

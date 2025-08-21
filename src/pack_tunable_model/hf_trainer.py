@@ -92,7 +92,7 @@ def compute_metrics(eval_pred):
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10, 
-                            max_grad_norm=1.0, num_workers=12):
+                            max_grad_norm=1.0, num_workers=8):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -143,9 +143,18 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path = "zhihan1996/DNABERT-2-117M"
             tokenizer_path = model_path
             print(f"Using HuggingFace model: {model_path}")
-    elif model_type=='hyenaDNA':
-        model_path = "LongSafari/hyenadna-tiny-16k-seqlen-d128-hf"
+    elif model_type=='hyenadna':
+        model_path = "LongSafari/hyenadna-medium-160k-seqlen-hf"
         tokenizer_path = model_path
+        print(f"Using HuggingFace HyenaDNA model: {model_path}")
+    elif model_type=='caduceus':
+        model_path = "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
+        tokenizer_path = model_path
+        print(f"Using HuggingFace Caduceus model: {model_path}")
+    elif model_type=='gena-lm':
+        model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
+        tokenizer_path = model_path
+        print(f"Using HuggingFace GENA-LM model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -278,7 +287,7 @@ def main():
                         help="Number of training epochs")
     parser.add_argument("--max_grad_norm", type=float, default=1.0,
                         help="Maximum gradient norm for clipping")
-    parser.add_argument("--num_workers", type=int, default=12,
+    parser.add_argument("--num_workers", type=int, default=8,
                         help="Number of dataloader workers")
 
     args = parser.parse_args()

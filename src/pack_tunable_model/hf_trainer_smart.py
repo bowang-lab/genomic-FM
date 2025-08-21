@@ -143,9 +143,18 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path = "zhihan1996/DNABERT-2-117M"
             tokenizer_path = model_path
             print(f"Using HuggingFace model: {model_path}")
-    elif model_type=='hyenaDNA':
-        model_path = "LongSafari/hyenadna-tiny-16k-seqlen-d128-hf"
+    elif model_type=='hyenadna':
+        model_path = "LongSafari/hyenadna-medium-160k-seqlen-hf"
         tokenizer_path = model_path
+        print(f"Using HuggingFace HyenaDNA model: {model_path}")
+    elif model_type=='caduceus':
+        model_path = "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
+        tokenizer_path = model_path
+        print(f"Using HuggingFace Caduceus model: {model_path}")
+    elif model_type=='gena-lm':
+        model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
+        tokenizer_path = model_path
+        print(f"Using HuggingFace GENA-LM model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -168,7 +177,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     #     tokenizer, task, seed=seed
     # )
     datasets, task_num_classes, max_seq_len = return_smart_dataset(
-        tokenizer, 'root/data/smart_filtered_variants.csv'
+        tokenizer, 'root/data/smart_filtered_variants.csv', task_name=task
     )
     tokenizer.model_max_length = max_seq_len
         # << all ranks continue here >>
