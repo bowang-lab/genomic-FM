@@ -17,7 +17,8 @@ SUPORTED_MODELS = ['dnabert2', 'dnabert6','gena-lm-bigbird-base-t2t',
                    'nt_transformer_human_ref',
                    'nt_transformer_1000g',
                    'nt_transformer_v2_500m',
-                   'grover']
+                   'grover',
+                   'lucaone']
 #TODO evo, caduceus
 
 class BaseModel(torch.nn.Module):

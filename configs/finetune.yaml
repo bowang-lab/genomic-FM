@@ -122,3 +122,39 @@ heart_test_finetune:
   target: slope
   model_initiator_name: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
   output_size: 2
+
+# LucaOne configurations  
+oligogenic_lucaone:
+  class: OligogenicDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: lucaone
+  output_size: 2
+
+mave_score_lucaone:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: lucaone
+  output_size: 1
+
+clinvar_CLNSIG_lucaone:
+  class: ClinVarDataWrapper
+  task: classification
+  target: CLNSIG
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: lucaone
+  output_size: 4
+
+sqtl_slope_lucaone:
+  class: sQTLDataWrapper
+  task: classification
+  Seq_length: 1024
+  pca_components: 16
+  target: slope
+  model_initiator_name: lucaone
+  output_size: 2

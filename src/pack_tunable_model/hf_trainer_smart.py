@@ -11,6 +11,7 @@ from typing import Any, Optional, Dict, Sequence, Tuple, List, Union
 import transformers
 from transformers import (
     AutoModelForSequenceClassification,
+    AutoModel,
     TrainingArguments,
     AutoTokenizer,
     Trainer,
@@ -155,15 +156,30 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
         tokenizer_path = model_path
         print(f"Using HuggingFace GENA-LM model: {model_path}")
+    elif model_type=='lucaone':
+        # Check if local model exists
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local model from {model_path}")
+        else:
+            model_path = "AmelieSchreiber/LucaOne"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace LucaOne model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Load base model (not using AutoModelForSequenceClassification anymore)
-
-    base_model = AutoModelForSequenceClassification.from_pretrained(
-        model_path,
-        trust_remote_code=True
-    )
+    # Load base model - use AutoModel for custom architectures like LucaOne
+    if model_type == 'lucaone':
+        base_model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
+    else:
+        base_model = AutoModelForSequenceClassification.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         trust_remote_code=True

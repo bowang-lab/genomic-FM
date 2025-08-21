@@ -47,6 +47,13 @@ case "$MODEL_NAME" in
         pip install --user ai2-olmo
         ;;
     
+    "lucaone"|"LucaOne")
+        echo "Installing LucaOne specific packages..."
+        # LucaOne uses standard transformers with custom code
+        pip install --user transformers>=4.30.0
+        echo "Note: LucaOne requires trust_remote_code=True when loading"
+        ;;
+    
     "all")
         echo "Installing all model packages..."
         pip install --user ai2-olmo

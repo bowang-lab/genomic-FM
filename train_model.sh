@@ -38,7 +38,7 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "=================================="
 
 # Training parameters
-MODEL="nt"  # Options: nt, olmo, hyenadna, caduceus, gena-lm (dnabert2 has Triton compatibility issues)
+MODEL="nt"  # Options: nt, olmo, hyenadna, caduceus, gena-lm, lucaone (dnabert2 has Triton issues)
 WANDB_PROJECT="genomic-finetune-clinvar"
 
 # ============================================
