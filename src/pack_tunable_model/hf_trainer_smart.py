@@ -90,7 +90,9 @@ def compute_metrics(eval_pred):
     predictions, labels = eval_pred
     return calculate_metric_with_sklearn(predictions, labels)
 
-def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False):
+def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
+                            learning_rate=0.000005, batch_size=8, num_epochs=10, 
+                            max_grad_norm=1.0, num_workers=8):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -100,12 +102,30 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Model and Tokenizer Selection
     model_path = None
+    
+    # Check for local models first
+    local_model_base = f"./root/models/{model_type}"
+    
     if model_type == 'olmo':
-        model_path = "zehui127/Omni-DNA-116M"
-        tokenizer_path = "zehui127/Omni-DNA-116M"
+        # Check if local model exists
+        if os.path.exists(f"{local_model_base}/step832510-unsharded"):
+            model_path = f"{local_model_base}/step832510-unsharded"
+            tokenizer_path = model_path
+            print(f"Using local model from {model_path}")
+        else:
+            model_path = "zehui127/Omni-DNA-116M"
+            tokenizer_path = "zehui127/Omni-DNA-116M"
+            print(f"Using HuggingFace model: {model_path}")
     elif model_type == 'nt':
-        model_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
-        tokenizer_path = model_path
+        # Check if local model exists
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local model from {model_path}")
+        else:
+            model_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace model: {model_path}")
         # if test_only:
             # model_path = "/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213"
     elif model_type == 'seq_pack':
@@ -114,8 +134,15 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         # tokenizer_path = "zehui127/Omni-DNA-116M"
         tokenizer_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
     elif model_type == 'dnabert2':
-        model_path = "zhihan1996/DNABERT-2-117M"
-        tokenizer_path = model_path
+        # Check if local model exists
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local model from {model_path}")
+        else:
+            model_path = "zhihan1996/DNABERT-2-117M"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace model: {model_path}")
     elif model_type=='hyenaDNA':
         model_path = "LongSafari/hyenadna-tiny-16k-seqlen-d128-hf"
         tokenizer_path = model_path
@@ -169,27 +196,27 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Load saved model if testing only
     # if test_only and os.path.exists(f"{model_path}"):
-    # state_dict = f"./checkpoints/pretrain_model_dnabert2_CLNSIG/checkpoint-58330/pytorch_model.bin" # local checkpoint path if available
-    print(f"Loading weights from {state_dict}")
-    head_state_dict = torch.load(f"{state_dict}")
-    model.load_state_dict(head_state_dict)
+    #     state_dict = f"./checkpoints/pretrain_model_dnabert2_CLNSIG/checkpoint-58330/pytorch_model.bin" # local checkpoint path if available
+    #     print(f"Loading weights from {state_dict}")
+    #     head_state_dict = torch.load(f"{state_dict}")
+    #     model.load_state_dict(head_state_dict)
     # Prepare Training Arguments
     training_args = TrainingArguments(
         output_dir=f"{path_prefix}/smart_pretrain_model_{model_type}_{task}_with_state_dict",
-        learning_rate=0.000005,
-        max_grad_norm=1.0,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        num_train_epochs=10,
+        learning_rate=learning_rate,
+        max_grad_norm=max_grad_norm,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size,
+        num_train_epochs=num_epochs,
         save_total_limit=10,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",  # Changed from evaluation_strategy
         save_strategy="epoch",
         metric_for_best_model="matthews_correlation",
         greater_is_better=True,
         load_best_model_at_end=True,
         save_safetensors=False,
         remove_unused_columns=False,
-        dataloader_num_workers=8,
+        dataloader_num_workers=num_workers,
         # ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
     )
     print(f"Training arguments prediction loss only: {training_args.prediction_loss_only}")
@@ -239,16 +266,34 @@ def main():
                         help="Whether the model has a decoder architecture")
     parser.add_argument("--test_only", action="store_true",
                         help="Only run evaluation on the test set")
+    parser.add_argument("--task", type=str, default="CLNDN",
+                        choices=["CLNDN", "CLNSIG"],
+                        help="Prediction task: CLNDN (pathogenic vs benign) or CLNSIG")
+    
+    # Training hyperparameters
+    parser.add_argument("--learning_rate", type=float, default=0.000005,
+                        help="Learning rate for training")
+    parser.add_argument("--batch_size", type=int, default=8,
+                        help="Batch size per device for training and evaluation")
+    parser.add_argument("--num_epochs", type=int, default=10,
+                        help="Number of training epochs")
+    parser.add_argument("--max_grad_norm", type=float, default=1.0,
+                        help="Maximum gradient norm for clipping")
+    parser.add_argument("--num_workers", type=int, default=8,
+                        help="Number of dataloader workers")
 
     args = parser.parse_args()
 
     # Configure logging
     logging.basicConfig(level=logging.INFO)
 
-    # Run with single task (CLNDN)
-    # run_single_task_finetune('CLNDN', args.seed, args.model, args.decoder, args.test_only)
-    # pathegenoic vs. benign
-    run_single_task_finetune('CLNDN', args.seed, args.model, args.decoder, args.test_only)
+    # Run with specified task
+    run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only, 
+                            learning_rate=args.learning_rate,
+                            batch_size=args.batch_size,
+                            num_epochs=args.num_epochs,
+                            max_grad_norm=args.max_grad_norm,
+                            num_workers=args.num_workers)
 
 if __name__ == "__main__":
     main()
