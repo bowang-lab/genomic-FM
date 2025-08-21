@@ -163,7 +163,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             tokenizer_path = model_path
             print(f"Using local model from {model_path}")
         else:
-            model_path = "AmelieSchreiber/LucaOne"
+            model_path = "LucaGroup/LucaOne-default-step36M"
             tokenizer_path = model_path
             print(f"Using HuggingFace LucaOne model: {model_path}")
     else:

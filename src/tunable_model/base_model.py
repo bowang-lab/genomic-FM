@@ -12,7 +12,7 @@ SUPPORTED_MODELS = [
     "zehui127/Omni-DNA-116M",
     "zhihan1996/DNABERT-2-117M",
     "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species",
-    "AmelieSchreiber/LucaOne"
+    "LucaGroup/LucaOne-default-step36M"
 ]
 
 class BaseModel(torch.nn.Module):
