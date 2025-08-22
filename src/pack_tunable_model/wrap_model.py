@@ -66,22 +66,36 @@ class WrappedModelWithClassificationHead(nn.Module):
             raise ValueError("Both ref_input_ids and alt_input_ids must be provided")
 
         # Process reference sequence
-        outputs_ref = self.base_model(
-            input_ids=ref_input_ids,
-            attention_mask=ref_attention_mask, # disable for hyenaDNA
-            output_hidden_states=True,
-            return_dict=True,
-            # **kwargs
-        )
+        # Check if model is HyenaDNA (doesn't support attention_mask)
+        if hasattr(self.base_model, '__class__') and 'HyenaDNA' in str(self.base_model.__class__):
+            outputs_ref = self.base_model(
+                input_ids=ref_input_ids,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+        else:
+            outputs_ref = self.base_model(
+                input_ids=ref_input_ids,
+                attention_mask=ref_attention_mask,
+                output_hidden_states=True,
+                return_dict=True,
+            )
 
         # Process alternate sequence
-        outputs_alt = self.base_model(
-            input_ids=alt_input_ids,
-            attention_mask=alt_attention_mask,  # disable for hyenaDNA
-            output_hidden_states=True,
-            return_dict=True,
-            # **kwargs
-        )
+        # Check if model is HyenaDNA (doesn't support attention_mask)
+        if hasattr(self.base_model, '__class__') and 'HyenaDNA' in str(self.base_model.__class__):
+            outputs_alt = self.base_model(
+                input_ids=alt_input_ids,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+        else:
+            outputs_alt = self.base_model(
+                input_ids=alt_input_ids,
+                attention_mask=alt_attention_mask,
+                output_hidden_states=True,
+                return_dict=True,
+            )
         # check the shape of outputs_ref.hidden_states and outputs_alt.hidden_states
         # if it does not have the all layers, then add a dummy dimension by nest it in a list
         # if not isinstance(outputs_ref.hidden_states, tuple):
