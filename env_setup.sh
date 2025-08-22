@@ -1,87 +1,76 @@
 #!/bin/bash
 
+# IMPORTANT: This script should be run INSIDE an activated conda environment
+# Usage: conda activate genomic-fm-lucaone && ./env.sh [model_name]
+
+set -euo pipefail
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH
+
 # Set model name - modify this variable to change which model to install
 MODEL_NAME="${1:-default}"  # Takes first argument or defaults to "default"
 
 echo "Setting up environment for model: $MODEL_NAME"
-python --version
+echo "Python executable: $(which python)"
+echo "Python version: $(python --version)"
 pwd
 ls
 
-# Core dependencies - installed for all models
+# Verify we're in a conda environment
+if [[ "$CONDA_DEFAULT_ENV" == "" ]]; then
+    echo "ERROR: No conda environment activated!"
+    echo "Please run: conda activate your-env-name"
+    exit 1
+fi
+
+echo "Active conda environment: $CONDA_DEFAULT_ENV"
+
+# Core dependencies - installed to the conda env (NO --user!)
 echo "Installing core dependencies..."
-pip install --user kipoi==0.8.6
-pip install --user kipoiseq==0.7.1
-pip install --user -r requirements.txt
-pip install --user opencv-python-headless numpy decord tqdm omegaconf pytz scikit-learn
-pip install --user trl==0.13.0 transformers==4.50.3 accelerate==1.6.0 datasets==3.5.0 wandb
-pip install --user tiktoken gdown
+pip install kipoi==0.8.6
+pip install kipoiseq==0.7.1
+pip install -r requirements.txt
+pip install opencv-python-headless numpy decord tqdm omegaconf pytz scikit-learn
+pip install trl==0.13.0 transformers==4.50.3 accelerate==1.6.0 datasets==3.5.0 wandb
+
 
 # Model-specific installations
 case "$MODEL_NAME" in
     "dnabert2"|"dnabert-2")
         echo "Installing DNABERT-2 specific packages..."
-        # Override transformers version for DNABERT-2 compatibility
-        pip install --user transformers==4.29.0
+	# pip install --user transformers==4.29.0
+	pip install tiktoken gdown tiktoken datasets wandb
         # Remove triton for DNABERT-2
-        pip uninstall -y triton
-        pip uninstall -y triton --user
+        pip uninstall -y triton || true
         ;;
     
     "caduceus")
         echo "Installing Caduceus specific packages..."
-        pip install --user mamba-ssm
-        pip install --user causal-conv1d
-        # Flash attention for efficient training
-        # pip install flash-attn --no-build-isolation
-        ;;
-    
-    "mamba"|"mamba-ssm")
-        echo "Installing Mamba SSM specific packages..."
-        pip install --user mamba-ssm
-        pip install --user causal-conv1d
+        pip install mamba-ssm
+        pip install causal-conv1d
+        pip install accelerate
         ;;
     
     "olmo")
         echo "Installing OLMo specific packages..."
-        pip install --user ai2-olmo
+        pip install ai2-olmo
         ;;
     
-    "lucaone"|"LucaOne")
+    "lucaone")
         echo "Installing LucaOne specific packages..."
         # LucaOne uses standard transformers with custom code
-        pip install --user transformers>=4.30.0
-        pip install --user fair-esm
-        pip install --user statsmodels
-        echo "Note: LucaOne requires trust_remote_code=True when loading"
+        pip install lucagplm
+        pip install tokenizers==0.19.1
+        pip install transformers==4.41.2
+        pip install fair-esm
+        pip install statsmodels
         ;;
     
-    "all")
-        echo "Installing all model packages..."
-        pip install --user ai2-olmo
-        pip install --user mamba-ssm
-        pip install --user causal-conv1d
-        pip install --user transformers==4.29.0  # This will override the newer version
-        pip uninstall -y triton
-        pip uninstall -y triton --user
-        echo "Warning: Some packages may conflict when installing all models"
-        ;;
-    
-    "default"|*)
-        echo "Using default configuration - core packages only"
-        # Remove triton by default as it often causes issues
-        pip uninstall -y triton
-        pip uninstall -y triton --user
-        ;;
 esac
 
-# Setup PATH
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
 
 # Verify installation
 echo "Verifying installation..."
 which accelerate
-python -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
 
 echo "Setup complete for model: $MODEL_NAME"
