@@ -55,6 +55,7 @@ echo "=================================="
 TASK="CLNDN"
 accelerate launch \
     --config_file configs/ddp.yaml \
+    --main_process_port 0 \
     heart_finetune.py \
     --model "$MODEL" \
     --task "$TASK" \
@@ -70,6 +71,7 @@ echo "=================================="
 TASK="CLNSIG"
 accelerate launch \
     --config_file configs/ddp.yaml \
+    --main_process_port 0 \
     heart_finetune.py \
     --model "$MODEL" \
     --task "$TASK" \
@@ -92,6 +94,7 @@ echo "=================================="
 TASK="CLNDN"
 accelerate launch \
     --config_file configs/ddp.yaml \
+    --main_process_port 0 \
     heart_finetune_smart.py \
     --model "$MODEL" \
     --task "$TASK" \
@@ -107,6 +110,7 @@ echo "=================================="
 TASK="CLNSIG"
 accelerate launch \
     --config_file configs/ddp.yaml \
+    --main_process_port 0 \
     heart_finetune_smart.py \
     --model "$MODEL" \
     --task "$TASK" \

@@ -12,6 +12,7 @@ import transformers
 from transformers import (
     AutoModelForSequenceClassification,
     AutoModel,
+    AutoModelForMaskedLM,
     TrainingArguments,
     AutoTokenizer,
     Trainer,
@@ -93,7 +94,7 @@ def compute_metrics(eval_pred):
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10, 
-                            max_grad_norm=1.0, num_workers=8):
+                            max_grad_norm=1.0, num_workers=8, threshold=54.0, checkpoint_path=None):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -103,75 +104,97 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Model and Tokenizer Selection
     model_path = None
+    tokenizer_path = None
     
-    # Check for local models first
-    local_model_base = f"./root/models/{model_type}"
+    # If checkpoint_path is provided, use it as the model path
+    if checkpoint_path and os.path.exists(checkpoint_path):
+        model_path = checkpoint_path
+        tokenizer_path = checkpoint_path
+        print(f"Using ClinVar-trained checkpoint from {model_path}")
     
-    if model_type == 'olmo':
-        # Check if local model exists
-        if os.path.exists(f"{local_model_base}/step832510-unsharded"):
-            model_path = f"{local_model_base}/step832510-unsharded"
+    # Otherwise, determine model path based on model type
+    if not model_path:
+        # Check for local models first
+        local_model_base = f"./root/models/{model_type}"
+        
+        if model_type == 'olmo':
+            # Check if local model exists
+            if os.path.exists(f"{local_model_base}/step832510-unsharded"):
+                model_path = f"{local_model_base}/step832510-unsharded"
+                tokenizer_path = model_path
+                print(f"Using local model from {model_path}")
+            else:
+                model_path = "zehui127/Omni-DNA-116M"
+                tokenizer_path = "zehui127/Omni-DNA-116M"
+                print(f"Using HuggingFace model: {model_path}")
+        elif model_type == 'nt':
+            # Check if local model exists
+            if os.path.exists(local_model_base):
+                model_path = local_model_base
+                tokenizer_path = model_path
+                print(f"Using local model from {model_path}")
+            else:
+                model_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+                tokenizer_path = model_path
+                print(f"Using HuggingFace model: {model_path}")
+        elif model_type == 'seq_pack':
+            # model_path = "zehui127/Omni-DNA-116M"
+            model_path = 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'
+            # tokenizer_path = "zehui127/Omni-DNA-116M"
+            tokenizer_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+        elif model_type == 'dnabert2':
+            # Check if local model exists
+            if os.path.exists(local_model_base):
+                model_path = local_model_base
+                tokenizer_path = model_path
+                print(f"Using local model from {model_path}")
+            else:
+                model_path = "zhihan1996/DNABERT-2-117M"
+                tokenizer_path = model_path
+                print(f"Using HuggingFace model: {model_path}")
+        elif model_type=='hyenadna':
+            model_path = "LongSafari/hyenadna-medium-160k-seqlen-hf"
             tokenizer_path = model_path
-            print(f"Using local model from {model_path}")
+            print(f"Using HuggingFace HyenaDNA model: {model_path}")
+        elif model_type=='caduceus':
+            model_path = "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace Caduceus model: {model_path}")
+        elif model_type=='gena-lm':
+            model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace GENA-LM model: {model_path}")
+        elif model_type=='lucaone':
+            # Check if local model exists
+            if os.path.exists(local_model_base):
+                model_path = local_model_base
+                tokenizer_path = model_path
+                print(f"Using local model from {model_path}")
+            else:
+                model_path = "LucaGroup/LucaOne-default-step36M"
+                tokenizer_path = model_path
+                print(f"Using HuggingFace LucaOne model: {model_path}")
+        elif model_type=='gpn-msa':
+            # Check if local model exists
+            if os.path.exists(f"{local_model_base}-sapiens"):
+                model_path = f"{local_model_base}-sapiens"
+                tokenizer_path = model_path
+                print(f"Using local model from {model_path}")
+            else:
+                model_path = "songlab/gpn-msa-sapiens"
+                tokenizer_path = model_path
+                print(f"Using HuggingFace GPN-MSA model: {model_path}")
         else:
-            model_path = "zehui127/Omni-DNA-116M"
-            tokenizer_path = "zehui127/Omni-DNA-116M"
-            print(f"Using HuggingFace model: {model_path}")
-    elif model_type == 'nt':
-        # Check if local model exists
-        if os.path.exists(local_model_base):
-            model_path = local_model_base
-            tokenizer_path = model_path
-            print(f"Using local model from {model_path}")
-        else:
-            model_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
-            tokenizer_path = model_path
-            print(f"Using HuggingFace model: {model_path}")
-        # if test_only:
-            # model_path = "/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213"
-    elif model_type == 'seq_pack':
-        # model_path = "zehui127/Omni-DNA-116M"
-        model_path = 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'
-        # tokenizer_path = "zehui127/Omni-DNA-116M"
-        tokenizer_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
-    elif model_type == 'dnabert2':
-        # Check if local model exists
-        if os.path.exists(local_model_base):
-            model_path = local_model_base
-            tokenizer_path = model_path
-            print(f"Using local model from {model_path}")
-        else:
-            model_path = "zhihan1996/DNABERT-2-117M"
-            tokenizer_path = model_path
-            print(f"Using HuggingFace model: {model_path}")
-    elif model_type=='hyenadna':
-        model_path = "LongSafari/hyenadna-medium-160k-seqlen-hf"
-        tokenizer_path = model_path
-        print(f"Using HuggingFace HyenaDNA model: {model_path}")
-    elif model_type=='caduceus':
-        model_path = "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
-        tokenizer_path = model_path
-        print(f"Using HuggingFace Caduceus model: {model_path}")
-    elif model_type=='gena-lm':
-        model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
-        tokenizer_path = model_path
-        print(f"Using HuggingFace GENA-LM model: {model_path}")
-    elif model_type=='lucaone':
-        # Check if local model exists
-        if os.path.exists(local_model_base):
-            model_path = local_model_base
-            tokenizer_path = model_path
-            print(f"Using local model from {model_path}")
-        else:
-            model_path = "LucaGroup/LucaOne-default-step36M"
-            tokenizer_path = model_path
-            print(f"Using HuggingFace LucaOne model: {model_path}")
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
+            raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Load base model - use AutoModel for custom architectures like LucaOne
+    # Load base model - use appropriate model class based on model type
     if model_type == 'lucaone':
         base_model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
+    elif model_type == 'gpn-msa':
+        base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
             trust_remote_code=True
         )
@@ -193,7 +216,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     #     tokenizer, task, seed=seed
     # )
     datasets, task_num_classes, max_seq_len = return_smart_dataset(
-        tokenizer, 'root/data/smart_filtered_variants.csv', task_name=task
+        tokenizer, 'root/data/smart_filtered_variants.csv', task_name=task, threshold=threshold
     )
     tokenizer.model_max_length = max_seq_len
         # << all ranks continue here >>
@@ -219,15 +242,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     # Create wrapped model with classification head
     model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder)
 
-    # Load saved model if testing only
-    # if test_only and os.path.exists(f"{model_path}"):
-    #     state_dict = f"./checkpoints/pretrain_model_dnabert2_CLNSIG/checkpoint-58330/pytorch_model.bin" # local checkpoint path if available
-    #     print(f"Loading weights from {state_dict}")
-    #     head_state_dict = torch.load(f"{state_dict}")
-    #     model.load_state_dict(head_state_dict)
+    # Model is already loaded with the appropriate checkpoint or base model
     # Prepare Training Arguments
     training_args = TrainingArguments(
-        output_dir=f"{path_prefix}/smart_pretrain_model_{model_type}_{task}_with_state_dict",
+        output_dir=f"{path_prefix}/smart_pretrain_model_{model_type}_{task}_threshold_{int(threshold)}_with_state_dict",
         learning_rate=learning_rate,
         max_grad_norm=max_grad_norm,
         per_device_train_batch_size=batch_size,
@@ -306,6 +324,10 @@ def main():
                         help="Maximum gradient norm for clipping")
     parser.add_argument("--num_workers", type=int, default=8,
                         help="Number of dataloader workers")
+    parser.add_argument("--threshold", type=float, default=54.0,
+                        help="Threshold for binarizing smart scores")
+    parser.add_argument("--checkpoint_path", type=str, default=None,
+                        help="Path to pre-trained ClinVar checkpoint to load from")
 
     args = parser.parse_args()
 
@@ -318,7 +340,9 @@ def main():
                             batch_size=args.batch_size,
                             num_epochs=args.num_epochs,
                             max_grad_norm=args.max_grad_norm,
-                            num_workers=args.num_workers)
+                            num_workers=args.num_workers,
+                            threshold=args.threshold,
+                            checkpoint_path=args.checkpoint_path)
 
 if __name__ == "__main__":
     main()
