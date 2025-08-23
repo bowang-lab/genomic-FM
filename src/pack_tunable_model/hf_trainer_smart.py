@@ -244,8 +244,9 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Model is already loaded with the appropriate checkpoint or base model
     # Prepare Training Arguments
+    checkpoint_suffix = f"_from_{os.path.basename(checkpoint_path)}" if checkpoint_path else ""
     training_args = TrainingArguments(
-        output_dir=f"{path_prefix}/smart_pretrain_model_{model_type}_{task}_threshold_{int(threshold)}_with_state_dict",
+        output_dir=f"{path_prefix}/smart_pretrain_model_{model_type}_{task}_threshold_{int(threshold)}_with_state_dict{checkpoint_suffix}",
         learning_rate=learning_rate,
         max_grad_norm=max_grad_norm,
         per_device_train_batch_size=batch_size,
