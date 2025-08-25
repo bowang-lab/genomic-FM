@@ -39,7 +39,7 @@ echo "============================================"
 echo "=================================="
 echo "Starting multi-threshold CLNDN task training (pathogenic vs benign)..."
 echo "=================================="
-python3 heart_finetune_multi_smart.py \
+accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart_finetune_multi_smart.py \
     --model "$MODEL" \
     --seed 127 \
     --task CLNDN \
@@ -52,7 +52,7 @@ echo "Multi-threshold CLNDN training completed!"
 echo "=================================="
 echo "Starting multi-threshold CLNSIG task training (clinical significance)..."
 echo "=================================="
-python3 heart_finetune_multi_smart.py \
+accelerate launch --config_file configs/ddp.yaml --main_process_port 29501 heart_finetune_multi_smart.py \
     --model "$MODEL" \
     --seed 127 \
     --task CLNSIG \

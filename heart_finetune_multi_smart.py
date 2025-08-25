@@ -13,7 +13,7 @@ def run_training(threshold, base_args):
     cmd = [
         "accelerate", "launch",
         "--config_file", "configs/ddp.yaml",
-        "--main_process_port", "0",  # Use next available port automatically
+        "--main_process_port", str(29500 + int(threshold)),  # Use unique port for each threshold
         "-m", "src.pack_tunable_model.hf_trainer_smart",
         "--threshold", str(threshold)
     ] + base_args
