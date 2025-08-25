@@ -94,25 +94,50 @@ def compute_metrics(eval_pred):
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10, 
-                            max_grad_norm=1.0, num_workers=8, threshold=54.0, checkpoint_path=None):
+                            max_grad_norm=1.0, num_workers=8, threshold=54.0, checkpoint_path=None, checkpoint_step=None):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
-    path_prefix = "./root/output" # for local use
+    path_prefix = "./root/models" # for local use
     # path_prefix = "/home/v-zehuili/repositories/amlt/codes/genomic-FM/root/clinvar_disease_classification"
     results_file = f"{path_prefix}/test_results_clinvar.csv"
 
     # Model and Tokenizer Selection
     model_path = None
     tokenizer_path = None
+    checkpoint_weights_path = None  # Path to checkpoint weights to load
     
-    # If checkpoint_path is provided, use it as the model path
+    # If checkpoint_path is provided, handle it as checkpoint weights to load
     if checkpoint_path and os.path.exists(checkpoint_path):
-        model_path = checkpoint_path
-        tokenizer_path = checkpoint_path
-        print(f"Using ClinVar-trained checkpoint from {model_path}")
+        # Check if the checkpoint_path contains multiple checkpoint subdirectories
+        checkpoint_dirs = [d for d in os.listdir(checkpoint_path) 
+                          if d.startswith('checkpoint-') and os.path.isdir(os.path.join(checkpoint_path, d))]
+        
+        if checkpoint_dirs:
+            if checkpoint_step:
+                # Use the specified checkpoint step
+                specific_checkpoint = f"checkpoint-{checkpoint_step}"
+                if specific_checkpoint in checkpoint_dirs:
+                    checkpoint_weights_path = os.path.join(checkpoint_path, specific_checkpoint, "pytorch_model.bin")
+                    print(f"Will load ClinVar-trained weights from {checkpoint_weights_path} (step {checkpoint_step})")
+                else:
+                    available_steps = [int(d.split('-')[1]) for d in checkpoint_dirs]
+                    raise ValueError(f"Checkpoint step {checkpoint_step} not found. Available steps: {sorted(available_steps)}")
+            else:
+                # Sort by checkpoint number and select the latest one
+                checkpoint_dirs.sort(key=lambda x: int(x.split('-')[1]))
+                latest_checkpoint = checkpoint_dirs[-1]
+                checkpoint_weights_path = os.path.join(checkpoint_path, latest_checkpoint, "pytorch_model.bin")
+                print(f"Will load ClinVar-trained weights from {checkpoint_weights_path} (latest from {len(checkpoint_dirs)} checkpoints)")
+        else:
+            # Check if it's a direct path to a checkpoint directory
+            if os.path.exists(os.path.join(checkpoint_path, "pytorch_model.bin")):
+                checkpoint_weights_path = os.path.join(checkpoint_path, "pytorch_model.bin")
+                print(f"Will load ClinVar-trained weights from {checkpoint_weights_path}")
+            else:
+                print(f"Warning: No pytorch_model.bin found in {checkpoint_path}")
     
-    # Otherwise, determine model path based on model type
+    # Determine base model path based on model type
     if not model_path:
         # Check for local models first
         local_model_base = f"./root/models/{model_type}"
@@ -203,6 +228,33 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path,
             trust_remote_code=True
         )
+    
+    # Load checkpoint weights if provided
+    if checkpoint_weights_path and os.path.exists(checkpoint_weights_path):
+        print(f"Loading checkpoint weights from {checkpoint_weights_path}")
+        import torch
+        checkpoint_state = torch.load(checkpoint_weights_path, map_location="cpu")
+        
+        # The checkpoint might have a different structure, try to load it
+        try:
+            # If the checkpoint is a full model state dict
+            if isinstance(checkpoint_state, dict) and not any(k.startswith('module.') for k in checkpoint_state.keys()):
+                base_model.load_state_dict(checkpoint_state, strict=False)
+            else:
+                # Try to extract the model state dict from various possible formats
+                if 'model_state_dict' in checkpoint_state:
+                    base_model.load_state_dict(checkpoint_state['model_state_dict'], strict=False)
+                elif 'state_dict' in checkpoint_state:
+                    base_model.load_state_dict(checkpoint_state['state_dict'], strict=False)
+                else:
+                    # Remove 'module.' prefix if present (from DataParallel)
+                    state_dict = {k.replace('module.', ''): v for k, v in checkpoint_state.items()}
+                    base_model.load_state_dict(state_dict, strict=False)
+            print(f"Successfully loaded checkpoint weights")
+        except Exception as e:
+            print(f"Warning: Could not load checkpoint weights: {e}")
+            print(f"Continuing with base model weights only")
+    
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
         trust_remote_code=True
@@ -329,6 +381,8 @@ def main():
                         help="Threshold for binarizing smart scores")
     parser.add_argument("--checkpoint_path", type=str, default=None,
                         help="Path to pre-trained ClinVar checkpoint to load from")
+    parser.add_argument("--checkpoint_step", type=int, default=None,
+                        help="Specific checkpoint step to use (e.g., 369140). If not specified, uses the latest checkpoint.")
 
     args = parser.parse_args()
 
@@ -343,7 +397,8 @@ def main():
                             max_grad_norm=args.max_grad_norm,
                             num_workers=args.num_workers,
                             threshold=args.threshold,
-                            checkpoint_path=args.checkpoint_path)
+                            checkpoint_path=args.checkpoint_path,
+                            checkpoint_step=args.checkpoint_step)
 
 if __name__ == "__main__":
     main()

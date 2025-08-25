@@ -97,7 +97,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
-    path_prefix = "./root/output" # for local use
+    path_prefix = "./root/models" # for local use
     # path_prefix = "/home/v-zehuili/repositories/amlt/codes/genomic-FM/root/clinvar_disease_classification"
     results_file = f"{path_prefix}/test_results_clinvar.csv"
 
