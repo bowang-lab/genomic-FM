@@ -107,10 +107,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     # Check for local models first
     local_model_base = f"./root/models/{model_type}"
     
-    if model_type == 'olmo':
+    if model_type == 'omni_dna_116m':
         # Check if local model exists
-        if os.path.exists(f"{local_model_base}/step832510-unsharded"):
-            model_path = f"{local_model_base}/step832510-unsharded"
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
             tokenizer_path = model_path
             print(f"Using local model from {model_path}")
         else:
@@ -156,21 +156,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
         tokenizer_path = model_path
         print(f"Using HuggingFace GENA-LM model: {model_path}")
-    elif model_type=='lucaone':
-        # Check if local model exists
-        if os.path.exists(local_model_base):
-            model_path = local_model_base
-            tokenizer_path = model_path
-            print(f"Using local model from {model_path}")
-        else:
-            model_path = "LucaGroup/LucaOne-default-step36M"
-            tokenizer_path = model_path
-            print(f"Using HuggingFace LucaOne model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Load base model - use AutoModel for custom architectures like LucaOne
-    if model_type == 'lucaone':
+    if model_type == 'gena-lm':
         base_model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True
@@ -283,7 +272,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 def main():
     parser = argparse.ArgumentParser(description="Single-task fine-tune and evaluate model.")
     parser.add_argument("--model", type=str, default='nt',
-                        help="Model type (e.g., olmo, nt, dnabert2)")
+                        help="Model type (e.g., omni_dna_116m, nt, dnabert2)")
     parser.add_argument("--seed", type=int, default=127,
                         help="Random seed value for training")
     parser.add_argument("--decoder", action="store_true",

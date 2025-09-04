@@ -38,8 +38,15 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "=================================="
 
 # Training parameters
-MODEL="nt"  # Options: nt, olmo, hyenadna, caduceus, gena-lm, lucaone (dnabert2 has Triton issues)
+MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm (dnabert2 has Triton issues)
 WANDB_PROJECT="genomic-finetune-clinvar"
+
+# Set decoder flag for autoregressive models
+if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
+    DECODER_FLAG="--decoder"
+else
+    DECODER_FLAG=""
+fi
 
 # ============================================
 # PART 1: GENERAL CLINVAR TRAINING
@@ -60,6 +67,7 @@ accelerate launch \
     --model "$MODEL" \
     --task "$TASK" \
     --seed 127 \
+    $DECODER_FLAG \
     2>&1 | tee logs/training_${SLURM_JOB_ID}_general_CLNDN.log
 
 echo "General ClinVar CLNDN training completed!"
@@ -76,6 +84,7 @@ accelerate launch \
     --model "$MODEL" \
     --task "$TASK" \
     --seed 127 \
+    $DECODER_FLAG \
     2>&1 | tee logs/training_${SLURM_JOB_ID}_general_CLNSIG.log
 
 echo "General ClinVar CLNSIG training completed!"
@@ -99,6 +108,7 @@ accelerate launch \
     --model "$MODEL" \
     --task "$TASK" \
     --seed 127 \
+    $DECODER_FLAG \
     2>&1 | tee logs/training_${SLURM_JOB_ID}_smart_CLNDN.log
 
 echo "SMART CLNDN training completed!"
@@ -115,6 +125,7 @@ accelerate launch \
     --model "$MODEL" \
     --task "$TASK" \
     --seed 127 \
+    $DECODER_FLAG \
     2>&1 | tee logs/training_${SLURM_JOB_ID}_smart_CLNSIG.log
 
 echo "SMART CLNSIG training completed!"

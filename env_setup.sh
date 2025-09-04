@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # IMPORTANT: This script should be run INSIDE an activated conda environment
-# Usage: conda activate genomic-fm-lucaone && ./env.sh [model_name]
+# Usage: conda activate genomic-fm && ./env.sh [model_name]
 
 set -euo pipefail
 export PYTHONNOUSERSITE=1
@@ -51,20 +51,11 @@ case "$MODEL_NAME" in
         pip install accelerate
         ;;
     
-    "olmo")
-        echo "Installing OLMo specific packages..."
+    "omni_dna_116m")
+        echo "Installing Omni-DNA-116M specific packages..."
         pip install ai2-olmo
         ;;
     
-    "lucaone")
-        echo "Installing LucaOne specific packages..."
-        # LucaOne uses standard transformers with custom code
-        pip install lucagplm
-        pip install tokenizers==0.19.1
-        pip install transformers==4.41.2
-        pip install fair-esm
-        pip install statsmodels
-        ;;
     
 esac
 

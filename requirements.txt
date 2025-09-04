@@ -39,7 +39,7 @@ omegaconf
 # wandb
 wandb
 
-# Olmo
+# Omni-DNA-116M
 boto3
 
 

@@ -190,9 +190,9 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     results_file = f"{path_prefix}/test_results_clinvar.csv"
 
     # Model and Tokenizer Selection
-    if model_type == 'olmo':
+    if model_type == 'omni_dna_116m':
         model = AutoModelForSequenceClassification.from_pretrained(
-            "/home/v-zehuili/finetune_nt_150M/step832510-unsharded",
+            "zehui127/Omni-DNA-116M",
             trust_remote_code=True
         )
         tokenizer = AutoTokenizer.from_pretrained(
@@ -316,7 +316,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 def main():
     parser = argparse.ArgumentParser(description="Single-task fine-tune and evaluate model.")
     parser.add_argument("--model", type=str, default='nt',
-                        help="Model type (e.g., olmo, nt, dnabert2)")
+                        help="Model type (e.g., omni_dna_116m, nt, dnabert2)")
     parser.add_argument("--seed", type=int, default=127,
                         help="Random seed value for training")
     parser.add_argument("--decoder", action="store_true",

@@ -28,7 +28,14 @@ conda activate genomic-fm
 wandb offline
 
 # Training parameters
-MODEL="nt"  # Options: nt, olmo, hyenadna, caduceus, gena-lm, lucaone, dnabert2, gpn-msa
+MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-msa
+
+# Set decoder flag for autoregressive models
+if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
+    DECODER_FLAG="--decoder"
+else
+    DECODER_FLAG=""
+fi
 
 echo "============================================"
 echo "Starting Heart Finetune Multi-Threshold Training"
@@ -44,6 +51,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart
     --seed 127 \
     --task CLNDN \
     --continue_on_error \
+    $DECODER_FLAG \
     2>&1 | tee logs/heart_finetune_multi_CLNDN_${SLURM_JOB_ID}.log
 
 echo "Multi-threshold CLNDN training completed!"
@@ -57,6 +65,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29501 heart
     --seed 127 \
     --task CLNSIG \
     --continue_on_error \
+    $DECODER_FLAG \
     2>&1 | tee logs/heart_finetune_multi_CLNSIG_${SLURM_JOB_ID}.log
 
 echo "Multi-threshold CLNSIG training completed!"
