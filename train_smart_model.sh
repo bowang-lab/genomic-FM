@@ -42,9 +42,9 @@ echo "Starting Heart Finetune Multi-Threshold Training"
 echo "Model: $MODEL"
 echo "============================================"
 
-# Run multi-threshold training for CLNDN (pathogenicity)
+# Run multi-threshold training for CLNDN (disease classification)
 echo "=================================="
-echo "Starting multi-threshold CLNDN task training (pathogenic vs benign)..."
+echo "Starting multi-threshold CLNDN task training (disease classification)..."
 echo "=================================="
 accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart_finetune_multi_smart.py \
     --model "$MODEL" \
@@ -56,9 +56,9 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart
 
 echo "Multi-threshold CLNDN training completed!"
 
-# Run multi-threshold training for CLNSIG (clinical significance/disease)
+# Run multi-threshold training for CLNSIG (pathogenicity)
 echo "=================================="
-echo "Starting multi-threshold CLNSIG task training (clinical significance)..."
+echo "Starting multi-threshold CLNSIG task training (pathogenicity classification)..."
 echo "=================================="
 accelerate launch --config_file configs/ddp.yaml --main_process_port 29501 heart_finetune_multi_smart.py \
     --model "$MODEL" \

@@ -112,16 +112,15 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
 def return_smart_dataset(
     tokenizer: PreTrainedTokenizer,
     csv_path: str,
-    task_name: str = 'CLNDN',  # Add task_name as a parameter
-    fasta_path: str | None = None,
-    threshold: float = 54.0,          # ↩︎ convert score → 1|0
+    target: str = 'score',  # 'disease' for disease classification, 'score' for pathogenicity
+    task_name: str = 'CLNDN',  # For dataset naming only
+    threshold: float = 54.0,  # Only used for pathogenicity (target='score')
     seq_length: int = 1024,
     val_split: float = 0.1,
     test_split: float = 0.1,
     seed: int = 42,
     all_records: bool = True,
     num_records: int | None = None,
-
 ):
     # ----------------------- load & prepare raw examples -------------------
     tokenizer.model_max_length = seq_length
@@ -131,29 +130,50 @@ def return_smart_dataset(
         num_records=num_records or 0,
         all_records=all_records,
     )
-    raw = wrapper.get_data(Seq_length=seq_length)      # [( (ref,alt), score ), ...]
-
-    # Binarise the target
-    binarised: List[Tuple[Tuple[str, str], int]] = [
-        [seq_pair, 1 if score >= threshold else 0] for seq_pair, score in raw
-    ]
+    
+    # Get data based on target type
+    raw = wrapper.get_data(Seq_length=seq_length, target=target)
+    
+    if target == 'disease':
+        # Disease classification mode
+        all_disease_labels = sorted(set(item[1] for item in raw if item[1] is not None))
+        label_to_id = {label: idx for idx, label in enumerate(all_disease_labels)}
+        num_labels = len(all_disease_labels)
+        
+        # Filter out samples without disease labels
+        labeled_data = [[seq_pair, label] for seq_pair, label in raw if label is not None and label in label_to_id]
+        
+        print(f"Disease classification: Found {num_labels} disease classes: {all_disease_labels}")
+        print(f"Total labeled samples: {len(labeled_data)}")
+        
+    else:  # target == 'score' (pathogenicity classification)
+        # Binarise the target
+        labeled_data: List[Tuple[Tuple[str, str], int]] = [
+            [seq_pair, 1 if score >= threshold else 0] for seq_pair, score in raw
+        ]
+        
+        all_disease_labels = [0, 1]  # Binary: benign (0), pathogenic (1)
+        label_to_id = {label: idx for idx, label in enumerate(all_disease_labels)}
+        num_labels = len(all_disease_labels)
+        
+        print(f"Pathogenicity classification: Binary classification with threshold {threshold}")
+        print(f"Total samples: {len(labeled_data)}")
+    
     multitask_datasets = {}
 
     # ------------------------------ splitting ------------------------------
     random.seed(seed)
-    random.shuffle(binarised)
-    all_labels = [0, 1]
-    label_to_id = {label: idx for idx, label in enumerate(all_labels)}
-    num_labels = len(all_labels)
+    random.shuffle(labeled_data)
+    all_labels = all_disease_labels
 
-    total = len(binarised)
+    total = len(labeled_data)
     test_sz = int(total * test_split)
     val_sz = int((total - test_sz) * val_split)
     train_sz = total - test_sz - val_sz
 
-    train_data = binarised[:train_sz]
-    val_data = binarised[train_sz : train_sz + val_sz]
-    test_data = binarised[train_sz + val_sz :]
+    train_data = labeled_data[:train_sz]
+    val_data = labeled_data[train_sz : train_sz + val_sz]
+    test_data = labeled_data[train_sz + val_sz :]
 
     print(
         f"Smart Variant data → Train: {len(train_data)}, "

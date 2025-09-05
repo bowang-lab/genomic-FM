@@ -252,8 +252,12 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     # datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
     #     tokenizer, task, seed=seed
     # )
+    # Map task to target for cleaner interface
+    target = 'disease' if task == 'CLNDN' else 'score'
+    
     datasets, task_num_classes, max_seq_len = return_smart_dataset(
-        tokenizer, 'root/data/smart_filtered_variants.csv', task_name=task, threshold=threshold
+        tokenizer, 'root/data/smart_filtered_variants.csv', 
+        target=target, task_name=task, threshold=threshold
     )
     tokenizer.model_max_length = max_seq_len
         # << all ranks continue here >>
@@ -349,7 +353,7 @@ def main():
                         help="Only run evaluation on the test set")
     parser.add_argument("--task", type=str, default="CLNDN",
                         choices=["CLNDN", "CLNSIG"],
-                        help="Prediction task: CLNDN (pathogenic vs benign) or CLNSIG")
+                        help="Prediction task: CLNDN (disease classification) or CLNSIG (pathogenicity)")
     
     # Training hyperparameters
     parser.add_argument("--learning_rate", type=float, default=0.000005,

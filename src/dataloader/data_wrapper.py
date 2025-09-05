@@ -1,5 +1,6 @@
 from typing import Any, List, Tuple, Union
 from pathlib import Path
+import pandas as pd
 from ..utils import save_as_jsonl, read_jsonl
 from ..sequence_extractor import GenomeSequenceExtractor, FastaStringExtractor, RandomSequenceExtractor
 from ..datasets.clinvar import load_clinvar
@@ -642,8 +643,9 @@ class SmartVariantDataWrapper:
         Seq_length: int = 20,
         insert_Ns: bool = True,
         progress_bar: bool = True,
-    ) -> List[Tuple[Tuple[str, str], float]]:
-        data: list[tuple[tuple[str, str], float]] = []
+        target: str = 'score',
+    ) -> List[Tuple[Tuple[str, str], Union[float, str]]]:
+        data: list[tuple[tuple[str, str], Union[float, str]]] = []
         iterator = range(self.num_records)
         if progress_bar:
             iterator = tqdm(iterator, desc="extracting variant contexts")
@@ -663,7 +665,69 @@ class SmartVariantDataWrapper:
                 record, sequence_length=Seq_length
             )
 
-            y = float(row["smart_score"])
-            data.append(([ref_seq, alt_seq, None], y))
+            if target == 'disease':
+                # Extract disease class from patient phenotype data
+                disease_class = self._extract_disease_class(row)
+                if disease_class is not None:
+                    y = disease_class
+                    data.append(([ref_seq, alt_seq, None], y))
+                # Skip samples without disease labels
+            else:  # target == 'score' or pathogenicity
+                y = float(row["smart_score"])
+                data.append(([ref_seq, alt_seq, None], y))
 
         return data
+    
+    def _extract_disease_class(self, row):
+        """
+        Extract disease class from patient data. This method should be updated
+        based on the actual column structure after patient data linking.
+        
+        Expected disease classes: Aortopathy, Cardiomyopathy, Arrhythmia, Structural defect
+        """
+        # Check various possible disease/phenotype columns
+        # You'll need to update these based on actual linked data structure
+        
+        disease_columns = [
+            'disease_class',  # If directly linked
+            'Class',          # From CGC classification
+            'cardiac_phenotype',  # If phenotype-based
+            'patient_diagnosis',  # If diagnosis-based
+        ]
+        
+        for col in disease_columns:
+            if col in row and pd.notna(row[col]) and row[col] != '':
+                disease_class = str(row[col]).strip()
+                
+                # Normalize disease class names
+                if disease_class.lower() in ['aortopathy', 'aortic']:
+                    return 'Aortopathy'
+                elif disease_class.lower() in ['cardiomyopathy', 'cardio']:
+                    return 'Cardiomyopathy' 
+                elif disease_class.lower() in ['arrhythmia', 'rhythm']:
+                    return 'Arrhythmia'
+                elif disease_class.lower() in ['structural defect', 'structural', 'congenital']:
+                    return 'Structural defect'
+                else:
+                    # Return as-is for other valid disease classes
+                    return disease_class
+        
+        # Fallback: try to infer from phenotype columns (HPO terms)
+        # This is based on the cardiac phenotype columns I saw in the data
+        cardiac_phenotypes = {
+            'hypertrophic_cardiomyopathy': 'Cardiomyopathy',
+            'dilated_cardiomyopathy': 'Cardiomyopathy',
+            'aortopulmonary_collateral_arteries': 'Aortopathy',
+            'aortopulmonary_window': 'Aortopathy',
+            'tetralogy_of_fallot_with_pulmonary_atresia_and_major_aortopulmonary_collateral_arteries': 'Structural defect',
+            'cardiac_arrest': 'Arrhythmia',
+            'cardiac_conduction_abnormality': 'Arrhythmia',
+            'cardiomegaly': 'Cardiomyopathy',
+        }
+        
+        for phenotype, disease_class in cardiac_phenotypes.items():
+            if phenotype in row and pd.notna(row[phenotype]) and row[phenotype] == 1:
+                return disease_class
+        
+        # No disease class found
+        return None
