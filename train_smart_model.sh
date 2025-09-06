@@ -56,7 +56,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart
 
 echo "Multi-threshold CLNDN training completed!"
 
-# Run multi-threshold training for CLNSIG (pathogenicity)
+# Run multi-threshold training for CLNSIG (pathogenicity classification)
 echo "=================================="
 echo "Starting multi-threshold CLNSIG task training (pathogenicity classification)..."
 echo "=================================="

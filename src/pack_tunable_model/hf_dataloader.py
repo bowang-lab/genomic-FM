@@ -348,17 +348,17 @@ def return_eqtl_dataset(tokenizer: PreTrainedTokenizer, target='Adipose_Subcutan
     # Load raw datasets
     val_data = load_dataset(
         "json",
-        data_files=f"/home/v-zehuili/repositories/DNALongBench/dnalongbench_hf_{target}/validation.jsonl",
+        data_files=f"./root/data/DNALongBench/dnalongbench_hf_{target}/validation.jsonl",
         split="train",
     )
     train_data = load_dataset(
         "json",
-        data_files=f"/home/v-zehuili/repositories/DNALongBench/dnalongbench_hf_{target}/train.jsonl",
+        data_files=f"./root/data/DNALongBench/dnalongbench_hf_{target}/train.jsonl",
         split="train",
     )
     test_data = load_dataset(
         "json",
-        data_files=f"/home/v-zehuili/repositories/DNALongBench/dnalongbench_hf_{target}/test.jsonl",
+        data_files=f"./root/data/DNALongBench/dnalongbench_hf_{target}/test.jsonl",
         split="train",
     )
     # Create datasets

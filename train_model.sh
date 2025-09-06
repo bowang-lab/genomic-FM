@@ -55,7 +55,7 @@ echo "============================================"
 echo "PART 1: Starting General ClinVar Training"
 echo "============================================"
 
-# Run training for CLNDN task (pathogenic vs benign) on general ClinVar
+# Run training for CLNDN task (disease classification) on general ClinVar
 echo "=================================="
 echo "Starting general ClinVar CLNDN task training..."
 echo "=================================="
@@ -72,7 +72,7 @@ accelerate launch \
 
 echo "General ClinVar CLNDN training completed!"
 
-# Run training for CLNSIG task (clinical significance) on general ClinVar
+# Run training for CLNSIG task (pathogenicity classification) on general ClinVar
 echo "=================================="
 echo "Starting general ClinVar CLNSIG task training..."
 echo "=================================="
@@ -96,9 +96,9 @@ echo "============================================"
 echo "PART 2: Starting SMART Variant Training (Heart-specific)"
 echo "============================================"
 
-# Run training for CLNDN task (pathogenic vs benign) on SMART variants
+# Run training for CLNDN task (disease classification) on SMART variants
 echo "=================================="
-echo "Starting SMART CLNDN task training..."
+echo "Starting SMART CLNDN task training (disease classification)..."
 echo "=================================="
 TASK="CLNDN"
 accelerate launch \
@@ -113,9 +113,9 @@ accelerate launch \
 
 echo "SMART CLNDN training completed!"
 
-# Run training for CLNSIG task (clinical significance) on SMART variants
+# Run training for CLNSIG task (pathogenicity classification) on SMART variants
 echo "=================================="
-echo "Starting SMART CLNSIG task training..."
+echo "Starting SMART CLNSIG task training (pathogenicity)..."
 echo "=================================="
 TASK="CLNSIG"
 accelerate launch \
@@ -135,11 +135,13 @@ echo "All training tasks completed successfully!"
 echo "============================================"
 echo ""
 echo "Training Summary:"
-echo "1. General ClinVar training: Complete"
-echo "2. SMART variant CLNDN training: Complete"
-echo "3. SMART variant CLNSIG training: Complete"
+echo "1. General ClinVar CLNDN training: Complete"
+echo "2. General ClinVar CLNSIG training: Complete"
+echo "3. SMART variant CLNDN training: Complete"
+echo "4. SMART variant CLNSIG training: Complete"
 echo ""
 echo "Check the following log files for details:"
+echo "- logs/training_${SLURM_JOB_ID}_general_CLNDN.log"
 echo "- logs/training_${SLURM_JOB_ID}_general_CLNSIG.log"
 echo "- logs/training_${SLURM_JOB_ID}_smart_CLNDN.log"
 echo "- logs/training_${SLURM_JOB_ID}_smart_CLNSIG.log"

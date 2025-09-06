@@ -99,7 +99,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     accelerator = Accelerator()
     # Configuration
     path_prefix = "./root/models" # for local use
-    # path_prefix = "/home/v-zehuili/repositories/amlt/codes/genomic-FM/root/clinvar_disease_classification"
+    # path_prefix = "./root/clinvar_disease_classification"
     results_file = f"{path_prefix}/test_results_clinvar.csv"
 
     # Model and Tokenizer Selection
@@ -189,21 +189,22 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
             tokenizer_path = model_path
             print(f"Using HuggingFace GENA-LM model: {model_path}")
-        elif model_type=='gpn-msa':
-            # Check if local model exists
-            if os.path.exists(f"{local_model_base}-sapiens"):
-                model_path = f"{local_model_base}-sapiens"
+        elif model_type=='gpn-msa-sapiens':
+            # Check if local model exists first
+            local_gpn_path = "./root/models/gpn-msa-sapiens"
+            if os.path.exists(local_gpn_path):
+                model_path = local_gpn_path
                 tokenizer_path = model_path
-                print(f"Using local model from {model_path}")
+                print(f"Using local GPN-MSA-Sapiens model from {model_path}")
             else:
                 model_path = "songlab/gpn-msa-sapiens"
                 tokenizer_path = model_path
-                print(f"Using HuggingFace GPN-MSA model: {model_path}")
+                print(f"Using HuggingFace GPN-MSA-Sapiens model: {model_path}")
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
     # Load base model - use appropriate model class based on model type
-    if model_type == 'gpn-msa':
+    if model_type == 'gpn-msa-sapiens':
         base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
             trust_remote_code=True

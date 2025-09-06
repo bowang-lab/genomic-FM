@@ -98,7 +98,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     accelerator = Accelerator()
     # Configuration
     path_prefix = "./root/models" # for local use
-    # path_prefix = "/home/v-zehuili/repositories/amlt/codes/genomic-FM/root/clinvar_disease_classification"
+    # path_prefix = "./root/clinvar_disease_classification"
     results_file = f"{path_prefix}/test_results_clinvar.csv"
 
     # Model and Tokenizer Selection
@@ -128,7 +128,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             tokenizer_path = model_path
             print(f"Using HuggingFace model: {model_path}")
         # if test_only:
-            # model_path = "/home/v-zehuili/repositories/genomic-FM/root/clinvar_disease_classification/checkpoint-55213"
+            # model_path = "./root/clinvar_disease_classification/checkpoint-55213"
     elif model_type == 'seq_pack':
         # model_path = "zehui127/Omni-DNA-116M"
         model_path = 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'
@@ -156,11 +156,27 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
         tokenizer_path = model_path
         print(f"Using HuggingFace GENA-LM model: {model_path}")
+    elif model_type=='gpn-msa-sapiens':
+        # Check if local model exists first
+        local_gpn_path = "./root/models/gpn-msa-sapiens"
+        if os.path.exists(local_gpn_path):
+            model_path = local_gpn_path
+            tokenizer_path = model_path
+            print(f"Using local GPN-MSA-Sapiens model from {model_path}")
+        else:
+            model_path = "songlab/gpn-msa-sapiens"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace GPN-MSA-Sapiens model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
     if model_type == 'gena-lm':
         base_model = AutoModel.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
+    elif model_type == 'gpn-msa-sapiens':
+        base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
             trust_remote_code=True
         )
