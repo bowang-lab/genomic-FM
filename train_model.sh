@@ -38,7 +38,7 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "=================================="
 
 # Training parameters
-MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm (dnabert2 has Triton issues)
+MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-msa-sapiens
 WANDB_PROJECT="genomic-finetune-clinvar"
 
 # Set decoder flag for autoregressive models

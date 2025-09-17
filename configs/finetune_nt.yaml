@@ -36,6 +36,7 @@ clinvar_CLNSIG_nt:
   pca_components: 16
   model_initiator_name: nt_transformer_human_ref
   output_size: 4
+
 ######
 
 # OligogenicDataWrapper

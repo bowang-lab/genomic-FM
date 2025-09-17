@@ -5,7 +5,7 @@ from datasets import load_dataset
 import logging
 import typing
 from typing import Dict, Sequence
-from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper
+from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper
 import random
 def split_train_val(dataset_train, val_split=0.1, seed=42):
     """
@@ -302,8 +302,13 @@ class MultiTaskDataCollator:
             alt_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
 
-        # Convert labels to tensor
-        labels = torch.tensor(labels, dtype=torch.long)
+        # Convert labels to tensor - use float for regression, long for classification
+        # Check if any task name contains "MAVES" to determine if this is regression
+        is_regression = any("MAVES" in task_name for task_name in task_names)
+        if is_regression:
+            labels = torch.tensor(labels, dtype=torch.float)
+        else:
+            labels = torch.tensor(labels, dtype=torch.long)
 
         # Create output dictionary
         batch = {
@@ -440,6 +445,139 @@ class EqtlDataset(Dataset):
         self.alt_attention_mask = alt_output.get("attention_mask")
 
         self.labels = labels
+
+    def __len__(self):
+        return len(self.ref_input_ids)
+
+    def __getitem__(self, i):
+        item = {
+            "ref_input_ids": self.ref_input_ids[i],
+            "alt_input_ids": self.alt_input_ids[i],
+            "labels": self.labels[i],
+            "task_name": self.task_name
+        }
+
+        if self.ref_attention_mask is not None:
+            item["ref_attention_mask"] = self.ref_attention_mask[i]
+
+        if self.alt_attention_mask is not None:
+            item["alt_attention_mask"] = self.alt_attention_mask[i]
+
+        return item
+
+
+
+def return_maves_dataset(
+    tokenizer,
+    target="score",
+    seq_length=1024,
+    val_split=0.1,
+    test_split=0.1,
+    seed=42,
+    all_records=True,
+    num_records=2000
+):
+    """
+    Load MAVES dataset for variant effect regression.
+    """
+    # Load MAVES data using the existing data wrapper
+    mave_wrapper = MAVEDataWrapper(num_records=num_records, all_records=all_records)
+    raw_data = mave_wrapper.get_data(Seq_length=seq_length, target=target)
+
+    print(f"Loaded {len(raw_data)} MAVES samples for {target} prediction")
+
+    # Convert to format expected by dataset: [seq_pair, score]
+    labeled_data = []
+    for item in raw_data:
+        seq_pair, score = item
+        ref_seq, alt_seq, annotation = seq_pair
+        labeled_data.append([(ref_seq, alt_seq, annotation), float(score)])
+
+    print(f"Converted {len(labeled_data)} samples for regression")
+
+    # Split data
+    random.seed(seed)
+    random.shuffle(labeled_data)
+
+    total = len(labeled_data)
+    test_sz = int(total * test_split)
+    val_sz = int((total - test_sz) * val_split)
+    train_sz = total - test_sz - val_sz
+
+    train_data = labeled_data[:train_sz]
+    val_data = labeled_data[train_sz : train_sz + val_sz]
+    test_data = labeled_data[train_sz + val_sz :]
+
+    print(f"MAVES data → Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+
+    # Create datasets
+    multitask_datasets = {}
+    task_name = f"MAVES_{target}"
+
+    if len(train_data) > 0:
+        multitask_datasets["train"] = MAVESDataset(train_data, tokenizer, task_name)
+    if len(val_data) > 0:
+        multitask_datasets[f"{task_name}_val"] = MAVESDataset(val_data, tokenizer, task_name)
+    if len(test_data) > 0:
+        multitask_datasets[f"{task_name}_test"] = MAVESDataset(test_data, tokenizer, task_name)
+
+    # For regression, output size is 1
+    task_num_classes = {task_name: 1}
+    max_seq_len = seq_length
+
+    print(f"Max sequence length: {max_seq_len}")
+    return multitask_datasets, task_num_classes, max_seq_len
+
+
+class MAVESDataset(Dataset):
+    """Dataset for MAVES variant data with regression targets."""
+
+    def __init__(self, data, tokenizer, task_name):
+        super(MAVESDataset, self).__init__()
+        self.task_name = task_name
+        self.num_labels = 1  # Regression output
+
+        # Process data
+        ref_sequences = []
+        alt_sequences = []
+        scores = []
+
+        for item in data:
+            # Extract reference and alternative sequences
+            ref, alt, annotation = item[0]
+            ref_sequences.append(ref)
+            alt_sequences.append(alt)
+
+            # Extract regression target (score)
+            score = float(item[1])
+            scores.append(score)
+
+        # Tokenize reference sequences
+        ref_output = tokenizer(
+            ref_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        )
+
+        # Tokenize alternative sequences
+        alt_output = tokenizer(
+            alt_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        )
+
+        # Store tokenized sequences and masks separately
+        self.ref_input_ids = ref_output["input_ids"]
+        self.ref_attention_mask = ref_output.get("attention_mask")
+
+        self.alt_input_ids = alt_output["input_ids"]
+        self.alt_attention_mask = alt_output.get("attention_mask")
+
+        self.labels = scores
 
     def __len__(self):
         return len(self.ref_input_ids)

@@ -6,13 +6,67 @@ oligogenic_hyena-tiny:
   model_initiator_name: hyenadna-tiny-1k
   output_size: 2
 
-mave_score_hyena-tiny:
+mave_score_nt:
   class: MAVEDataWrapper
   task: regression
   target: score
   Seq_length: 1024
   pca_components: 16
-  model_initiator_name: hyenadna-tiny-1k
+  model_initiator_name: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
+  output_size: 1
+
+mave_score_omni_dna_116m:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: zehui127/Omni-DNA-116M
+  output_size: 1
+
+mave_score_dnabert2:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: zhihan1996/DNABERT-2-117M
+  output_size: 1
+
+mave_score_hyenadna:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: LongSafari/hyenadna-medium-160k-seqlen-hf
+  output_size: 1
+
+mave_score_caduceus:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16
+  output_size: 1
+
+mave_score_gena-lm:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: AIRI-Institute/gena-lm-bert-base-t2t
+  output_size: 1
+
+mave_score_gpn-msa-sapiens:
+  class: MAVEDataWrapper
+  task: regression
+  target: score
+  Seq_length: 1024
+  pca_components: 16
+  model_initiator_name: songlab/gpn-msa-sapiens
   output_size: 1
 
 gwas_pval_hyena-tiny:

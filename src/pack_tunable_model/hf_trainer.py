@@ -19,7 +19,7 @@ from transformers import (
 )
 from accelerate import Accelerator
 # Import from local modules
-from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator, return_smart_dataset
+from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator, return_smart_dataset, return_maves_dataset
 # from .hf_dataloader import return_smart_dataset, MultiTaskDataCollator
 # Import our custom wrapper model
 from .wrap_model import WrappedModelWithClassificationHead
@@ -44,25 +44,36 @@ class SafeDistributedTrainer(Trainer):
         return metrics
 
 
-def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray):
+def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray, task_type="classification"):
     valid_mask = labels != -100  # Exclude padding tokens
     valid_predictions = predictions[valid_mask]
     valid_labels = labels[valid_mask]
-    return {
-        "accuracy": sklearn.metrics.accuracy_score(valid_labels, valid_predictions),
-        "f1": sklearn.metrics.f1_score(
-            valid_labels, valid_predictions, average="macro", zero_division=0
-        ),
-        "matthews_correlation": sklearn.metrics.matthews_corrcoef(
-            valid_labels, valid_predictions
-        ),
-        "precision": sklearn.metrics.precision_score(
-            valid_labels, valid_predictions, average="macro", zero_division=0
-        ),
-        "recall": sklearn.metrics.recall_score(
-            valid_labels, valid_predictions, average="macro", zero_division=0
-        ),
-    }
+
+    if task_type == "regression":
+        # Regression metrics
+        return {
+            "mse": sklearn.metrics.mean_squared_error(valid_labels, valid_predictions),
+            "mae": sklearn.metrics.mean_absolute_error(valid_labels, valid_predictions),
+            "r2": sklearn.metrics.r2_score(valid_labels, valid_predictions),
+            "pearson_correlation": np.corrcoef(valid_labels, valid_predictions)[0, 1] if len(valid_labels) > 1 else 0.0,
+        }
+    else:
+        # Classification metrics
+        return {
+            "accuracy": sklearn.metrics.accuracy_score(valid_labels, valid_predictions),
+            "f1": sklearn.metrics.f1_score(
+                valid_labels, valid_predictions, average="macro", zero_division=0
+            ),
+            "matthews_correlation": sklearn.metrics.matthews_corrcoef(
+                valid_labels, valid_predictions
+            ),
+            "precision": sklearn.metrics.precision_score(
+                valid_labels, valid_predictions, average="macro", zero_division=0
+            ),
+            "recall": sklearn.metrics.recall_score(
+                valid_labels, valid_predictions, average="macro", zero_division=0
+            ),
+        }
 
 def preprocess_logits_for_metrics_old(logits: torch.Tensor, labels: Optional[torch.Tensor] = None):
     """
@@ -81,15 +92,21 @@ def preprocess_logits_for_metrics(logits: torch.Tensor, labels: Optional[torch.T
             return torch.tensor([], device=labels.device)
         return torch.tensor([])
 
-    predictions = torch.argmax(logits, dim=-1)
+    # For regression (1 output), return logits directly; for classification, use argmax
+    if logits.shape[-1] == 1:
+        # Regression: return raw logits
+        predictions = logits.squeeze(-1)
+    else:
+        # Classification: use argmax
+        predictions = torch.argmax(logits, dim=-1)
     return predictions
 
-def compute_metrics(eval_pred):
+def compute_metrics(eval_pred, task_type="classification"):
     """
     Compute metrics from predictions and labels.
     """
     predictions, labels = eval_pred
-    return calculate_metric_with_sklearn(predictions, labels)
+    return calculate_metric_with_sklearn(predictions, labels, task_type)
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10, 
@@ -190,13 +207,18 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         trust_remote_code=True
     )
 
-    ########### Load Dataset old ##################
-        # dangerous zone: so we need to use main_process_first
-        # Code in this block is executed by rank-0 first,
-        # all other ranks are blocked until rank-0 exits the block.
-    datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-        tokenizer, task, seed=seed
-    )
+    ########### Load Dataset ##################
+    if task == "MAVES":
+        # Load MAVES dataset for regression
+        datasets, task_num_classes, max_seq_len = return_maves_dataset(
+            tokenizer, target='score', seq_length=1024, seed=seed
+        )
+        task = "MAVES_score"  # Update task name to match dataset key
+    else:
+        # Load ClinVar dataset for classification
+        datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
+            tokenizer, task, seed=seed
+        )
     # datasets, task_num_classes, max_seq_len = return_smart_dataset(
     #     tokenizer, '/home/v-zehuili/repositories/CardiacGVRep/root/smart_filtered_analysis/smart_filtered_analysis/smart_filtered_variants_all.csv'
     # )
@@ -252,6 +274,21 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     # Data Collator
     data_collator = MultiTaskDataCollator(tokenizer)
 
+    # Create compute_metrics function for the specific task type
+    task_type = "regression" if task.startswith("MAVES") else "classification"
+
+    def compute_metrics_for_task(eval_pred):
+        predictions, labels = eval_pred
+        return calculate_metric_with_sklearn(predictions, labels, task_type)
+
+    # Update training arguments for regression vs classification
+    if task.startswith("MAVES"):
+        training_args.metric_for_best_model = "r2"  # Use R² for regression
+        training_args.greater_is_better = True
+    else:
+        training_args.metric_for_best_model = "matthews_correlation"  # Use MCC for classification
+        training_args.greater_is_better = True
+
     # Create standard Trainer (no longer need custom trainer)
     trainer = SafeDistributedTrainer(
         model=model,
@@ -259,7 +296,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         train_dataset=datasets['train'],
         eval_dataset=datasets.get(f"{task}_val"),
         preprocess_logits_for_metrics=preprocess_logits_for_metrics,
-        compute_metrics=compute_metrics,
+        compute_metrics=compute_metrics_for_task,
         data_collator=data_collator,
     )
 
@@ -296,8 +333,8 @@ def main():
     parser.add_argument("--test_only", action="store_true",
                         help="Only run evaluation on the test set")
     parser.add_argument("--task", type=str, default="CLNSIG",
-                        choices=["CLNDN", "CLNSIG"],
-                        help="Prediction task: CLNDN (pathogenic vs benign) or CLNSIG")
+                        choices=["CLNDN", "CLNSIG", "MAVES"],
+                        help="Prediction task: CLNDN (disease classification), CLNSIG (pathogenicity), or MAVES (variant effect regression)")
     
     # Training hyperparameters
     parser.add_argument("--learning_rate", type=float, default=0.000005,
