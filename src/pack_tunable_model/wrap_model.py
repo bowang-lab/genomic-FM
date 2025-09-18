@@ -146,8 +146,16 @@ class WrappedModelWithClassificationHead(nn.Module):
         # Calculate loss if labels are provided
         loss = None
         if labels is not None:
-            loss_fct = torch.nn.CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+            # Check if this is a regression task (num_classes = 1)
+            if logits.size(-1) == 1:
+                # Regression task - use MSELoss
+                loss_fct = torch.nn.MSELoss()
+                # Squeeze logits to match label dimensions for regression
+                loss = loss_fct(logits.squeeze(-1), labels.float())
+            else:
+                # Classification task - use CrossEntropyLoss
+                loss_fct = torch.nn.CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
 
         # Return output in dictionary format similar to HuggingFace models
         return {

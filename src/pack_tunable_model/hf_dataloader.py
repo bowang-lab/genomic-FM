@@ -515,11 +515,11 @@ def return_maves_dataset(
     task_name = f"MAVES_{target}"
 
     if len(train_data) > 0:
-        multitask_datasets["train"] = MAVESDataset(train_data, tokenizer, task_name)
+        multitask_datasets["train"] = MAVESDataset(train_data, tokenizer, task_name, seq_length)
     if len(val_data) > 0:
-        multitask_datasets[f"{task_name}_val"] = MAVESDataset(val_data, tokenizer, task_name)
+        multitask_datasets[f"{task_name}_val"] = MAVESDataset(val_data, tokenizer, task_name, seq_length)
     if len(test_data) > 0:
-        multitask_datasets[f"{task_name}_test"] = MAVESDataset(test_data, tokenizer, task_name)
+        multitask_datasets[f"{task_name}_test"] = MAVESDataset(test_data, tokenizer, task_name, seq_length)
 
     # For regression, output size is 1
     task_num_classes = {task_name: 1}
@@ -532,7 +532,7 @@ def return_maves_dataset(
 class MAVESDataset(Dataset):
     """Dataset for MAVES variant data with regression targets."""
 
-    def __init__(self, data, tokenizer, task_name):
+    def __init__(self, data, tokenizer, task_name, seq_length=1024):
         super(MAVESDataset, self).__init__()
         self.task_name = task_name
         self.num_labels = 1  # Regression output
@@ -557,7 +557,7 @@ class MAVESDataset(Dataset):
             ref_sequences,
             return_tensors="pt",
             padding="longest",
-            max_length=tokenizer.model_max_length,
+            max_length=seq_length,
             truncation=True,
         )
 
@@ -566,7 +566,7 @@ class MAVESDataset(Dataset):
             alt_sequences,
             return_tensors="pt",
             padding="longest",
-            max_length=tokenizer.model_max_length,
+            max_length=seq_length,
             truncation=True,
         )
 
