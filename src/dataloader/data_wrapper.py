@@ -1,6 +1,9 @@
 from typing import Any, List, Tuple, Union
 from pathlib import Path
 import pandas as pd
+import numpy as np
+import random
+from tqdm import tqdm
 from ..utils import save_as_jsonl, read_jsonl
 from ..sequence_extractor import GenomeSequenceExtractor, FastaStringExtractor, RandomSequenceExtractor
 from ..datasets.clinvar import load_clinvar
@@ -119,12 +122,80 @@ class OligogenicDataWrapper:
         return data
 
 class MAVEDataWrapper:
-    def __init__(self, num_records=2000, all_records=False):
+    def __init__(self, num_records=2000, all_records=False,
+                 # Essential filters for training stability
+                 filter_genes=None, experimental_methods=None,
+                 coding_only=None, seq_length_range=None):
         self.num_records = num_records
         self.all_records = all_records
+        # Essential filters
+        self.filter_genes = filter_genes  # List of gene names to filter
+        self.experimental_methods = experimental_methods  # List of experimental methods
+        self.coding_only = coding_only  # True=coding only, False=non-coding only, None=both
+        self.seq_length_range = seq_length_range  # Tuple (min_len, max_len)
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
+
+    def filter_data(self, data):
+        """Apply essential filtering to MAVES data."""
+        original_size = len(data)
+        filtered_data = []
+
+        for record in data:
+            annotation = record[0][2] if isinstance(record[0], list) else record[0].get('annotation', '')
+            ref_seq = record[0][0] if isinstance(record[0], list) else record[0].get('ref', '')
+
+            # 1. Gene filter
+            if self.filter_genes:
+                gene_found = any(gene.upper() in annotation.upper() for gene in self.filter_genes)
+                if not gene_found:
+                    continue
+
+            # 2. Experimental method filter (supports both individual methods and categories)
+            if self.experimental_methods:
+                from .mave_utils import expand_method_filters
+
+                # Expand any categories to individual methods
+                all_methods = expand_method_filters(self.experimental_methods)
+
+                method_found = any(method.lower() in annotation.lower() for method in all_methods)
+                if not method_found:
+                    continue
+
+            # 3. Coding/non-coding filter
+            if self.coding_only is not None:
+                # Extract HGVS prefix to determine coding vs non-coding
+                if ', HGVS Prefix: ' in annotation:
+                    hgvs_prefix = annotation.split(', HGVS Prefix: ')[1].strip()
+                    is_coding = hgvs_prefix == 'c'
+
+                    if self.coding_only and not is_coding:
+                        continue
+                    elif not self.coding_only and is_coding:
+                        continue
+
+            # 4. Sequence length filter
+            if self.seq_length_range:
+                min_len, max_len = self.seq_length_range
+                seq_len = len(ref_seq)
+                if not (min_len <= seq_len <= max_len):
+                    continue
+
+            filtered_data.append(record)
+
+
+        print(f"Filtered data: {original_size:,} -> {len(filtered_data):,} records")
+        if self.filter_genes:
+            print(f"  Gene filter: {self.filter_genes}")
+        if self.experimental_methods:
+            print(f"  Experimental methods: {self.experimental_methods}")
+        if self.coding_only is not None:
+            print(f"  Coding only: {self.coding_only}")
+        if self.seq_length_range:
+            print(f"  Sequence length: {self.seq_length_range}")
+
+        return filtered_data
 
     def get_data(self, Seq_length=20, target='score', sequence_type='dna', region_type=None):
         if os.path.exists('./root/data/maves.jsonl'):
@@ -137,6 +208,8 @@ class MAVEDataWrapper:
             data = get_maves(Seq_length=Seq_length, limit=None, target=target, sequence_type=sequence_type, region_type=region_type)
             save_as_jsonl(data, file_name)
 
+        # Apply filters
+        data = self.filter_data(data)
 
         if self.all_records:
             return data

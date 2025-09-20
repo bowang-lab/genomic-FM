@@ -4,7 +4,7 @@ from transformers import PreTrainedTokenizer
 from datasets import load_dataset
 import logging
 import typing
-from typing import Dict, Sequence
+from typing import Dict, Sequence, List, Tuple
 from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper
 import random
 def split_train_val(dataset_train, val_split=0.1, seed=42):
@@ -43,11 +43,6 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
     Returns:
         tuple: (multitask_datasets, task_num_classes, max_seq_len)
     """
-    import torch
-    from torch.utils.data import Dataset, Subset
-    import numpy as np
-    from tqdm import tqdm
-    import random
     tokenizer.model_max_length = seq_length
     # Get ClinVar data
     # clinvar_wrapper = ClinVarDataWrapper(all_records=True) # full run
@@ -79,7 +74,7 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
         label_to_id = {label: idx for idx, label in enumerate(all_labels)}
         num_labels = len(all_labels)
         print(f"Found {num_labels} unique disease labels")
-    elif target == 'CLNSIG' or 'DISEASE_PATHOGENICITY':
+    elif target in ['CLNSIG', 'DISEASE_PATHOGENICITY']:
         task_name = target
         # all_labels = ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']
         # mapping Likely_benign and  Benign to Benign; mapping Likely_pathogenic and Pathogenic to Pathogenic
@@ -341,12 +336,6 @@ class MultiTaskDataCollator:
 
 def return_eqtl_dataset(tokenizer: PreTrainedTokenizer, target='Adipose_Subcutaneous', disease_subset=True,
                                     seq_length=10240, val_split=0.1, test_split=0.1, seed=42):
-    import torch
-    from torch.utils.data import Dataset, Subset
-    import numpy as np
-    from tqdm import tqdm
-    import random
-
     # Dictionary to store datasets
     multitask_datasets = {}
 
@@ -475,13 +464,31 @@ def return_maves_dataset(
     test_split=0.1,
     seed=42,
     all_records=True,
-    num_records=2000
+    num_records=2000,
+    # Essential filters for training stability
+    filter_genes=None,
+    experimental_methods=None,
+    coding_only=None,
+    seq_length_range=None
 ):
     """
-    Load MAVES dataset for variant effect regression.
+    Load MAVES dataset for variant effect regression with essential filtering.
+
+    Args:
+        filter_genes: List of gene names to filter (e.g., ['BRCA1', 'TP53'])
+        experimental_methods: List of methods (e.g., ['DMS-BarSeq', 'DMS-TileSeq', 'Enrich2'])
+        coding_only: True=coding only, False=non-coding only, None=both
+        seq_length_range: Tuple (min_len, max_len) for sequence length filtering
     """
-    # Load MAVES data using the existing data wrapper
-    mave_wrapper = MAVEDataWrapper(num_records=num_records, all_records=all_records)
+    # Load MAVES data using the data wrapper with essential filters
+    mave_wrapper = MAVEDataWrapper(
+        num_records=num_records,
+        all_records=all_records,
+        filter_genes=filter_genes,
+        experimental_methods=experimental_methods,
+        coding_only=coding_only,
+        seq_length_range=seq_length_range
+    )
     raw_data = mave_wrapper.get_data(Seq_length=seq_length, target=target)
 
     print(f"Loaded {len(raw_data)} MAVES samples for {target} prediction")

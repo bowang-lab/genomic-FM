@@ -12,6 +12,7 @@ import transformers
 from transformers import (
     AutoModelForSequenceClassification,
     AutoModel,
+    AutoModelForMaskedLM,
     TrainingArguments,
     AutoTokenizer,
     Trainer,
@@ -109,8 +110,11 @@ def compute_metrics(eval_pred, task_type="classification"):
     return calculate_metric_with_sklearn(predictions, labels, task_type)
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
-                            learning_rate=0.000005, batch_size=8, num_epochs=10, 
-                            max_grad_norm=1.0, num_workers=8):
+                            learning_rate=0.000005, batch_size=8, num_epochs=10,
+                            max_grad_norm=1.0, num_workers=8,
+                            # Essential filtering for training stability
+                            filter_genes=None, experimental_methods=None, coding_only=None,
+                            seq_length_range=None):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -209,9 +213,13 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     ########### Load Dataset ##################
     if task == "MAVES":
-        # Load MAVES dataset for regression
+        # Load MAVES dataset for regression with filtering
         datasets, task_num_classes, max_seq_len = return_maves_dataset(
-            tokenizer, target='score', seq_length=1024, seed=seed
+            tokenizer, target='score', seq_length=1024, seed=seed,
+            filter_genes=filter_genes,
+            experimental_methods=experimental_methods,
+            coding_only=coding_only,
+            seq_length_range=seq_length_range
         )
         task = "MAVES_score"  # Update task name to match dataset key
     else:
@@ -248,9 +256,13 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Load saved model if testing only
     if test_only and os.path.exists(f"{model_path}"):
-        print(f"Loading weights from {state_dict}")
-        head_state_dict = torch.load(f"{state_dict}")
-        model.load_state_dict(head_state_dict)
+        state_dict_path = f"{model_path}/pytorch_model.bin"
+        if os.path.exists(state_dict_path):
+            print(f"Loading weights from {state_dict_path}")
+            head_state_dict = torch.load(state_dict_path)
+            model.load_state_dict(head_state_dict)
+        else:
+            print(f"Warning: State dict not found at {state_dict_path}")
     # Prepare Training Arguments
     training_args = TrainingArguments(
         output_dir=f"{path_prefix}/pretrain_model_{model_type}_{task}",
@@ -348,18 +360,51 @@ def main():
     parser.add_argument("--num_workers", type=int, default=8,
                         help="Number of dataloader workers")
 
+    # Essential MAVES filtering arguments
+    parser.add_argument("--filter_genes", type=str, default=None,
+                        help="Comma-separated list of genes to filter (e.g., 'BRCA1,TP53,EGFR')")
+    parser.add_argument("--experimental_methods", type=str, default=None,
+                        help="Comma-separated methods or categories (e.g., 'DMS,MPRA' or 'PROMOTER,ENHANCER')")
+    parser.add_argument("--coding_only", type=str, default=None,
+                        help="Filter by region type: 'true' for coding only, 'false' for non-coding only")
+    parser.add_argument("--seq_len_min", type=int, default=None,
+                        help="Minimum sequence length for filtering")
+    parser.add_argument("--seq_len_max", type=int, default=None,
+                        help="Maximum sequence length for filtering")
+
     args = parser.parse_args()
 
     # Configure logging
     logging.basicConfig(level=logging.INFO)
 
-    # Run with specified task
+    # Parse essential filter arguments
+    filter_genes = args.filter_genes.split(',') if args.filter_genes else None
+
+    # Parse experimental methods (simple comma-separated list)
+    experimental_methods = args.experimental_methods.split(',') if args.experimental_methods else None
+
+    coding_only = None
+    if args.coding_only is not None:
+        coding_only = args.coding_only.lower() == 'true'
+
+    seq_length_range = None
+    if args.seq_len_min is not None or args.seq_len_max is not None:
+        seq_length_range = (
+            args.seq_len_min if args.seq_len_min is not None else 0,
+            args.seq_len_max if args.seq_len_max is not None else float('inf')
+        )
+
+    # Run with specified task and essential filters
     run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only,
                             learning_rate=args.learning_rate,
                             batch_size=args.batch_size,
                             num_epochs=args.num_epochs,
                             max_grad_norm=args.max_grad_norm,
-                            num_workers=args.num_workers)
+                            num_workers=args.num_workers,
+                            filter_genes=filter_genes,
+                            experimental_methods=experimental_methods,
+                            coding_only=coding_only,
+                            seq_length_range=seq_length_range)
 
 if __name__ == "__main__":
     main()
