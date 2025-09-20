@@ -5,7 +5,7 @@ Combines method categorization, filtering, and basic analysis functions.
 
 MAVE_METHODS = {
     # Canonical DMS modalities (treat these as the highest-quality, most-standardized bucket)
-    "JOINT_DMS": [
+    "DMS": [
         "DMS-BarSeq", "DMS-TileSeq", "deep mutational scan", "Deep mutational scan", "complementation",
     ],
 

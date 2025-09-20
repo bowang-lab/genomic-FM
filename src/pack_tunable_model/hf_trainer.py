@@ -111,7 +111,7 @@ def compute_metrics(eval_pred, task_type="classification"):
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
-                            max_grad_norm=1.0, num_workers=8,
+                            max_grad_norm=1.0, num_workers=8, gradient_checkpointing=False,
                             # Essential filtering for training stability
                             filter_genes=None, experimental_methods=None, coding_only=None,
                             seq_length_range=None):
@@ -214,6 +214,16 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     ########### Load Dataset ##################
     if task == "MAVES":
         # Load MAVES dataset for regression with filtering
+        accelerator.print(f"Loading MAVES dataset with filters:")
+        if filter_genes:
+            accelerator.print(f"  - Genes: {filter_genes}")
+        if experimental_methods:
+            accelerator.print(f"  - Methods: {experimental_methods}")
+        if coding_only is not None:
+            accelerator.print(f"  - Coding only: {coding_only}")
+        if seq_length_range:
+            accelerator.print(f"  - Sequence length range: {seq_length_range}")
+
         datasets, task_num_classes, max_seq_len = return_maves_dataset(
             tokenizer, target='score', seq_length=1024, seed=seed,
             filter_genes=filter_genes,
@@ -222,6 +232,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             seq_length_range=seq_length_range
         )
         task = "MAVES_score"  # Update task name to match dataset key
+
+        # Log dataset sizes
+        for split, dataset in datasets.items():
+            accelerator.print(f"  - {split}: {len(dataset)} samples")
     else:
         # Load ClinVar dataset for classification
         datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
@@ -253,6 +267,11 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Create wrapped model with classification head
     model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder)
+
+    # Enable gradient checkpointing if requested
+    if gradient_checkpointing and hasattr(model, 'gradient_checkpointing_enable'):
+        model.gradient_checkpointing_enable()
+        accelerator.print("Gradient checkpointing enabled")
 
     # Load saved model if testing only
     if test_only and os.path.exists(f"{model_path}"):
@@ -359,6 +378,8 @@ def main():
                         help="Maximum gradient norm for clipping")
     parser.add_argument("--num_workers", type=int, default=8,
                         help="Number of dataloader workers")
+    parser.add_argument("--gradient_checkpointing", action="store_true",
+                        help="Enable gradient checkpointing to save memory")
 
     # Essential MAVES filtering arguments
     parser.add_argument("--filter_genes", type=str, default=None,
@@ -369,7 +390,7 @@ def main():
                         help="Filter by region type: 'true' for coding only, 'false' for non-coding only")
     parser.add_argument("--seq_len_min", type=int, default=None,
                         help="Minimum sequence length for filtering")
-    parser.add_argument("--seq_len_max", type=int, default=None,
+    parser.add_argument("--seq_len_max", type=int, default=1024,
                         help="Maximum sequence length for filtering")
 
     args = parser.parse_args()
@@ -382,6 +403,20 @@ def main():
 
     # Parse experimental methods (simple comma-separated list)
     experimental_methods = args.experimental_methods.split(',') if args.experimental_methods else None
+
+    # Validate experimental methods if provided
+    if experimental_methods:
+        from ..dataloader.mave_utils import get_method_categories, expand_method_filters
+        valid_categories = get_method_categories()
+        for method in experimental_methods:
+            if method.upper() not in valid_categories:
+                # Check if it's a valid individual method by trying to expand
+                try:
+                    expand_method_filters([method])
+                except:
+                    print(f"Warning: '{method}' is not a recognized MAVES category or method")
+                    print(f"Available categories: {', '.join(valid_categories)}")
+        print(f"Using experimental methods filter: {experimental_methods}")
 
     coding_only = None
     if args.coding_only is not None:
@@ -401,6 +436,7 @@ def main():
                             num_epochs=args.num_epochs,
                             max_grad_norm=args.max_grad_norm,
                             num_workers=args.num_workers,
+                            gradient_checkpointing=args.gradient_checkpointing,
                             filter_genes=filter_genes,
                             experimental_methods=experimental_methods,
                             coding_only=coding_only,

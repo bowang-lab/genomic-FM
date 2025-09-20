@@ -37,12 +37,13 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 #GENE_FILTER="--filter_genes UBE2I,BRCA1,TP53"
 
 # Method filtering: BIOLOGICALLY PRINCIPLED CATEGORIES
-# AVAILABLE CATEGORIES (7 distinct biological groupings):
+# AVAILABLE CATEGORIES (8 distinct biological groupings):
 #   🔬 DMS - Deep mutational scanning (all variants, single/multi-readout)
 #   📊 REGULATORY_FUNCTION - MPRA, promoter/enhancer activity
 #   🤝 BINDING_INTERACTION - Y2H, phage display, autoubiquitination
 #   🔬 BIOPHYSICAL_STABILITY - Protease digestion, folding, HPLC
-#   📈 ABUNDANCE_EXPRESSION - RNA/protein levels, fluorescence
+#   📈 ABUNDANCE_RNA - RNA abundance measurements
+#   🧬 ABUNDANCE_PROTEIN_TRANSLATION - Protein abundance, flow cytometry, polysome
 #   🎯 FITNESS_GROWTH - Organismal fitness, growth, survival
 #   ⚠️ COMPUTATIONAL_PROCESSED - Enrich2, model outputs (use with caution)
 #
@@ -73,11 +74,14 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 # 🔬 PROTEIN STABILITY (structural properties):
 #FILTER_FLAGS="--experimental_methods BIOPHYSICAL_STABILITY"
 
-# 📈 EXPRESSION LEVELS (noisiest):
-#FILTER_FLAGS="--experimental_methods ABUNDANCE_EXPRESSION"
+# 📈 RNA ABUNDANCE (moderately noisy):
+#FILTER_FLAGS="--experimental_methods ABUNDANCE_RNA"
+
+# 🧬 PROTEIN ABUNDANCE/TRANSLATION (noisier):
+#FILTER_FLAGS="--experimental_methods ABUNDANCE_PROTEIN_TRANSLATION"
 
 # ⚠️ COMPUTATIONAL OUTPUTS (use with caution):
-#FILTER_FLAGS="--experimental_methods COMPUTATIONAL"
+#FILTER_FLAGS="--experimental_methods COMPUTATIONAL_PROCESSED"
 
 # ✅ COMPATIBLE COMBINATIONS:
 #FILTER_FLAGS="--experimental_methods DMS,FITNESS_GROWTH"
@@ -85,7 +89,7 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 # 🚀 PROGRESSIVE TRAINING (recommended order):
 # Stage 1: DMS → Stage 2: FITNESS_GROWTH → Stage 3: BINDING_INTERACTION
 
-FILTER_FLAGS=""  # No filtering by default
+FILTER_FLAGS="--experimental_methods DMS"  # Filter for DMS experiments
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
