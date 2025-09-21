@@ -7,6 +7,7 @@ import typing
 from typing import Dict, Sequence, List, Tuple
 from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper
 import random
+import numpy as np
 def split_train_val(dataset_train, val_split=0.1, seed=42):
     """
     Randomly split dataset into train and validation sets.
@@ -469,7 +470,10 @@ def return_maves_dataset(
     filter_genes=None,
     experimental_methods=None,
     coding_only=None,
-    seq_length_range=None
+    seq_length_range=None,
+    max_samples_per_experiment=None,
+    # Score normalization
+    normalize_scores=False
 ):
     """
     Load MAVES dataset for variant effect regression with essential filtering.
@@ -479,6 +483,7 @@ def return_maves_dataset(
         experimental_methods: List of methods (e.g., ['DMS-BarSeq', 'DMS-TileSeq', 'Enrich2'])
         coding_only: True=coding only, False=non-coding only, None=both
         seq_length_range: Tuple (min_len, max_len) for sequence length filtering
+        max_samples_per_experiment: Maximum samples to take per experiment (None for no limit)
     """
     # Load MAVES data using the data wrapper with essential filters
     mave_wrapper = MAVEDataWrapper(
@@ -490,26 +495,87 @@ def return_maves_dataset(
         seq_length_range=seq_length_range
     )
     raw_data = mave_wrapper.get_data(Seq_length=seq_length, target=target)
-
     print(f"Loaded {len(raw_data)} MAVES samples for {target} prediction")
 
-    # Convert to format expected by dataset: [seq_pair, score]
+    # Group by experiment and limit samples per experiment
+    from collections import defaultdict
+    exp_data = defaultdict(list)
+    skipped = 0
+
+    for seq_pair, score in raw_data:
+        try:
+            score_float = float(score)
+            if np.isnan(score_float) or np.isinf(score_float):
+                skipped += 1
+                continue
+            # Extract experiment ID from annotation
+            ref, alt, annotation = seq_pair
+            exp_id = annotation.split(',')[0] if annotation else "unknown"
+            exp_data[exp_id].append([seq_pair, score_float])
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+
+    if skipped > 0:
+        print(f"Skipped {skipped} samples with invalid scores")
+
+    # Apply per-experiment limits and collect data
     labeled_data = []
-    for item in raw_data:
-        seq_pair, score = item
-        ref_seq, alt_seq, annotation = seq_pair
-        labeled_data.append([(ref_seq, alt_seq, annotation), float(score)])
+    experiment_stats = {}
 
-    print(f"Converted {len(labeled_data)} samples for regression")
-
-    # Split data
+    # Set random seed once for all experiment sampling
     random.seed(seed)
+
+    for exp_id, samples in exp_data.items():
+        original_count = len(samples)
+
+        if max_samples_per_experiment and len(samples) > max_samples_per_experiment:
+            samples = random.sample(samples, max_samples_per_experiment)
+            used_count = max_samples_per_experiment
+        else:
+            used_count = original_count
+
+        labeled_data.extend(samples)
+        experiment_stats[exp_id] = {'original': original_count, 'used': used_count}
+
+
+    print(f"\nExperiment sampling summary:")
+    print(f"  Total experiments: {len(experiment_stats)}")
+    if max_samples_per_experiment:
+        print(f"  Max samples per experiment: {max_samples_per_experiment}")
+        large_experiments = sum(1 for stats in experiment_stats.values() if stats['original'] > max_samples_per_experiment)
+        if large_experiments > 0:
+            print(f"  Experiments with sampling applied: {large_experiments}")
+
+    # Shuffle to mix experiments
+    random.seed(seed + 1)
     random.shuffle(labeled_data)
+
+    # Calculate score statistics for normalization
+    score_mean = 0.0
+    score_std = 1.0
+    if labeled_data:
+        scores = np.array([s[1] for s in labeled_data])
+        score_mean = scores.mean()
+        score_std = scores.std()
+
+        print(f"\nMAVES Score Statistics:")
+        print(f"  Mean: {score_mean:.4f} ± {score_std:.4f}")
+        print(f"  Range: [{scores.min():.4f}, {scores.max():.4f}]")
+        print(f"  Data shuffled to mix experiments across batches")
+
+        if normalize_scores:
+            print(f"  Score normalization: ENABLED (mean={score_mean:.4f}, std={score_std:.4f})")
+        else:
+            print(f"  Score normalization: DISABLED")
+
+    print(f"Using {len(labeled_data)} samples for training")
 
     total = len(labeled_data)
     test_sz = int(total * test_split)
     val_sz = int((total - test_sz) * val_split)
     train_sz = total - test_sz - val_sz
+
 
     train_data = labeled_data[:train_sz]
     val_data = labeled_data[train_sz : train_sz + val_sz]
@@ -517,47 +583,63 @@ def return_maves_dataset(
 
     print(f"MAVES data → Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
 
-    # Create datasets
+    # Create datasets without normalization
     multitask_datasets = {}
     task_name = f"MAVES_{target}"
 
     if len(train_data) > 0:
-        multitask_datasets["train"] = MAVESDataset(train_data, tokenizer, task_name, seq_length)
+        multitask_datasets["train"] = MAVESDataset(
+            train_data, tokenizer, task_name, seq_length,
+            normalize=normalize_scores
+        )
     if len(val_data) > 0:
-        multitask_datasets[f"{task_name}_val"] = MAVESDataset(val_data, tokenizer, task_name, seq_length)
+        multitask_datasets[f"{task_name}_val"] = MAVESDataset(
+            val_data, tokenizer, task_name, seq_length, normalize=normalize_scores
+        )
     if len(test_data) > 0:
-        multitask_datasets[f"{task_name}_test"] = MAVESDataset(test_data, tokenizer, task_name, seq_length)
+        multitask_datasets[f"{task_name}_test"] = MAVESDataset(
+            test_data, tokenizer, task_name, seq_length, normalize=normalize_scores
+        )
 
     # For regression, output size is 1
     task_num_classes = {task_name: 1}
     max_seq_len = seq_length
 
     print(f"Max sequence length: {max_seq_len}")
+
     return multitask_datasets, task_num_classes, max_seq_len
 
 
 class MAVESDataset(Dataset):
     """Dataset for MAVES variant data with regression targets."""
 
-    def __init__(self, data, tokenizer, task_name, seq_length=1024):
+    def __init__(self, data, tokenizer, task_name, seq_length=1024, normalize=False):
         super(MAVESDataset, self).__init__()
         self.task_name = task_name
-        self.num_labels = 1  # Regression output
+        self.num_labels = 1
+        self.normalize = normalize
 
-        # Process data
         ref_sequences = []
         alt_sequences = []
         scores = []
 
         for item in data:
-            # Extract reference and alternative sequences
             ref, alt, annotation = item[0]
             ref_sequences.append(ref)
             alt_sequences.append(alt)
+            scores.append(float(item[1]))
 
-            # Extract regression target (score)
-            score = float(item[1])
-            scores.append(score)
+        # Calculate normalization parameters and apply if requested
+        if self.normalize and len(scores) > 1:
+            scores_array = np.array(scores)
+            score_mean = scores_array.mean()
+            score_std = scores_array.std()
+            if score_std > 0:
+                scores = [(s - score_mean) / score_std for s in scores]
+                print(f"Normalized scores: mean={score_mean:.4f}, std={score_std:.4f}")
+            else:
+                print("Warning: Score std is 0, skipping normalization")
+                self.normalize = False
 
         # Tokenize reference sequences
         ref_output = tokenizer(

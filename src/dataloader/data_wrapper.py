@@ -1,9 +1,12 @@
 from typing import Any, List, Tuple, Union
 from pathlib import Path
+import glob
+import os
 import pandas as pd
 import numpy as np
 import random
 from tqdm import tqdm
+
 from ..utils import save_as_jsonl, read_jsonl
 from ..sequence_extractor import GenomeSequenceExtractor, FastaStringExtractor, RandomSequenceExtractor
 from ..datasets.clinvar import load_clinvar
@@ -11,7 +14,6 @@ from ..datasets.gene_ko.get_gene_knock_out import (
     create_fitness_scores_dataframe,
     create_variant_sequence_and_reference_sequence_for_gene
 )
-# Import necessary functions from the modules
 from ..datasets.cellpassport.load_cell_passport import (
     download_and_extract_cell_passport_file,
     read_vcf,
@@ -21,14 +23,8 @@ from ..datasets.qtl.qtl_loader import process_eqtl_data, process_sqtl_data
 from ..datasets.maves.load_maves import get_maves
 from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
 from ..datasets.olida.load_olida import get_variant_combinations, load_and_process_negative_pairs
-import random
 from ..datasets.verified_GV.load_real_clinvar import load_real_clinvar
-
-
-from tqdm import tqdm
-import random
-import glob
-import os
+from .mave_utils import MAVE_METHODS, expand_method_filters
 import pandas as pd
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
@@ -152,18 +148,19 @@ class MAVEDataWrapper:
                 if not gene_found:
                     continue
 
-            # 2. Experimental method filter (supports both individual methods and categories)
+            # 2. Auto-exclude control samples and processed data
+            exclude_patterns = MAVE_METHODS.get("EXCLUDE_FROM_TRAINING", [])
+            if any(pattern.lower() in annotation.lower() for pattern in exclude_patterns):
+                continue
+
+            # 3. Experimental method filter (supports both individual methods and categories)
             if self.experimental_methods:
-                from .mave_utils import expand_method_filters
-
-                # Expand any categories to individual methods
                 all_methods = expand_method_filters(self.experimental_methods)
-
                 method_found = any(method.lower() in annotation.lower() for method in all_methods)
                 if not method_found:
                     continue
 
-            # 3. Coding/non-coding filter
+            # 4. Coding/non-coding filter
             if self.coding_only is not None:
                 # Extract HGVS prefix to determine coding vs non-coding
                 if ', HGVS Prefix: ' in annotation:
@@ -175,7 +172,7 @@ class MAVEDataWrapper:
                     elif not self.coding_only and is_coding:
                         continue
 
-            # 4. Sequence length filter
+            # 5. Sequence length filter
             if self.seq_length_range:
                 min_len, max_len = self.seq_length_range
                 seq_len = len(ref_seq)
@@ -186,6 +183,12 @@ class MAVEDataWrapper:
 
 
         print(f"Filtered data: {original_size:,} -> {len(filtered_data):,} records")
+        excluded_count = 0
+        if original_size > 0:
+            excluded_count = original_size - len(filtered_data)
+            exclusion_rate = excluded_count / original_size * 100
+            print(f"  Excluded: {excluded_count:,} records ({exclusion_rate:.1f}%)")
+
         if self.filter_genes:
             print(f"  Gene filter: {self.filter_genes}")
         if self.experimental_methods:
@@ -193,7 +196,11 @@ class MAVEDataWrapper:
         if self.coding_only is not None:
             print(f"  Coding only: {self.coding_only}")
         if self.seq_length_range:
-            print(f"  Sequence length: {self.seq_length_range}")
+            print(f"  Sequence length range: {self.seq_length_range}")
+
+        exclude_patterns = MAVE_METHODS.get("EXCLUDE_FROM_TRAINING", [])
+        if exclude_patterns:
+            print(f"  Auto-excluded patterns: {', '.join(exclude_patterns)}")
 
         return filtered_data
 

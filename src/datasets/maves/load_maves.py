@@ -175,7 +175,7 @@ def get_maves(Seq_length=1024, limit = None, target='score', sequence_type='dna'
             exp_sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
             annotation = ': '.join([title, description])
 
-            total += int(numVariants)  
+            total += int(numVariants)
             scores = get_scores(urn_id)
             if isinstance(scores, pd.DataFrame) and (exp_sequence_type == sequence_type):
                 if not scores.empty:
@@ -184,18 +184,16 @@ def get_maves(Seq_length=1024, limit = None, target='score', sequence_type='dna'
                     for index, row in scores.iterrows():
                         if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
                             # Filter based on sequence_type
-                            hgvs_prefix = row['hgvs_nt'].split('.')[0] 
+                            hgvs_prefix = row['hgvs_nt'].split('.')[0]
                             if region_type == 'coding' and hgvs_prefix != 'c':
                                 continue
                             elif region_type == 'noncoding' and hgvs_prefix != 'n':
                                 continue
-
-                            print(exp)
                             
                             alt = get_alternate_dna_sequence(exp['targetGenes'][0]['sequence'], row['hgvs_nt'])
                             if alt:
                                 if len(exp["targetGenes"][0]["sequence"]) <= Seq_length:
-                                    avail += 1 
+                                    avail += 1
                                     ref = exp["targetGenes"][0]["sequence"]
                                     x = [ref, alt, f"{annotation}, Sequence Type: {exp_sequence_type}, HGVS Prefix: {hgvs_prefix}"]
                                     y = row[target]

@@ -39,13 +39,13 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 # Method filtering: BIOLOGICALLY PRINCIPLED CATEGORIES
 # AVAILABLE CATEGORIES (8 distinct biological groupings):
 #   🔬 DMS - Deep mutational scanning (all variants, single/multi-readout)
-#   📊 REGULATORY_FUNCTION - MPRA, promoter/enhancer activity
-#   🤝 BINDING_INTERACTION - Y2H, phage display, autoubiquitination
-#   🔬 BIOPHYSICAL_STABILITY - Protease digestion, folding, HPLC
-#   📈 ABUNDANCE_RNA - RNA abundance measurements
-#   🧬 ABUNDANCE_PROTEIN_TRANSLATION - Protein abundance, flow cytometry, polysome
-#   🎯 FITNESS_GROWTH - Organismal fitness, growth, survival
-#   ⚠️ COMPUTATIONAL_PROCESSED - Enrich2, model outputs (use with caution)
+#   📊 REGULATORY - MPRA, saturation mutagenesis
+#   🔬 BIOPHYSICAL_STABILITY - Protease digestion (trypsin, chymotrypsin)
+#   📈 RNA_ABUNDANCE - RNA abundance measurements
+#   🧬 PROTEIN_ABUNDANCE - Protein abundance, flow cytometry, polysome
+#   🔄 PROTEIN_TRANSLATION - Protein translation efficiency
+#   🎯 ESCAPE - Escape variants
+#   ⚠️ COMPUTATIONAL_PROCESSED - Enrich2, regression scores (use with caution)
 #
 # Using individual methods:
 #METHOD_FILTER="--experimental_methods DMS-BarSeq,trypsin digestion"
@@ -62,32 +62,32 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 # 🔬 DEEP MUTATIONAL SCANNING (highest quality):
 #FILTER_FLAGS="--experimental_methods DMS"
 
-# 🎯 ORGANISMAL FITNESS (clean functional signals):
-#FILTER_FLAGS="--experimental_methods FITNESS_GROWTH"
+# 📊 REGULATORY ELEMENTS:
+#FILTER_FLAGS="--experimental_methods REGULATORY"
 
-# 🤝 PROTEIN INTERACTIONS (binding/enzymatic):
-#FILTER_FLAGS="--experimental_methods BINDING_INTERACTION"
-
-# 📊 REGULATORY ELEMENTS (promoter/enhancer):
-#FILTER_FLAGS="--experimental_methods REGULATORY_FUNCTION"
-
-# 🔬 PROTEIN STABILITY (structural properties):
+# 🔬 PROTEIN STABILITY:
 #FILTER_FLAGS="--experimental_methods BIOPHYSICAL_STABILITY"
 
-# 📈 RNA ABUNDANCE (moderately noisy):
-#FILTER_FLAGS="--experimental_methods ABUNDANCE_RNA"
+# 📈 RNA ABUNDANCE:
+#FILTER_FLAGS="--experimental_methods RNA_ABUNDANCE"
 
-# 🧬 PROTEIN ABUNDANCE/TRANSLATION (noisier):
-#FILTER_FLAGS="--experimental_methods ABUNDANCE_PROTEIN_TRANSLATION"
+# 🧬 PROTEIN ABUNDANCE:
+#FILTER_FLAGS="--experimental_methods PROTEIN_ABUNDANCE"
+
+# 🔄 PROTEIN TRANSLATION:
+#FILTER_FLAGS="--experimental_methods PROTEIN_TRANSLATION"
+
+# 🎯 ESCAPE VARIANTS:
+#FILTER_FLAGS="--experimental_methods ESCAPE"
 
 # ⚠️ COMPUTATIONAL OUTPUTS (use with caution):
 #FILTER_FLAGS="--experimental_methods COMPUTATIONAL_PROCESSED"
 
 # ✅ COMPATIBLE COMBINATIONS:
-#FILTER_FLAGS="--experimental_methods DMS,FITNESS_GROWTH"
+#FILTER_FLAGS="--experimental_methods DMS,REGULATORY"
 
-# 🚀 PROGRESSIVE TRAINING (recommended order):
-# Stage 1: DMS → Stage 2: FITNESS_GROWTH → Stage 3: BINDING_INTERACTION
+# 🎛️ EXPERIMENT BALANCING:
+#FILTER_FLAGS="--experimental_methods DMS --max_samples_per_experiment 1000"
 
 FILTER_FLAGS="--experimental_methods DMS"  # Filter for DMS experiments
 
@@ -121,6 +121,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --num_epochs 10 \
     --max_grad_norm 1.0 \
     --num_workers 8 \
+    --normalize_scores \
     $DECODER_FLAG \
     $FILTER_FLAGS \
     2>&1 | tee logs/maves_${MODEL}_${SLURM_JOB_ID}.log

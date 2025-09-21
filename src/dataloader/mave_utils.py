@@ -6,37 +6,37 @@ Combines method categorization, filtering, and basic analysis functions.
 MAVE_METHODS = {
     # Canonical DMS modalities (treat these as the highest-quality, most-standardized bucket)
     "DMS": [
-        "DMS-BarSeq", "DMS-TileSeq", "deep mutational scan", "Deep mutational scan", "complementation",
+        "DMS-BarSeq", "DMS-TileSeq", "deep mutational scan", "Deep mutational scan", "Deep Mutational Scan",
     ],
 
     # Cis-regulatory assays (MPRA/promoter/enhancer/ultraconserved elements; timepoints/replicates included)
-    "REGULATORY_FUNCTION": [
-        "MPRA"
+    "REGULATORY": [
+        "MPRA", "saturation mutagenesis"
     ],
 
-    # Protein–protein / protein–ligand interaction readouts
-    "BINDING_INTERACTION": [
-        "yeast two-hybrid", "Y2H", "phage display"
-    ],
-
-    # Stability/biophysical tolerance (protease susceptibility, HPLC stability series, folding)
+    # Stability/biophysical tolerance (protease susceptibility)
     "BIOPHYSICAL_STABILITY": [
         "trypsin digestion", "chymotrypsin digestion"
     ],
 
     # RNA-level abundance/processing
-    "ABUNDANCE_RNA": [
-        "RNA abundance"
+    "RNA_ABUNDANCE": [
+        "RNA abundance",
     ],
 
-    # Protein abundance & translation efficiency (flow/FACS, fluorescence levels, polysomes)
-    "ABUNDANCE_PROTEIN_TRANSLATION": [
+    # Protein abundance 
+    "PROTEIN_ABUNDANCE": [
         "protein abundance", "flow cytometry", "polysome"
+    ],
+    
+    # Protein translation efficiency 
+    "PROTEIN_TRANSLATION": [
+        "protein abundance",
     ],
 
     # Organismal/cellular growth phenotypes
-    "FITNESS_GROWTH": [
-        "fitness", "growth", "escape"
+    "ESCAPE": [
+        "escape",
     ],
 
     # Computation-derived or post-processed outputs (use with caution for training targets)
@@ -46,9 +46,7 @@ MAVE_METHODS = {
 
     # Annotations to exclude from training (batch effects, controls, processed data)
     "EXCLUDE_FROM_TRAINING": [
-        "Individual Synonymous Wildtype Scores", "Individual Synonymous Variant Scores",
-        "control", "Control", "scrambled control", "siRNA control",
-        "synthetic construct", "artificial"
+        "control",
     ],
 }
 

@@ -45,6 +45,32 @@ class SafeDistributedTrainer(Trainer):
         return metrics
 
 
+def _safe_pearson_correlation(y_true, y_pred):
+    """
+    Safely calculate Pearson correlation, handling edge cases that cause NaN.
+    """
+    if len(y_true) < 2:
+        return 0.0
+
+    # Check for zero variance in either array
+    if np.var(y_true) == 0 or np.var(y_pred) == 0:
+        return 0.0
+
+    # Use scipy.stats.pearsonr which handles edge cases better
+    try:
+        from scipy.stats import pearsonr
+        correlation, _ = pearsonr(y_true, y_pred)
+        return correlation if not np.isnan(correlation) else 0.0
+    except:
+        # Fallback to numpy implementation with additional safety
+        try:
+            corr_matrix = np.corrcoef(y_true, y_pred)
+            correlation = corr_matrix[0, 1]
+            return correlation if not np.isnan(correlation) else 0.0
+        except:
+            return 0.0
+
+
 def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray, task_type="classification"):
     valid_mask = labels != -100  # Exclude padding tokens
     valid_predictions = predictions[valid_mask]
@@ -56,7 +82,7 @@ def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray, t
             "mse": sklearn.metrics.mean_squared_error(valid_labels, valid_predictions),
             "mae": sklearn.metrics.mean_absolute_error(valid_labels, valid_predictions),
             "r2": sklearn.metrics.r2_score(valid_labels, valid_predictions),
-            "pearson_correlation": np.corrcoef(valid_labels, valid_predictions)[0, 1] if len(valid_labels) > 1 else 0.0,
+            "pearson_correlation": _safe_pearson_correlation(valid_labels, valid_predictions),
         }
     else:
         # Classification metrics
@@ -112,9 +138,9 @@ def compute_metrics(eval_pred, task_type="classification"):
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
                             max_grad_norm=1.0, num_workers=8, gradient_checkpointing=False,
-                            # Essential filtering for training stability
                             filter_genes=None, experimental_methods=None, coding_only=None,
-                            seq_length_range=None):
+                            seq_length_range=None, max_samples_per_experiment=None,
+                            normalize_scores=False):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -223,13 +249,17 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             accelerator.print(f"  - Coding only: {coding_only}")
         if seq_length_range:
             accelerator.print(f"  - Sequence length range: {seq_length_range}")
+        if max_samples_per_experiment:
+            accelerator.print(f"  - Max samples per experiment: {max_samples_per_experiment}")
 
         datasets, task_num_classes, max_seq_len = return_maves_dataset(
             tokenizer, target='score', seq_length=1024, seed=seed,
             filter_genes=filter_genes,
             experimental_methods=experimental_methods,
             coding_only=coding_only,
-            seq_length_range=seq_length_range
+            seq_length_range=seq_length_range,
+            max_samples_per_experiment=max_samples_per_experiment,
+            normalize_scores=normalize_scores
         )
         task = "MAVES_score"  # Update task name to match dataset key
 
@@ -241,29 +271,8 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
             tokenizer, task, seed=seed
         )
-    # datasets, task_num_classes, max_seq_len = return_smart_dataset(
-    #     tokenizer, '/home/v-zehuili/repositories/CardiacGVRep/root/smart_filtered_analysis/smart_filtered_analysis/smart_filtered_variants_all.csv'
-    # )
     tokenizer.model_max_length = max_seq_len
-        # << all ranks continue here >>
     num_classes = task_num_classes[task]
-    ################### Main Process Only ###########################
-    # if accelerator.is_main_process:
-    #     accelerator.print(f"Loading dataset for task {task} on main process")
-    #     datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-    #         tokenizer, task, seed=seed
-    #     )
-    #     num_classes = task_num_classes[task]
-    # else:
-    #     # Dummy values for non-main processes
-    #     datasets = {}
-    #     task_num_classes = {task: 2}  # Default to binary classification
-    #     max_seq_len = 1000
-    #     num_classes = 2
-    # # Broadcast num_classes from main process to all processes
-    # num_classes = accelerator.prepare(torch.tensor([num_classes], device=accelerator.device))[0].item()
-    # accelerator.print(f"Loading base model from {model_path}")
-    ##############################################
 
     # Create wrapped model with classification head
     model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder)
@@ -314,8 +323,11 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Update training arguments for regression vs classification
     if task.startswith("MAVES"):
-        training_args.metric_for_best_model = "r2"  # Use R² for regression
+        training_args.metric_for_best_model = "pearson_correlation"  # Use Pearson for regression
         training_args.greater_is_better = True
+        training_args.logging_steps = 50  # More frequent logging for debugging
+        training_args.warmup_ratio = 0.1  # Add warmup for stable training
+        training_args.gradient_accumulation_steps = 2  # Effectively double batch size
     else:
         training_args.metric_for_best_model = "matthews_correlation"  # Use MCC for classification
         training_args.greater_is_better = True
@@ -392,6 +404,10 @@ def main():
                         help="Minimum sequence length for filtering")
     parser.add_argument("--seq_len_max", type=int, default=1024,
                         help="Maximum sequence length for filtering")
+    parser.add_argument("--max_samples_per_experiment", type=int, default=None,
+                        help="Maximum samples to use per experiment (for balanced training)")
+    parser.add_argument("--normalize_scores", action="store_true",
+                        help="Enable score normalization for MAVE regression tasks")
 
     args = parser.parse_args()
 
@@ -429,6 +445,9 @@ def main():
             args.seq_len_max if args.seq_len_max is not None else float('inf')
         )
 
+    max_samples_per_experiment = args.max_samples_per_experiment
+    normalize_scores = args.normalize_scores
+
     # Run with specified task and essential filters
     run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only,
                             learning_rate=args.learning_rate,
@@ -440,7 +459,9 @@ def main():
                             filter_genes=filter_genes,
                             experimental_methods=experimental_methods,
                             coding_only=coding_only,
-                            seq_length_range=seq_length_range)
+                            seq_length_range=seq_length_range,
+                            max_samples_per_experiment=max_samples_per_experiment,
+                            normalize_scores=normalize_scores)
 
 if __name__ == "__main__":
     main()

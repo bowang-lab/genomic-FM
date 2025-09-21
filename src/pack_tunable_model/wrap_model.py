@@ -24,7 +24,7 @@ class BertPooler(nn.Module):
         return pooled_output
 
 class WrappedModelWithClassificationHead(nn.Module):
-    def __init__(self, base_model, num_classes, decoder=False,hidden_states_pooler=False):
+    def __init__(self, base_model, num_classes, decoder=False, hidden_states_pooler=False):
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
