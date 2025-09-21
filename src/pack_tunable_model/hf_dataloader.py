@@ -636,7 +636,6 @@ class MAVESDataset(Dataset):
             score_std = scores_array.std()
             if score_std > 0:
                 scores = [(s - score_mean) / score_std for s in scores]
-                print(f"Normalized scores: mean={score_mean:.4f}, std={score_std:.4f}")
             else:
                 print("Warning: Score std is 0, skipping normalization")
                 self.normalize = False

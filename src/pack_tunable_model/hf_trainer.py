@@ -7,6 +7,7 @@ import numpy as np
 import sklearn
 import logging
 from typing import Any, Optional, Dict, Sequence, Tuple, List, Union
+from scipy.stats import spearmanr
 
 import transformers
 from transformers import (
@@ -45,32 +46,6 @@ class SafeDistributedTrainer(Trainer):
         return metrics
 
 
-def _safe_pearson_correlation(y_true, y_pred):
-    """
-    Safely calculate Pearson correlation, handling edge cases that cause NaN.
-    """
-    if len(y_true) < 2:
-        return 0.0
-
-    # Check for zero variance in either array
-    if np.var(y_true) == 0 or np.var(y_pred) == 0:
-        return 0.0
-
-    # Use scipy.stats.pearsonr which handles edge cases better
-    try:
-        from scipy.stats import pearsonr
-        correlation, _ = pearsonr(y_true, y_pred)
-        return correlation if not np.isnan(correlation) else 0.0
-    except:
-        # Fallback to numpy implementation with additional safety
-        try:
-            corr_matrix = np.corrcoef(y_true, y_pred)
-            correlation = corr_matrix[0, 1]
-            return correlation if not np.isnan(correlation) else 0.0
-        except:
-            return 0.0
-
-
 def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray, task_type="classification"):
     valid_mask = labels != -100  # Exclude padding tokens
     valid_predictions = predictions[valid_mask]
@@ -78,11 +53,19 @@ def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray, t
 
     if task_type == "regression":
         # Regression metrics
+        # Calculate Spearman correlation safely
+        if len(valid_labels) > 1 and len(np.unique(valid_labels)) > 1 and len(np.unique(valid_predictions)) > 1:
+            spearman_corr, _ = spearmanr(valid_labels, valid_predictions)
+            if np.isnan(spearman_corr):
+                spearman_corr = 0.0
+        else:
+            spearman_corr = 0.0
+
         return {
             "mse": sklearn.metrics.mean_squared_error(valid_labels, valid_predictions),
             "mae": sklearn.metrics.mean_absolute_error(valid_labels, valid_predictions),
             "r2": sklearn.metrics.r2_score(valid_labels, valid_predictions),
-            "pearson_correlation": _safe_pearson_correlation(valid_labels, valid_predictions),
+            "spearman_correlation": spearman_corr,
         }
     else:
         # Classification metrics

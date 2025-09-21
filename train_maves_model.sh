@@ -5,7 +5,7 @@
 #SBATCH --mem=240G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
-#SBATCH --gres=gpu:2 # match ddp.yaml num_processes
+#SBATCH --gres=gpu:4 # match ddp.yaml num_processes
 #SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
 #SBATCH --output=logs/maves_finetune_output_%j.log
 #SBATCH --error=logs/maves_finetune_error_%j.log
@@ -121,7 +121,6 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --num_epochs 10 \
     --max_grad_norm 1.0 \
     --num_workers 8 \
-    --normalize_scores \
     $DECODER_FLAG \
     $FILTER_FLAGS \
     2>&1 | tee logs/maves_${MODEL}_${SLURM_JOB_ID}.log

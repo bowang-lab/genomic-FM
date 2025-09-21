@@ -44,7 +44,18 @@ class WrappedModelWithClassificationHead(nn.Module):
         else:
             self.pooler = None
         self.classification_head = nn.Linear(hidden_size, num_classes)
-        # self.classification_head = nn.Linear(hidden_size, num_classes)
+
+        # Initialize properly for regression vs classification
+        if num_classes == 1:
+            # Regression: Initialize weights near 0 to start as constant predictor
+            # This allows the model to learn residuals from the baseline
+            nn.init.normal_(self.classification_head.weight, mean=0.0, std=1e-4)  # tiny noise for rank losses
+            # Bias = prior mean in link space (0 for z-scored MAVES data)
+            nn.init.constant_(self.classification_head.bias, 0.0)
+        else:
+            # Classification: Standard initialization
+            nn.init.xavier_uniform_(self.classification_head.weight)
+            nn.init.constant_(self.classification_head.bias, 0.0)
 
 
     def forward(self,
