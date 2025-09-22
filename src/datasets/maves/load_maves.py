@@ -198,6 +198,11 @@ def get_alternate_dna_sequence(dna_sequence: str, hgvs_nt: str, verbose: bool = 
     if hgvs_nt in ('_wt', '') or not hgvs_nt.strip() or 'X>' in hgvs_nt or '>X' in hgvs_nt:
         return dna_sequence if hgvs_nt in ('_wt', '') or not hgvs_nt.strip() else None
 
+    # Handle synonymous variants with position (e.g., n.1=, c.123=)
+    # These indicate no change to the sequence
+    if re.match(r'^[cngo]\.\d+=\s*$', hgvs_nt.strip()):
+        return dna_sequence
+
     if not _validate_hgvs_format(hgvs_nt):
         raise MaveHgvsParseError(f"Invalid HGVS format: {hgvs_nt}")
 

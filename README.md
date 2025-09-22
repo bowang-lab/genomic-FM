@@ -207,7 +207,9 @@ Cite `GV-Rep` (NeurIPS 2024) when you use it in a project or a research paper:
 @article{li2024gv,
   title={GV-Rep: A Large-Scale Dataset for Genetic Variant Representation Learning},
   author={Li, Zehui and Subasri, Vallijah and Stan, Guy-Bart and Zhao, Yiren and Wang, Bo},
-  journal={arXiv preprint arXiv:2407.16940},
+  journal={Advances in Neural Information Processing Systems},
+  volume={37},
+  pages={134701--134720},
   year={2024}
 }
 ```

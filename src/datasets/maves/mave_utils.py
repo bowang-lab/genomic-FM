@@ -46,9 +46,8 @@ MAVE_METHODS = {
         "Enrich2", "regression scores", "combined scores"
     ],
 
-    # Annotations to exclude from training (batch effects, controls, processed data)
+    # Annotations to exclude from training (batch effects, processed data)
     "EXCLUDE_FROM_TRAINING": [
-        "control",
     ],
 }
 
