@@ -55,7 +55,7 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 #CODING_FILTER="--coding_only true"
 
 # Sequence length filtering: computational efficiency and consistency
-#LENGTH_FILTER="--seq_length_range 200,800"
+LENGTH_FILTER="--seq_length_range 1,1024"
 
 
 # MAVE METHOD CATEGORIES (quality: high → low):
@@ -124,6 +124,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --num_workers 8 \
     $DECODER_FLAG \
     $FILTER_FLAGS \
+    $LENGTH_FILTER \
     2>&1 | tee logs/maves_${MODEL}_${SLURM_JOB_ID}.log
 
 echo "MAVES training completed!"

@@ -1,8 +1,13 @@
+"""MAVE-DB data loader with comprehensive HGVS variant processing using mavehgvs."""
+
+import logging
 import re
-import requests
+import time
 from io import StringIO
+from typing import Dict, List, Optional, Tuple, Union, Any
 
 import pandas as pd
+import requests
 from mavehgvs.exceptions import MaveHgvsParseError
 from mavehgvs.patterns.dna import (
     dna_del_c, dna_del_gmo, dna_del_n,
@@ -14,518 +19,304 @@ from mavehgvs.patterns.dna import (
     dna_sub_c, dna_sub_gmo, dna_sub_n,
     dna_variant_c, dna_variant_gmo, dna_variant_n
 )
-from mavehgvs.patterns.util import remove_named_groups, combine_patterns
+from mavehgvs.patterns.util import combine_patterns
 from mavehgvs.position import VariantPosition
 from mavehgvs.util import parse_variant_strings
 from tqdm import tqdm
 
 from .mave_utils import get_variant_position_annotations
 
-def get_all_urn_ids():
-    """Fetch all URN IDs from MAVE-DB experiments API."""
-    response = requests.get("https://api.mavedb.org/api/v1/experiments/")
-    if response.status_code == 200:
-        return [item['urn'] for item in response.json() if item['urn'].startswith("urn:")]
-    print(f"Error: {response.status_code}")
-    return []
+# Configure logging
+logger = logging.getLogger(__name__)
 
-def extract_target_info(json_data):
-    """Extract target gene information from JSON data."""
+# API Configuration
+MAVE_DB_BASE_URL = "https://api.mavedb.org/api/v1"
+REQUEST_TIMEOUT = None  # No timeout
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 1  # seconds
+
+# Comprehensive pattern compilation using hierarchical mavehgvs DNA patterns
+HGVS_VALIDATION_PATTERN = re.compile(combine_patterns([
+    dna_single_variant, dna_multi_variant
+], groupname='hgvs_variants'))
+NT_PATTERN = re.compile(dna_nt)
+
+# Create session for connection reuse
+_api_session = None
+
+def _get_api_session() -> requests.Session:
+    """Get or create a reusable requests session."""
+    global _api_session
+    if _api_session is None:
+        _api_session = requests.Session()
+        _api_session.headers.update({'User-Agent': 'MAVE-Loader/1.0'})
+    return _api_session
+
+
+def _make_api_request(url: str, retries: int = RETRY_ATTEMPTS) -> Optional[requests.Response]:
+    """Make API request with retry logic and proper error handling."""
+    session = _get_api_session()
+
+    for attempt in range(retries):
+        try:
+            response = session.get(url, timeout=REQUEST_TIMEOUT)
+            if response.status_code == 200:
+                return response
+            elif response.status_code == 429:  # Rate limited
+                wait_time = min(10, RETRY_DELAY + attempt)  # Cap at 10 seconds
+                logger.warning(f"Rate limited, waiting {wait_time}s before retry {attempt + 1}/{retries}")
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.warning(f"API request failed with status {response.status_code}: {url}")
+                return None
+        except requests.RequestException as e:
+            logger.warning(f"Request exception on attempt {attempt + 1}/{retries}: {e}")
+            if attempt < retries - 1:
+                time.sleep(RETRY_DELAY)
+
+    logger.error(f"Failed to fetch data after {retries} attempts: {url}")
+    return None
+
+def get_all_urn_ids() -> List[str]:
+    """Fetch all URN IDs from MAVE-DB experiments API with error handling."""
+    url = f"{MAVE_DB_BASE_URL}/experiments/"
+    response = _make_api_request(url)
+
+    if response is None:
+        logger.error("Failed to fetch URN IDs")
+        return []
+
+    try:
+        data = response.json()
+        return [item['urn'] for item in data if item.get('urn', '').startswith("urn:")]
+    except (ValueError, KeyError) as e:
+        logger.error(f"Error parsing URN IDs response: {e}")
+        return []
+
+def extract_target_info(json_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Extract target gene information from JSON data with robust error handling."""
     results = []
+
     for item in json_data:
-        target_info = {
-            'title': item.get('title', ''),
-            'description': item.get('shortDescription', ''),
-            'urn': item.get('urn', ''),
-            'numVariants': item.get('numVariants', ''),
-            'targetGenes': []
-        }
-        for gene in item.get('targetGenes', []):
-            ids = {i.get('identifier', {}).get('dbName'): i.get('identifier', {}).get('identifier')
-                   for i in gene.get('externalIdentifiers', [])}
-            target_info['targetGenes'].append({
-                'gene_name': gene.get('name', ''),
-                'sequence': gene.get('targetSequence', {}).get('sequence', ''),
-                'sequence_type': gene.get('targetSequence', {}).get('sequenceType', ''),
-                'reference_genome': gene.get('targetSequence', {}).get('reference', {}).get('shortName', ''),
-                'Ensembl': ids.get('Ensembl'),
-                'UniProt': ids.get('UniProt')
-            })
-        results.append(target_info)
+        try:
+            target_info = {
+                'title': item.get('title', ''),
+                'description': item.get('shortDescription', ''),
+                'urn': item.get('urn', ''),
+                'numVariants': item.get('numVariants', 0),
+                'targetGenes': []
+            }
+
+            for gene in item.get('targetGenes', []):
+                try:
+                    # Safely extract external identifiers
+                    ids = {}
+                    for ext_id in gene.get('externalIdentifiers', []):
+                        if isinstance(ext_id, dict) and 'identifier' in ext_id:
+                            id_info = ext_id['identifier']
+                            if isinstance(id_info, dict):
+                                db_name = id_info.get('dbName')
+                                identifier = id_info.get('identifier')
+                                if db_name and identifier:
+                                    ids[db_name] = identifier
+
+                    # Extract target sequence information
+                    target_seq = gene.get('targetSequence', {})
+                    reference = target_seq.get('reference', {})
+
+                    gene_info = {
+                        'gene_name': gene.get('name', ''),
+                        'sequence': target_seq.get('sequence', ''),
+                        'sequence_type': target_seq.get('sequenceType', ''),
+                        'reference_genome': reference.get('shortName', '') if isinstance(reference, dict) else '',
+                        'Ensembl': ids.get('Ensembl'),
+                        'UniProt': ids.get('UniProt')
+                    }
+                    target_info['targetGenes'].append(gene_info)
+
+                except Exception as e:
+                    logger.warning(f"Error processing gene info for {item.get('urn', 'unknown')}: {e}")
+                    continue
+
+            results.append(target_info)
+
+        except Exception as e:
+            logger.warning(f"Error processing target info for {item.get('urn', 'unknown')}: {e}")
+            continue
+
     return results
 
-def get_scores(urn_id):
-    response = requests.get(f"https://api.mavedb.org/api/v1/score-sets/{urn_id}/scores")
-    if response.status_code == 200:
+def get_scores(urn_id: str) -> pd.DataFrame:
+    """Fetch scores for a given URN ID with error handling."""
+    url = f"{MAVE_DB_BASE_URL}/score-sets/{urn_id}/scores"
+    response = _make_api_request(url)
+
+    if response is None:
+        logger.warning(f"Failed to fetch scores for {urn_id}")
+        return pd.DataFrame()
+
+    try:
         return pd.read_csv(StringIO(response.text))
-    print(f"Error: {response.status_code}")
-    return pd.DataFrame()
-
-def get_score_set(urn_id):
-    response = requests.get(f"https://api.mavedb.org/api/v1/experiments/{urn_id}/score-sets")
-    if response.status_code == 200:
-        return extract_target_info(response.json())
-    print(f"Error: {response.status_code}")
-    return []
-
-# Pre-compile combined patterns for better performance
-_coding_pattern = None
-_noncoding_pattern = None
-_genomic_pattern = None
-
-def _get_combined_patterns():
-    """
-    Create combined patterns using mavehgvs utilities for optimal performance.
-    """
-    global _coding_pattern, _noncoding_pattern, _genomic_pattern
-
-    if _coding_pattern is None:
-        # Combine coding patterns
-        coding_patterns = [
-            remove_named_groups(dna_sub_c),
-            remove_named_groups(dna_del_c),
-            remove_named_groups(dna_ins_c),
-            remove_named_groups(dna_dup_c),
-            remove_named_groups(dna_delins_c),
-            remove_named_groups(dna_equal_c),
-            remove_named_groups(dna_variant_c)
-        ]
-        _coding_pattern = combine_patterns(coding_patterns)
-
-    if _noncoding_pattern is None:
-        # Combine non-coding patterns
-        noncoding_patterns = [
-            remove_named_groups(dna_sub_n),
-            remove_named_groups(dna_del_n),
-            remove_named_groups(dna_ins_n),
-            remove_named_groups(dna_dup_n),
-            remove_named_groups(dna_delins_n),
-            remove_named_groups(dna_equal_n),
-            remove_named_groups(dna_variant_n)
-        ]
-        _noncoding_pattern = combine_patterns(noncoding_patterns)
-
-    if _genomic_pattern is None:
-        # Combine genomic patterns
-        genomic_patterns = [
-            remove_named_groups(dna_sub_gmo),
-            remove_named_groups(dna_del_gmo),
-            remove_named_groups(dna_ins_gmo),
-            remove_named_groups(dna_dup_gmo),
-            remove_named_groups(dna_delins_gmo),
-            remove_named_groups(dna_equal_gmo),
-            remove_named_groups(dna_variant_gmo)
-        ]
-        _genomic_pattern = combine_patterns(genomic_patterns)
-
-    return _coding_pattern, _noncoding_pattern, _genomic_pattern
-
-def validate_hgvs_with_patterns(hgvs_nt):
-    """
-    Optimized HGVS validation using combined patterns for better performance.
-    """
-    try:
-        # First check if it's a multi-variant (has brackets)
-        if '[' in hgvs_nt and ']' in hgvs_nt:
-            return bool(re.fullmatch(dna_multi_variant, hgvs_nt))
-
-        # For single variants, test the most comprehensive pattern first
-        if re.fullmatch(dna_single_variant, hgvs_nt):
-            return True
-
-        # Get pre-compiled combined patterns for fallback
-        coding_pattern, noncoding_pattern, genomic_pattern = _get_combined_patterns()
-
-        # Use specific combined patterns as fallback
-        if hgvs_nt.startswith('c.'):
-            return bool(re.fullmatch(coding_pattern, hgvs_nt))
-        elif hgvs_nt.startswith('n.'):
-            return bool(re.fullmatch(noncoding_pattern, hgvs_nt))
-        elif hgvs_nt.startswith('g.'):
-            return bool(re.fullmatch(genomic_pattern, hgvs_nt))
-        else:
-            # For unknown prefixes, try original individual patterns
-            patterns_to_test = [
-                dna_sub_c, dna_del_c, dna_ins_c, dna_dup_c,
-                dna_delins_c, dna_equal_c, dna_variant_c,
-                dna_sub_n, dna_del_n, dna_ins_n, dna_dup_n,
-                dna_delins_n, dna_equal_n, dna_variant_n,
-                dna_sub_gmo, dna_del_gmo, dna_ins_gmo, dna_dup_gmo,
-                dna_delins_gmo, dna_equal_gmo, dna_variant_gmo
-            ]
-            for pattern in patterns_to_test:
-                if re.fullmatch(pattern, hgvs_nt):
-                    return True
-            return False
-
-    except Exception:
-        return False
-
-def extract_variant_positions(hgvs_variant):
-    """
-    Enhanced position extraction using VariantPosition for better validation.
-
-    Returns:
-        tuple: (max_position, diagnostic_info)
-    """
-    try:
-        # Parse just to get position information without requiring target sequence
-        variants, errors = parse_variant_strings([hgvs_variant])
-
-        if errors[0] is not None:
-            return None, f"Parse error: {errors[0]}"
-
-        variant = variants[0]
-        if variant is None:
-            return None, "Failed to parse variant"
-
-        # Extract position information using the API
-        positions = variant.positions
-
-        if isinstance(positions, tuple):
-            # Range variant - validate each position is a VariantPosition
-            valid_positions = []
-            for pos in positions:
-                if isinstance(pos, VariantPosition) and pos.position is not None:
-                    valid_positions.append(pos.position)
-
-            if not valid_positions:
-                return None, "No valid positions found in range variant"
-
-            max_pos = max(valid_positions)
-            min_pos = min(valid_positions)
-            return max_pos, f"Range variant: {min_pos}-{max_pos}"
-        elif isinstance(positions, list):
-            # Multi-variant case - handle list of positions
-            valid_positions = []
-            for pos in positions:
-                if isinstance(pos, VariantPosition) and pos.position is not None:
-                    valid_positions.append(pos.position)
-                elif hasattr(pos, 'position') and pos.position is not None:
-                    valid_positions.append(pos.position)
-
-            if not valid_positions:
-                return None, "No valid positions found in multi-variant"
-
-            max_pos = max(valid_positions)
-            min_pos = min(valid_positions)
-            return max_pos, f"Multi-variant: {min_pos}-{max_pos}"
-        else:
-            # Single position variant - validate it's a VariantPosition
-            if isinstance(positions, VariantPosition) and positions.position is not None:
-                return positions.position, f"Single position: {positions.position}"
-            elif hasattr(positions, 'position') and positions.position is not None:
-                return positions.position, f"Single position: {positions.position}"
-            else:
-                return None, f"Invalid position object: {type(positions)}"
-
     except Exception as e:
-        return None, f"Exception during position extraction: {e}"
+        logger.warning(f"Error parsing scores CSV for {urn_id}: {e}")
+        return pd.DataFrame()
 
+def get_score_set(urn_id: str) -> List[Dict[str, Any]]:
+    """Fetch score set information for a given URN ID with error handling."""
+    url = f"{MAVE_DB_BASE_URL}/experiments/{urn_id}/score-sets"
+    response = _make_api_request(url)
 
-def get_alternate_dna_sequence(dna_sequence, hgvs_nt, verbose=True):
-    """
-    Apply MAVE-HGVS variant to DNA sequence.
+    if response is None:
+        logger.warning(f"Failed to fetch score set for {urn_id}")
+        return []
 
-    Handles legacy _wt format and skips invalid X variants.
-    Provides better diagnostics for coordinate issues.
-
-    Args:
-        dna_sequence: Target DNA sequence
-        hgvs_nt: HGVS variant string
-        verbose: If True, print warnings for skipped variants
-    """
-    # Handle legacy _wt format (Enrich2 syntax -> MAVE-HGVS c.=)
-    if hgvs_nt == '_wt':
-        return dna_sequence
-
-    # Handle empty or None input
-    if not hgvs_nt or hgvs_nt.strip() == '':
-        return dna_sequence
-
-    # Skip variants with X (ambiguity characters not supported by MAVE-HGVS)
-    if 'X>' in hgvs_nt or '>X' in hgvs_nt:
-        if verbose:
-            print(f"Warning: Skipping variant with ambiguity character X: {hgvs_nt}")
-        return None
-
-    # Validate HGVS pattern using comprehensive pattern matching
-    if not validate_hgvs_with_patterns(hgvs_nt):
-        if verbose:
-            print(f"Warning: Invalid HGVS pattern format: {hgvs_nt}")
-        return None
-
-    # Use MAVE-HGVS parser with proper error handling
     try:
-        variants, errors = parse_variant_strings([hgvs_nt], targetseq=dna_sequence)
+        data = response.json()
+        return extract_target_info(data)
+    except (ValueError, KeyError) as e:
+        logger.warning(f"Error parsing score set response for {urn_id}: {e}")
+        return []
 
-        if errors[0] is not None:
-            error_msg = str(errors[0])
 
-            # For coordinate errors, provide better diagnostics
-            if any(phrase in error_msg for phrase in [
-                "coordinate out of bounds", "out of bounds", "Invalid position"
-            ]):
-                # Extract position information for better error reporting
-                max_pos, pos_info = extract_variant_positions(hgvs_nt)
-                if max_pos and verbose:
-                    print(f"Warning: Skipping incompatible variant {hgvs_nt}: {pos_info} exceeds sequence length {len(dna_sequence)}")
-                elif verbose:
-                    print(f"Warning: Skipping incompatible variant {hgvs_nt}: {error_msg}")
-                return None
-            elif "reference does not match target" in error_msg:
-                if verbose:
-                    print(f"Warning: Skipping incompatible variant {hgvs_nt}: {error_msg}")
-                return None
+def _validate_hgvs_format(hgvs_nt: str) -> bool:
+    """Validate HGVS string using comprehensive mavehgvs patterns."""
+    return HGVS_VALIDATION_PATTERN.match(hgvs_nt) is not None
+
+def _validate_position(position) -> None:
+    """Validate position using VariantPosition methods."""
+    if isinstance(position, VariantPosition) and position.is_intronic():
+        raise MaveHgvsParseError(f"Intronic positions not supported: {position}")
+
+def _validate_nucleotide_sequence(seq: str, context: str) -> None:
+    """Validate nucleotide sequence using dna_nt pattern."""
+    if seq and not NT_PATTERN.match(seq):
+        raise MaveHgvsParseError(f"Invalid nucleotide sequence '{seq}' in {context}")
+
+def get_alternate_dna_sequence(dna_sequence: str, hgvs_nt: str, verbose: bool = True) -> Optional[str]:
+    """Apply HGVS variant using mavehgvs parse_variant_strings."""
+    if hgvs_nt in ('_wt', '') or not hgvs_nt.strip() or 'X>' in hgvs_nt or '>X' in hgvs_nt:
+        return dna_sequence if hgvs_nt in ('_wt', '') or not hgvs_nt.strip() else None
+
+    if not _validate_hgvs_format(hgvs_nt):
+        raise MaveHgvsParseError(f"Invalid HGVS format: {hgvs_nt}")
+
+    variants, errors = parse_variant_strings([hgvs_nt], targetseq=dna_sequence)
+    if errors[0] or not variants[0]:
+        return None
+
+    current_sequence = list(dna_sequence)
+    for variant_type, position, sequence_data in variants[0].variant_tuples():
+        _validate_position(position)
+
+        pos_idx = position.position - 1 if isinstance(position, VariantPosition) else position - 1
+
+        if variant_type == 'sub':
+            ref, alt = sequence_data
+            _validate_nucleotide_sequence(ref, "substitution reference")
+            _validate_nucleotide_sequence(alt, "substitution alternative")
+            current_sequence[pos_idx] = alt
+
+        elif variant_type == 'del':
+            if isinstance(sequence_data, tuple) and len(sequence_data) == 2:
+                start_pos, end_pos = sequence_data
+                start_idx = start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1
+                end_idx = end_pos.position if isinstance(end_pos, VariantPosition) else end_pos
+                del current_sequence[start_idx:end_idx]
             else:
-                if verbose:
-                    print(f"Error: Could not parse variant {hgvs_nt}: {error_msg}")
-                return None
+                del current_sequence[pos_idx]
 
-        variant = variants[0]
-        if variant is None:
-            if verbose:
-                print(f"Warning: Could not parse variant {hgvs_nt}")
-            return None
+        elif variant_type == 'ins':
+            _validate_nucleotide_sequence(sequence_data, "insertion")
+            for i, base in enumerate(sequence_data):
+                current_sequence.insert(pos_idx + 1 + i, base)
 
-        # Apply the variant to get alternate sequence
-        return apply_variant_to_sequence(dna_sequence, variant)
+        elif variant_type == 'dup':
+            if isinstance(sequence_data, tuple) and len(sequence_data) == 2:
+                start_pos, end_pos = sequence_data
+                start_idx = start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1
+                end_idx = end_pos.position if isinstance(end_pos, VariantPosition) else end_pos
+                dup_seq = current_sequence[start_idx:end_idx]
+                current_sequence[end_idx:end_idx] = dup_seq
+            else:
+                current_sequence.insert(pos_idx + 1, current_sequence[pos_idx])
 
-    except MaveHgvsParseError as e:
-        if verbose:
-            print(f"Warning: MAVE-HGVS parse error for {hgvs_nt}: {str(e)}")
-        return None
-    except Exception as e:
-        if verbose:
-            print(f"Warning: Unexpected error parsing variant {hgvs_nt}: {str(e)}")
-        return None
+        elif variant_type == 'delins':
+            ref, alt = sequence_data
+            _validate_nucleotide_sequence(alt, "deletion-insertion")
+            if isinstance(position, tuple):
+                start_pos, end_pos = position
+                start_idx = start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1
+                end_idx = end_pos.position if isinstance(end_pos, VariantPosition) else end_pos
+                current_sequence[start_idx:end_idx] = list(alt)
+            else:
+                current_sequence[pos_idx] = alt
 
-def apply_variant_to_sequence(dna_sequence, variant):
-    """
-    Apply a MAVE-HGVS variant to a DNA sequence to get the alternate sequence.
-    Handles both single variants and multi-variants using the official library.
-    """
-    # Handle equality variants (wild-type)
-    if variant.is_target_identical():
-        return dna_sequence
-
-    # Handle multi-variants by processing individual variant tuples
-    if variant.is_multi_variant():
-        return apply_multi_variant_to_sequence(dna_sequence, variant)
-
-    # Handle single variants
-    return apply_single_variant_to_sequence(dna_sequence, variant)
-
-def apply_multi_variant_to_sequence(dna_sequence, multi_variant):
-    """
-    Apply a multi-variant by processing each individual variant in the multi-variant.
-    According to the MAVE-HGVS documentation, multi-variants need to be split
-    and each individual variant re-parsed using single-variant patterns.
-    """
-    # Get the string representation of the multi-variant
-    multi_variant_str = str(multi_variant)
-
-    # Extract the prefix and variant part
-    if '.' in multi_variant_str:
-        prefix, variants_part = multi_variant_str.split('.', 1)
-    else:
-        print(f"Warning: Invalid multi-variant format: {multi_variant_str}")
-        return dna_sequence
-
-    # Remove brackets from the variant part
-    if variants_part.startswith('[') and variants_part.endswith(']'):
-        variants_part = variants_part[1:-1]
-
-    # Split by semicolon to get individual variant strings
-    individual_variant_strings = [v.strip() for v in variants_part.split(';') if v.strip()]
-
-    # Apply each individual variant sequentially
-    current_sequence = dna_sequence
-    for variant_str in individual_variant_strings:
-        # Reconstruct full HGVS string for this individual variant
-        full_variant_str = f"{prefix}.{variant_str}"
-
-        # Parse the individual variant using the MAVE-HGVS parser
-        variants, errors = parse_variant_strings([full_variant_str], targetseq=current_sequence)
-
-        if errors[0] is not None:
-            print(f"Warning: Could not parse individual variant {full_variant_str}: {errors[0]}")
-            continue
-
-        if variants[0] is None:
-            print(f"Warning: Could not parse individual variant {full_variant_str}")
-            continue
-
-        individual_variant = variants[0]
-
-        # Apply this individual variant to the current sequence
-        new_sequence = apply_single_variant_to_sequence(current_sequence, individual_variant)
-        if new_sequence is None:
-            print(f"Warning: Failed to apply individual variant {full_variant_str}")
-            return dna_sequence  # Return original sequence on failure
-
-        current_sequence = new_sequence
-
-    return current_sequence
-
-def apply_single_variant_to_sequence(dna_sequence, variant):
-    """
-    Apply a single MAVE-HGVS variant to a DNA sequence.
-    """
-    # Get variant type - should be a string according to API
-    vtype = variant.variant_type
-
-    # Get position from VariantPosition object
-    pos_obj = variant.positions
-    if isinstance(pos_obj, tuple) and len(pos_obj) > 0:
-        # Multiple positions (ranges) - get first position
-        pos = pos_obj[0].position
-    else:
-        # Single VariantPosition object
-        pos = pos_obj.position
-
-    if vtype == 'sub':
-        # Single substitution - access sequence tuple directly
-        ref_seq, alt_seq = variant.sequence
-        pos_idx = pos - 1  # Convert to 0-based indexing
-        return dna_sequence[:pos_idx] + alt_seq + dna_sequence[pos_idx + 1:]
-
-    elif vtype == 'del':
-        # Handle deletions - may have start/end positions
-        positions = variant.positions
-        if isinstance(positions, tuple) and len(positions) == 2:
-            # Range deletion
-            start_pos = positions[0].position - 1  # 0-based
-            end_pos = positions[1].position  # Exclusive end
-            return dna_sequence[:start_pos] + dna_sequence[end_pos:]
-        else:
-            # Single position deletion
-            pos_idx = pos - 1
-            return dna_sequence[:pos_idx] + dna_sequence[pos_idx + 1:]
-
-    elif vtype == 'ins':
-        # Insertion between start and end positions
-        positions = variant.positions
-        start_pos = positions[0].position  # Insert after this position
-        inserted_seq = variant.sequence
-        return dna_sequence[:start_pos] + inserted_seq + dna_sequence[start_pos:]
-
-    elif vtype == 'dup':
-        # Duplication - may have start/end positions
-        positions = variant.positions
-        if isinstance(positions, tuple) and len(positions) == 2:
-            # Range duplication
-            start_pos = positions[0].position - 1  # 0-based
-            end_pos = positions[1].position  # Exclusive end
-            dup_seq = dna_sequence[start_pos:end_pos]
-            return dna_sequence[:end_pos] + dup_seq + dna_sequence[end_pos:]
-        else:
-            # Single position duplication
-            pos_idx = pos - 1
-            dup_base = dna_sequence[pos_idx]
-            return dna_sequence[:pos] + dup_base + dna_sequence[pos:]
-
-    elif vtype == 'delins':
-        # Deletion-insertion
-        replacement_seq = variant.sequence
-        positions = variant.positions
-        if isinstance(positions, tuple) and len(positions) == 2:
-            # Range delins
-            start_pos = positions[0].position - 1  # 0-based
-            end_pos = positions[1].position  # Exclusive end
-            return dna_sequence[:start_pos] + replacement_seq + dna_sequence[end_pos:]
-        else:
-            # Single position delins
-            pos_idx = pos - 1
-            return dna_sequence[:pos_idx] + replacement_seq + dna_sequence[pos_idx + 1:]
-
-    else:
-        print(f"Warning: Unsupported variant type: {vtype}")
-        return dna_sequence
+    return ''.join(current_sequence)
 
 
 
-def get_maves(Seq_length=1024, limit = None, target='score', sequence_type='dna', region_type=None, verbose_warnings=True):
+
+
+def get_maves(Seq_length=1024, limit=None, target='score', sequence_type='dna', region_type=None, verbose_warnings=True):
+    """Load MAVE data with comprehensive HGVS processing."""
     urn_ids = get_all_urn_ids()
-    avail = 0
-    total = 0
-    n_studies = 0
+    avail = total = n_studies = 0
     data = []
 
     for study_num, urn_id in tqdm(enumerate(urn_ids), total=len(urn_ids), desc="Processing studies"):
-        score_set = get_score_set(urn_id)
-
         if limit and study_num >= limit:
             break
 
+        score_set = get_score_set(urn_id)
         for index, exp in enumerate(score_set):
-            if not exp.get('targetGenes'):  # Check if targetGenes is empty or not present
-                print(f"Warning: No target genes found for {urn_id}")
-                continue  # Skip this entry if no target genes
+            if not exp.get('targetGenes'):
+                continue
 
-            urn_id = exp.get('urn', None)
-            title = exp.get('title', None)
-            description = exp.get('description', None)
-            numVariants = exp.get('numVariants', None)
-            exp_sequence_type = exp.get('targetGenes', None)[0]['sequence_type']
-            annotation = ': '.join([title, description])
+            exp_urn_id = exp.get('urn')
+            exp_sequence_type = exp['targetGenes'][0]['sequence_type']
 
-            total += int(numVariants)
-            scores = get_scores(urn_id)
-            if isinstance(scores, pd.DataFrame) and (exp_sequence_type == sequence_type):
-                if not scores.empty:
-                    if index == 0:
-                        n_studies += 1
+            if exp_sequence_type != sequence_type:
+                continue
 
-                    # Get sequence once for this experiment
-                    ref_sequence = exp["targetGenes"][0]["sequence"]
-                    sequence_length = len(ref_sequence)
+            total += exp.get('numVariants', 0)
+            scores = get_scores(exp_urn_id)
 
-                    # Check if sequence fits within the requested length
-                    if sequence_length <= Seq_length:
-                        for index, row in scores.iterrows():
-                            if pd.notna(row['hgvs_nt']) and pd.notna(row["score"]):
-                                # Filter based on sequence_type
-                                hgvs_prefix = row['hgvs_nt'].split('.')[0]
-                                if region_type == 'coding' and hgvs_prefix != 'c':
-                                    continue
-                                elif region_type == 'noncoding' and hgvs_prefix != 'n':
-                                    continue
+            if not isinstance(scores, pd.DataFrame) or scores.empty:
+                continue
 
-                                # Skip X variants early (before any processing)
-                                if 'X>' in row['hgvs_nt'] or '>X' in row['hgvs_nt']:
-                                    if verbose_warnings:
-                                        print(f"Warning: Skipping variant with ambiguity character X: {row['hgvs_nt']}")
-                                    continue
+            if index == 0:
+                n_studies += 1
 
-                                # Single validation and processing in get_alternate_dna_sequence
-                                alt = get_alternate_dna_sequence(ref_sequence, row['hgvs_nt'], verbose=verbose_warnings)
-                                if alt is not None:
-                                    avail += 1
+            ref_sequence = exp['targetGenes'][0]['sequence']
+            if len(ref_sequence) > Seq_length:
+                continue
 
-                                    # Get position annotations
-                                    position_annotations = get_variant_position_annotations(row['hgvs_nt'])
+            annotation = f"{exp.get('title', '')}: {exp.get('description', '')}"
 
-                                    # Build annotation string with position information
-                                    position_info = f"Position Type: {position_annotations['position_type']}"
-                                    if position_annotations['is_utr']:
-                                        position_info += ", UTR"
-                                    if position_annotations['is_intronic']:
-                                        position_info += f", Intronic (pos: {position_annotations['intronic_position']})"
-                                    if position_annotations['is_extended']:
-                                        position_info += ", Extended Syntax"
+            for _, row in scores.iterrows():
+                if pd.isna(row['hgvs_nt']) or pd.isna(row['score']):
+                    continue
 
-                                    x = [ref_sequence, alt, f"{annotation}, Sequence Type: {exp_sequence_type}, HGVS Prefix: {hgvs_prefix}, {position_info}, URN: {urn_id}, HGVS: {row['hgvs_nt']}"]
-                                    y = row[target]
-                                    data.append([x,y])
-                    else:
-                        # Sequence too long - skip this entire experiment
-                        if verbose_warnings:
-                            print(f"Warning: Skipping experiment {urn_id}: sequence length {sequence_length} exceeds limit {Seq_length}")
-                else:
-                    print(f"Error: Scores dataframe is empty: {urn_id}")
-            else:
-                print(f"Error: Could not retrieve scores for: {urn_id}")
-    print(f"Total number of studies: {n_studies}/{len(urn_ids)}")
-    print(f"Total number of MAVEs: {avail}/{total}")
+                hgvs_prefix = row['hgvs_nt'].split('.')[0]
+                if (region_type == 'coding' and hgvs_prefix != 'c') or \
+                   (region_type == 'noncoding' and hgvs_prefix != 'n'):
+                    continue
+
+                alt = get_alternate_dna_sequence(ref_sequence, row['hgvs_nt'], verbose=verbose_warnings)
+                if alt is not None:
+                    avail += 1
+                    position_annotations = get_variant_position_annotations(row['hgvs_nt'])
+
+                    position_info = f"Position Type: {position_annotations['position_type']}"
+                    for flag, label in [('is_utr', 'UTR'), ('is_extended', 'Extended Syntax')]:
+                        if position_annotations[flag]:
+                            position_info += f", {label}"
+                    if position_annotations['is_intronic']:
+                        position_info += f", Intronic (pos: {position_annotations['intronic_position']})"
+
+                    metadata = f"{annotation}, Sequence Type: {exp_sequence_type}, HGVS Prefix: {hgvs_prefix}, {position_info}, URN: {exp_urn_id}, HGVS: {row['hgvs_nt']}"
+                    data.append([[ref_sequence, alt, metadata], row[target]])
+
+    logger.info(f"Total studies: {n_studies}/{len(urn_ids)}, MAVEs: {avail}/{total}")
     return data

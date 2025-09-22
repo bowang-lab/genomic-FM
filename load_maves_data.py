@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--num_records", type=int, default=2000, help="Number of records to load")
     parser.add_argument("--all_records", action="store_true", help="Load all records")
     parser.add_argument("--max_studies", type=int, default=None, help="Maximum number of studies to process")
-    parser.add_argument("--seq_length", type=int, default=1024, help="Sequence length")
+    parser.add_argument("--seq_length", type=int, default=None, help="Sequence length (None for unlimited)")
     parser.add_argument("--experimental_methods", nargs="*", help="Filter by experimental methods (e.g., DMS)")
     parser.add_argument("--filter_genes", nargs="*", help="Filter by genes")
     parser.add_argument("--coding_only", type=bool, default=None, help="Filter coding sequences only")
@@ -24,7 +24,7 @@ def main():
 
     print(f"Loading MAVES data...")
     print(f"Records: {'all' if args.all_records else args.num_records}")
-    print(f"Sequence length: {args.seq_length}")
+    print(f"Sequence length: {'unlimited' if args.seq_length is None else args.seq_length}")
     if args.experimental_methods:
         print(f"Experimental methods: {args.experimental_methods}")
     if args.filter_genes:
@@ -42,7 +42,7 @@ def main():
 
     # Get all data at once using the existing get_data method
     print("Loading data from MAVE wrapper...")
-    data = mave_wrapper.get_data(Seq_length=args.seq_length, target="score")
+    data = mave_wrapper.get_data(Seq_length=args.seq_length or float('inf'), target="score")
 
     all_processed_data = []
     total_skipped = 0
