@@ -209,7 +209,14 @@ def get_alternate_dna_sequence(dna_sequence: str, hgvs_nt: str, verbose: bool = 
     for variant_type, position, sequence_data in variants[0].variant_tuples():
         _validate_position(position)
 
-        pos_idx = position.position - 1 if isinstance(position, VariantPosition) else position - 1
+        if isinstance(position, tuple):
+            # For tuple positions, use the first element as the starting position
+            start_pos = position[0]
+            pos_idx = start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1
+        elif isinstance(position, VariantPosition):
+            pos_idx = position.position - 1
+        else:
+            pos_idx = position - 1
 
         if variant_type == 'sub':
             ref, alt = sequence_data
@@ -242,7 +249,8 @@ def get_alternate_dna_sequence(dna_sequence: str, hgvs_nt: str, verbose: bool = 
                 current_sequence.insert(pos_idx + 1, current_sequence[pos_idx])
 
         elif variant_type == 'delins':
-            ref, alt = sequence_data
+            # For delins, sequence_data is just the alternate sequence string
+            alt = sequence_data
             _validate_nucleotide_sequence(alt, "deletion-insertion")
             if isinstance(position, tuple):
                 start_pos, end_pos = position
