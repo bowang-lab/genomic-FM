@@ -24,7 +24,7 @@ from ..datasets.maves.load_maves import get_maves
 from ..datasets.gwas.load_gwas_catalogue import download_file, extract_snp_details, get_risk_snps, get_summary_stats_for_snp
 from ..datasets.olida.load_olida import get_variant_combinations, load_and_process_negative_pairs
 from ..datasets.verified_GV.load_real_clinvar import load_real_clinvar
-from .mave_utils import MAVE_METHODS, expand_method_filters
+from ..datasets.maves.mave_utils import MAVE_METHODS, expand_method_filters
 import pandas as pd
 
 SPECIES = ['Arabidopsis thaliana', 'Apis mellifera', 'Caenorhabditis elegans', 'Cyprinus carpio carpio', 'Dicentrarchus labra', 'Drosophila melanogaster', 'Danio rerio', 'Gallus gallus', 'Homo sapiens','Macaca mulatta',
@@ -121,9 +121,10 @@ class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False,
                  # Essential filters for training stability
                  filter_genes=None, experimental_methods=None,
-                 coding_only=None, seq_length_range=None):
+                 coding_only=None, seq_length_range=None, max_studies=None):
         self.num_records = num_records
         self.all_records = all_records
+        self.max_studies = max_studies  # Maximum number of studies to process
         # Essential filters
         self.filter_genes = filter_genes  # List of gene names to filter
         self.experimental_methods = experimental_methods  # List of experimental methods
@@ -212,7 +213,7 @@ class MAVEDataWrapper:
                 file_name = f'./root/data/maves_{sequence_type}_{region_type}_{Seq_length}.jsonl'
             else:
                 file_name = f'./root/data/maves_{sequence_type}_{Seq_length}.jsonl'
-            data = get_maves(Seq_length=Seq_length, limit=None, target=target, sequence_type=sequence_type, region_type=region_type)
+            data = get_maves(Seq_length=Seq_length, limit=self.max_studies, target=target, sequence_type=sequence_type, region_type=region_type)
             save_as_jsonl(data, file_name)
 
         # Apply filters

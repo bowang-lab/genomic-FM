@@ -37,15 +37,16 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 #GENE_FILTER="--filter_genes UBE2I,BRCA1,TP53"
 
 # Method filtering: BIOLOGICALLY PRINCIPLED CATEGORIES
-# AVAILABLE CATEGORIES (8 distinct biological groupings):
+# AVAILABLE CATEGORIES (9 distinct biological groupings):
 #   🔬 DMS - Deep mutational scanning (all variants, single/multi-readout)
 #   📊 REGULATORY - MPRA, saturation mutagenesis
 #   🔬 BIOPHYSICAL_STABILITY - Protease digestion (trypsin, chymotrypsin)
 #   📈 RNA_ABUNDANCE - RNA abundance measurements
-#   🧬 PROTEIN_ABUNDANCE - Protein abundance, flow cytometry, polysome
-#   🔄 PROTEIN_TRANSLATION - Protein translation efficiency
+#   🧬 PROTEIN_ABUNDANCE - Protein abundance
+#   🔄 PROTEIN_TRANSLATION - Polysome profiling
 #   🎯 ESCAPE - Escape variants
 #   ⚠️ COMPUTATIONAL_PROCESSED - Enrich2, regression scores (use with caution)
+#   ❌ EXCLUDE_FROM_TRAINING - Control experiments
 #
 # Using individual methods:
 #METHOD_FILTER="--experimental_methods DMS-BarSeq,trypsin digestion"
@@ -74,7 +75,7 @@ MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2,
 # 🧬 PROTEIN ABUNDANCE:
 #FILTER_FLAGS="--experimental_methods PROTEIN_ABUNDANCE"
 
-# 🔄 PROTEIN TRANSLATION:
+# 🔄 PROTEIN TRANSLATION EFFICIENCY (Polysome):
 #FILTER_FLAGS="--experimental_methods PROTEIN_TRANSLATION"
 
 # 🎯 ESCAPE VARIANTS:
