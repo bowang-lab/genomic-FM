@@ -121,8 +121,8 @@ def compute_metrics(eval_pred, task_type="classification"):
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
                             max_grad_norm=1.0, num_workers=8, gradient_checkpointing=False,
-                            filter_genes=None, experimental_methods=None, coding_only=None,
-                            seq_length_range=None, max_samples_per_experiment=None,
+                            filter_genes=None, experimental_methods=None, region_type='all',
+                            variant_types=None, seq_length_range=None, max_samples_per_experiment=None,
                             normalize_scores=False):
     set_seed(seed)
     accelerator = Accelerator()
@@ -228,8 +228,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             accelerator.print(f"  - Genes: {filter_genes}")
         if experimental_methods:
             accelerator.print(f"  - Methods: {experimental_methods}")
-        if coding_only is not None:
-            accelerator.print(f"  - Coding only: {coding_only}")
+        if region_type != 'all':
+            accelerator.print(f"  - Region type: {region_type}")
+        if variant_types:
+            accelerator.print(f"  - Variant types: {variant_types}")
         if seq_length_range:
             accelerator.print(f"  - Sequence length range: {seq_length_range}")
         if max_samples_per_experiment:
@@ -239,7 +241,8 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             tokenizer, target='score', seq_length=1024, seed=seed,
             filter_genes=filter_genes,
             experimental_methods=experimental_methods,
-            coding_only=coding_only,
+            region_type=region_type,
+            variant_types=variant_types,
             seq_length_range=seq_length_range,
             max_samples_per_experiment=max_samples_per_experiment,
             normalize_scores=normalize_scores
@@ -306,7 +309,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Update training arguments for regression vs classification
     if task.startswith("MAVES"):
-        training_args.metric_for_best_model = "pearson_correlation"  # Use Pearson for regression
+        training_args.metric_for_best_model = "spearman_correlation"  # Use Spearman for regression
         training_args.greater_is_better = True
         training_args.logging_steps = 50  # More frequent logging for debugging
         training_args.warmup_ratio = 0.1  # Add warmup for stable training
@@ -381,8 +384,10 @@ def main():
                         help="Comma-separated list of genes to filter (e.g., 'BRCA1,TP53,EGFR')")
     parser.add_argument("--experimental_methods", type=str, default=None,
                         help="Comma-separated methods or categories (e.g., 'DMS,MPRA' or 'PROMOTER,ENHANCER')")
-    parser.add_argument("--coding_only", type=str, default=None,
-                        help="Filter by region type: 'true' for coding only, 'false' for non-coding only")
+    parser.add_argument("--region_type", type=str, default='all', choices=['coding', 'non-coding', 'all'],
+                        help="Filter by region type: 'coding', 'non-coding', or 'all' (default)")
+    parser.add_argument("--variant_types", type=str, default=None,
+                        help="Comma-separated variant types (e.g., 'sub,del,ins')")
     parser.add_argument("--seq_len_min", type=int, default=None,
                         help="Minimum sequence length for filtering")
     parser.add_argument("--seq_len_max", type=int, default=1024,
@@ -417,9 +422,12 @@ def main():
                     print(f"Available categories: {', '.join(valid_categories)}")
         print(f"Using experimental methods filter: {experimental_methods}")
 
-    coding_only = None
-    if args.coding_only is not None:
-        coding_only = args.coding_only.lower() == 'true'
+    region_type = args.region_type
+
+    variant_types = None
+    if args.variant_types:
+        variant_types = [v.strip() for v in args.variant_types.split(',')]
+        print(f"Using variant types filter: {variant_types}")
 
     seq_length_range = None
     if args.seq_len_min is not None or args.seq_len_max is not None:
@@ -441,7 +449,8 @@ def main():
                             gradient_checkpointing=args.gradient_checkpointing,
                             filter_genes=filter_genes,
                             experimental_methods=experimental_methods,
-                            coding_only=coding_only,
+                            region_type=region_type,
+                            variant_types=variant_types,
                             seq_length_range=seq_length_range,
                             max_samples_per_experiment=max_samples_per_experiment,
                             normalize_scores=normalize_scores)

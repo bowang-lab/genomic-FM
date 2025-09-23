@@ -257,7 +257,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     target = 'disease' if task == 'CLNDN' else 'score'
     
     datasets, task_num_classes, max_seq_len = return_smart_dataset(
-        tokenizer, 'root/data/smart_filtered_variants.csv', 
+        tokenizer, 'root/data/unfiltered_variants.csv',
         target=target, task_name=task, threshold=threshold
     )
     tokenizer.model_max_length = max_seq_len

@@ -469,7 +469,8 @@ def return_maves_dataset(
     # Essential filters for training stability
     filter_genes=None,
     experimental_methods=None,
-    coding_only=None,
+    region_type='all',
+    variant_types=None,
     seq_length_range=None,
     max_samples_per_experiment=None,
     # Score normalization
@@ -481,7 +482,8 @@ def return_maves_dataset(
     Args:
         filter_genes: List of gene names to filter (e.g., ['BRCA1', 'TP53'])
         experimental_methods: List of methods (e.g., ['DMS-BarSeq', 'DMS-TileSeq', 'Enrich2'])
-        coding_only: True=coding only, False=non-coding only, None=both
+        region_type: 'coding', 'non-coding', or 'all' (default)
+        variant_types: List of variant types (e.g., ['sub', 'del', 'ins'])
         seq_length_range: Tuple (min_len, max_len) for sequence length filtering
         max_samples_per_experiment: Maximum samples to take per experiment (None for no limit)
     """
@@ -491,7 +493,8 @@ def return_maves_dataset(
         all_records=all_records,
         filter_genes=filter_genes,
         experimental_methods=experimental_methods,
-        coding_only=coding_only,
+        region_type=region_type,
+        variant_types=variant_types,
         seq_length_range=seq_length_range
     )
     raw_data = mave_wrapper.get_data(Seq_length=seq_length, target=target)

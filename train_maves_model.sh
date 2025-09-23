@@ -30,67 +30,115 @@ wandb offline
 # Training parameters
 MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-msa-sapiens
 
-# Essential MAVES Filtering Options
-# Uncomment and customize as needed for training stability
+################################################################################
+# 📋 MAVES FILTERING OPTIONS - Comprehensive Documentation
+################################################################################
+# Filtering allows you to focus training on specific variant types and conditions
+# Multiple filters can be combined for precise dataset control
 
-# Gene filtering: Focus on specific genes of interest
-#GENE_FILTER="--filter_genes UBE2I,BRCA1,TP53"
+#=============================================================================
+# 1️⃣ GENE FILTERING - Focus on specific genes of interest
+#=============================================================================
+# Example: Train only on BRCA1, TP53, and EGFR variants
+#GENE_FILTER="--filter_genes UBE2I,BRCA1,TP53,EGFR"
 
-# Method filtering: BIOLOGICALLY PRINCIPLED CATEGORIES
-# AVAILABLE CATEGORIES (9 distinct biological groupings):
-#   🔬 DMS - Deep mutational scanning (all variants, single/multi-readout)
-#   📊 REGULATORY - MPRA, saturation mutagenesis
-#   🔬 BIOPHYSICAL_STABILITY - Protease digestion (trypsin, chymotrypsin)
-#   📈 RNA_ABUNDANCE - RNA abundance measurements
-#   🧬 PROTEIN_ABUNDANCE - Protein abundance
-#   🔄 PROTEIN_TRANSLATION - Polysome profiling
-#   🎯 ESCAPE - Escape variants
-#   ⚠️ COMPUTATIONAL_PROCESSED - Enrich2, regression scores (use with caution)
-#   ❌ EXCLUDE_FROM_TRAINING - Control experiments
+#=============================================================================
+# 2️⃣ EXPERIMENTAL METHOD FILTERING - Filter by assay type
+#=============================================================================
+# Available method categories (use category name to include all methods within):
+#   DMS                    - Deep mutational scanning (highest quality)
+#   REGULATORY             - MPRA, saturation mutagenesis
+#   BIOPHYSICAL_STABILITY  - Protease digestion assays (trypsin, chymotrypsin)
+#   RNA_ABUNDANCE          - RNA abundance measurements
+#   PROTEIN_ABUNDANCE      - Protein abundance assays
+#   PROTEIN_TRANSLATION    - Polysome profiling
+#   ESCAPE                 - Escape variant assays
+#   COMPUTATIONAL_PROCESSED- Enrich2, regression scores (use with caution)
+#   EXCLUDE_FROM_TRAINING  - Automatically excluded (control experiments)
 #
-# Using individual methods:
-#METHOD_FILTER="--experimental_methods DMS-BarSeq,trypsin digestion"
+# Examples:
+#METHOD_FILTER="--experimental_methods DMS"                    # All DMS experiments
+#METHOD_FILTER="--experimental_methods DMS,REGULATORY"         # DMS + regulatory
+#METHOD_FILTER="--experimental_methods DMS-BarSeq,MPRA"        # Specific methods
 
-# Coding region filtering: protein-coding vs non-coding
-#CODING_FILTER="--coding_only true"
+#=============================================================================
+# 3️⃣ VARIANT TYPE FILTERING - Filter by mutation type
+#=============================================================================
+# Available variant types:
+#   sub     - Substitutions/missense variants (SNPs)
+#   del     - Deletions
+#   ins     - Insertions
+#   dup     - Duplications
+#   delins  - Deletion-insertions (complex indels)
+#   fs      - Frameshift variants
+#   inv     - Inversions
+#
+# Examples:
+#VARIANT_FILTER="--variant_types sub"                 # Only substitutions
+#VARIANT_FILTER="--variant_types sub,del,ins"         # SNPs and simple indels
+#VARIANT_FILTER="--variant_types del,ins,delins"      # All indel types
 
-# Sequence length filtering: computational efficiency and consistency
-LENGTH_FILTER="--seq_length_range 1,1024"
+#=============================================================================
+# 4️⃣ REGION TYPE FILTERING - Coding vs non-coding variants
+#=============================================================================
+# Options:
+#   coding     - Only protein-coding variants (HGVS prefix 'c')
+#   non-coding - Only non-coding variants (HGVS prefix 'n', 'g')
+#   all        - Both coding and non-coding (default)
+#
+#REGION_FILTER="--region_type coding"      # Protein-coding only
+#REGION_FILTER="--region_type non-coding"  # Non-coding only
+#REGION_FILTER="--region_type all"         # Both (default)
 
+#=============================================================================
+# 5️⃣ SEQUENCE LENGTH FILTERING - Control computational load
+#=============================================================================
+# Format: --seq_len_min MIN --seq_len_max MAX
+# Filters out sequences outside the specified length range
+LENGTH_FILTER="--seq_len_min 1 --seq_len_max 1024"
 
-# MAVE METHOD CATEGORIES (quality: high → low):
+#=============================================================================
+# 6️⃣ SAMPLE BALANCING - Prevent dataset imbalance
+#=============================================================================
+# Limit samples per experiment to avoid bias from large studies
+#BALANCE_FILTER="--max_samples_per_experiment 1000"
 
-# 🔬 DEEP MUTATIONAL SCANNING (highest quality):
-#FILTER_FLAGS="--experimental_methods DMS"
+################################################################################
+# 🎯 PRESET FILTER CONFIGURATIONS - Ready-to-use combinations
+################################################################################
 
-# 📊 REGULATORY ELEMENTS:
-#FILTER_FLAGS="--experimental_methods REGULATORY"
+# === HIGH-QUALITY PROTEIN VARIANTS ===
+# Best for protein function prediction models
+#FILTER_FLAGS="--experimental_methods DMS --region_type coding --variant_types sub"
 
-# 🔬 PROTEIN STABILITY:
-#FILTER_FLAGS="--experimental_methods BIOPHYSICAL_STABILITY"
+# === REGULATORY VARIANTS ===
+# For models focusing on gene expression regulation
+#FILTER_FLAGS="--experimental_methods REGULATORY --region_type non-coding"
 
-# 📈 RNA ABUNDANCE:
-#FILTER_FLAGS="--experimental_methods RNA_ABUNDANCE"
+# === STRUCTURAL VARIANTS ===
+# Focus on insertions, deletions, and complex rearrangements
+#FILTER_FLAGS="--variant_types del,ins,dup,delins,inv"
 
-# 🧬 PROTEIN ABUNDANCE:
-#FILTER_FLAGS="--experimental_methods PROTEIN_ABUNDANCE"
+# === BALANCED MULTI-ASSAY ===
+# Diverse training across multiple assay types
+#FILTER_FLAGS="--experimental_methods DMS,REGULATORY,RNA_ABUNDANCE --max_samples_per_experiment 500"
 
-# 🔄 PROTEIN TRANSLATION EFFICIENCY (Polysome):
-#FILTER_FLAGS="--experimental_methods PROTEIN_TRANSLATION"
+# === SPECIFIC GENE STUDY ===
+# Deep dive into specific genes of interest
+#FILTER_FLAGS="--filter_genes BRCA1,BRCA2 --experimental_methods DMS --variant_types sub,del,ins"
 
-# 🎯 ESCAPE VARIANTS:
-#FILTER_FLAGS="--experimental_methods ESCAPE"
+# === CODING SNPs ONLY ===
+# Classic missense variant prediction
+#FILTER_FLAGS="--region_type coding --variant_types sub --experimental_methods DMS"
 
-# ⚠️ COMPUTATIONAL OUTPUTS (use with caution):
-#FILTER_FLAGS="--experimental_methods COMPUTATIONAL_PROCESSED"
+# === NON-CODING REGULATORY ===
+# Promoter and enhancer variants
+#FILTER_FLAGS="--region_type non-coding --experimental_methods REGULATORY,RNA_ABUNDANCE"
 
-# ✅ COMPATIBLE COMBINATIONS:
-#FILTER_FLAGS="--experimental_methods DMS,REGULATORY"
-
-# 🎛️ EXPERIMENT BALANCING:
-#FILTER_FLAGS="--experimental_methods DMS --max_samples_per_experiment 1000"
-
-FILTER_FLAGS="--experimental_methods DMS"  # Filter for DMS experiments
+################################################################################
+# 🚀 ACTIVE CONFIGURATION - Modify this for your training run
+################################################################################
+FILTER_FLAGS="--experimental_methods DMS"  # Default: High-quality DMS experiments
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then

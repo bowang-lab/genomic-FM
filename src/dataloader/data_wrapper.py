@@ -121,15 +121,17 @@ class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False,
                  # Essential filters for training stability
                  filter_genes=None, experimental_methods=None,
-                 coding_only=None, seq_length_range=None, max_studies=None):
+                 region_type='all', seq_length_range=None, max_studies=None,
+                 variant_types=None):
         self.num_records = num_records
         self.all_records = all_records
         self.max_studies = max_studies  # Maximum number of studies to process
         # Essential filters
         self.filter_genes = filter_genes  # List of gene names to filter
         self.experimental_methods = experimental_methods  # List of experimental methods
-        self.coding_only = coding_only  # True=coding only, False=non-coding only, None=both
+        self.region_type = region_type  # 'coding', 'non-coding', or 'all'
         self.seq_length_range = seq_length_range  # Tuple (min_len, max_len)
+        self.variant_types = variant_types  # List of variant types to include (e.g., ['sub', 'del', 'ins'])
 
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
@@ -161,16 +163,16 @@ class MAVEDataWrapper:
                 if not method_found:
                     continue
 
-            # 4. Coding/non-coding filter
-            if self.coding_only is not None:
+            # 4. Region type filter (coding/non-coding)
+            if self.region_type != 'all':
                 # Extract HGVS prefix to determine coding vs non-coding
                 if ', HGVS Prefix: ' in annotation:
-                    hgvs_prefix = annotation.split(', HGVS Prefix: ')[1].strip()
+                    hgvs_prefix = annotation.split(', HGVS Prefix: ')[1].split(',')[0].strip()
                     is_coding = hgvs_prefix == 'c'
 
-                    if self.coding_only and not is_coding:
+                    if self.region_type == 'coding' and not is_coding:
                         continue
-                    elif not self.coding_only and is_coding:
+                    elif self.region_type == 'non-coding' and is_coding:
                         continue
 
             # 5. Sequence length filter
@@ -178,6 +180,17 @@ class MAVEDataWrapper:
                 min_len, max_len = self.seq_length_range
                 seq_len = len(ref_seq)
                 if not (min_len <= seq_len <= max_len):
+                    continue
+
+            # 6. Variant type filter
+            if self.variant_types:
+                # Extract variant type from annotation string
+                if 'Variant Type: ' in annotation:
+                    variant_type = annotation.split('Variant Type: ')[1].split(',')[0].strip()
+                    if variant_type not in self.variant_types:
+                        continue
+                else:
+                    # Skip if variant type not found and filter is specified
                     continue
 
             filtered_data.append(record)
@@ -194,10 +207,12 @@ class MAVEDataWrapper:
             print(f"  Gene filter: {self.filter_genes}")
         if self.experimental_methods:
             print(f"  Experimental methods: {self.experimental_methods}")
-        if self.coding_only is not None:
-            print(f"  Coding only: {self.coding_only}")
+        if self.region_type != 'all':
+            print(f"  Region type: {self.region_type}")
         if self.seq_length_range:
             print(f"  Sequence length range: {self.seq_length_range}")
+        if self.variant_types:
+            print(f"  Variant types: {self.variant_types}")
 
         exclude_patterns = MAVE_METHODS.get("EXCLUDE_FROM_TRAINING", [])
         if exclude_patterns:
