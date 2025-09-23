@@ -35,8 +35,31 @@ MAVE_DB_BASE_URL = "https://api.mavedb.org/api/v1"
 REQUEST_TIMEOUT = None  # No timeout
 RETRY_DELAY = 2  # seconds
 
-# Keep only necessary patterns for nucleotide validation
+# Pattern Compilation for HGVS Validation
+# Using combine_patterns for efficient matching
 NT_PATTERN = re.compile(dna_nt)
+
+# Combined comprehensive validation pattern
+ALL_DNA_VARIANTS = re.compile(
+    combine_patterns([dna_single_variant, dna_multi_variant], groupname="any_variant")
+)
+
+# Positioned equal pattern using existing mavehgvs patterns
+# dna_equal_c is most comprehensive (handles intronic positions, extended syntax)
+# dna_equal_n handles bare '=' for non-coding sequences
+# dna_equal_gmo handles genomic positions
+POSITIONED_EQUAL_PATTERN = re.compile(
+    combine_patterns([dna_equal_c, dna_equal_n, dna_equal_gmo], groupname="positioned_equal")
+)
+
+# Prefix-specific patterns for targeted validation
+DNA_VARIANT_PATTERNS = {
+    'c': re.compile(dna_variant_c),
+    'n': re.compile(dna_variant_n),
+    'g': re.compile(dna_variant_gmo),
+    'm': re.compile(dna_variant_gmo),
+    'o': re.compile(dna_variant_gmo)
+}
 
 @lru_cache(maxsize=1)
 def _get_api_session() -> requests.Session:
@@ -57,6 +80,9 @@ def _make_api_request(url: str) -> Optional[requests.Response]:
     """
     session = _get_api_session()
 
+    # Retryable status codes
+    RETRYABLE_CODES = {429, 502, 503, 504}
+
     attempt = 0
     while True:
         attempt += 1
@@ -64,7 +90,7 @@ def _make_api_request(url: str) -> Optional[requests.Response]:
             response = session.get(url, timeout=REQUEST_TIMEOUT)
             if response.status_code == 200:
                 return response
-            elif response.status_code in [429, 502, 503, 504]:  # Rate limited or server errors
+            elif response.status_code in RETRYABLE_CODES:
                 error_type = "Rate limited" if response.status_code == 429 else f"Server error ({response.status_code})"
                 logger.warning(f"{error_type} on attempt {attempt}, retrying in {RETRY_DELAY}s...")
                 time.sleep(RETRY_DELAY)
@@ -96,6 +122,27 @@ def get_all_urn_ids() -> List[str]:
         logger.error(f"Error parsing URN IDs response: {e}")
         return []
 
+def _extract_external_identifiers(gene: Dict[str, Any]) -> Dict[str, str]:
+    """Extract external identifiers from gene data.
+
+    Args:
+        gene: Gene dictionary from API response
+
+    Returns:
+        Dictionary mapping database names to identifiers
+    """
+    ids = {}
+    for ext_id in gene.get('externalIdentifiers', []):
+        if not isinstance(ext_id, dict) or 'identifier' not in ext_id:
+            continue
+        id_info = ext_id['identifier']
+        if isinstance(id_info, dict):
+            db_name = id_info.get('dbName')
+            identifier = id_info.get('identifier')
+            if db_name and identifier:
+                ids[db_name] = identifier
+    return ids
+
 def extract_target_info(json_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Extract target gene information from JSON data.
 
@@ -108,29 +155,19 @@ def extract_target_info(json_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     results = []
 
     for item in json_data:
+        urn = item.get('urn', 'unknown')
         try:
             target_info = {
                 'title': item.get('title', ''),
                 'description': item.get('shortDescription', ''),
-                'urn': item.get('urn', ''),
+                'urn': urn,
                 'numVariants': item.get('numVariants', 0),
                 'targetGenes': []
             }
 
             for gene in item.get('targetGenes', []):
                 try:
-                    # Safely extract external identifiers
-                    ids = {}
-                    for ext_id in gene.get('externalIdentifiers', []):
-                        if isinstance(ext_id, dict) and 'identifier' in ext_id:
-                            id_info = ext_id['identifier']
-                            if isinstance(id_info, dict):
-                                db_name = id_info.get('dbName')
-                                identifier = id_info.get('identifier')
-                                if db_name and identifier:
-                                    ids[db_name] = identifier
-
-                    # Extract target sequence information
+                    ids = _extract_external_identifiers(gene)
                     target_seq = gene.get('targetSequence', {})
                     reference = target_seq.get('reference', {})
 
@@ -145,13 +182,13 @@ def extract_target_info(json_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                     target_info['targetGenes'].append(gene_info)
 
                 except Exception as e:
-                    logger.warning(f"Error processing gene info for {item.get('urn', 'unknown')}: {e}")
+                    logger.warning(f"Error processing gene info for {urn}: {e}")
                     continue
 
             results.append(target_info)
 
         except Exception as e:
-            logger.warning(f"Error processing target info for {item.get('urn', 'unknown')}: {e}")
+            logger.warning(f"Error processing target info for {urn}: {e}")
             continue
 
     return results
@@ -203,217 +240,373 @@ def get_score_set(urn_id: str) -> List[Dict[str, Any]]:
 
 
 
-def _validate_position(position) -> None:
-    """Validate position using VariantPosition methods.
+
+
+def _extract_position_index(position, sequence_type: str = None) -> Optional[int]:
+    """Extract 0-based position index from various position types.
 
     Args:
-        position: Position object to validate
-
-    Raises:
-        MaveHgvsParseError: If position is intronic (not supported)
-    """
-    if isinstance(position, VariantPosition) and position.is_intronic():
-        raise MaveHgvsParseError(f"Intronic positions not supported: {position}")
-
-def _validate_nucleotide_sequence(seq: str, context: str) -> None:
-    """Validate nucleotide sequence using dna_nt pattern.
-
-    Args:
-        seq: Nucleotide sequence to validate
-        context: Context description for error messages
-
-    Raises:
-        MaveHgvsParseError: If sequence contains invalid nucleotides
-    """
-    if seq and not NT_PATTERN.match(seq):
-        raise MaveHgvsParseError(f"Invalid nucleotide sequence '{seq}' in {context}")
-
-def _get_position_index(position, current_sequence_length: int) -> Optional[int]:
-    """Extract position index from various position types.
-
-    Args:
-        position: Position object (VariantPosition, int, tuple, etc.)
-        current_sequence_length: Length of current sequence for bounds checking
+        position: Position object (VariantPosition, int, tuple)
+        sequence_type: Type of sequence ('c', 'n', 'g', etc.) for context
 
     Returns:
-        Zero-based position index or None if invalid
+        Zero-based position index or None
     """
     if position is None:
         return None
 
     if isinstance(position, tuple):
-        start_pos = position[0]
-        if start_pos is None:
-            return None
-        pos_idx = start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1
-    elif isinstance(position, VariantPosition):
-        pos_idx = position.position - 1
+        # For ranges, use the start position
+        pos = position[0]
     else:
-        pos_idx = position - 1
+        pos = position
 
-    return pos_idx if 0 <= pos_idx < current_sequence_length else None
+    if isinstance(pos, VariantPosition):
+        base_pos = pos.position
+        if base_pos is None:
+            return None
 
-def _is_position_valid(pos_idx: Optional[int], sequence_length: int, allow_insertion: bool = False) -> bool:
-    """Check if position index is valid for sequence operations.
+        # Handle intronic positions
+        if pos.is_intronic():
+            intronic_offset = pos.intronic_position or 0
+
+            # Intronic positions are only valid for certain sequence types
+            if sequence_type == 'n':
+                # Non-coding sequences can include intronic regions
+                if intronic_offset > 0:
+                    # Position is intronic_offset bases after the base position
+                    return (base_pos - 1) + intronic_offset
+                elif intronic_offset < 0:
+                    # Negative offset requires knowledge of intron length
+                    logger.debug(f"Cannot map negative intronic offset {intronic_offset} without intron context")
+                    return None
+            elif sequence_type == 'c':
+                # For coding sequences, intronic positions refer to splice sites
+                # These don't map to positions in the cDNA reference
+                logger.debug(f"Intronic position {pos} in coding sequence - indicates splice variant")
+                return None
+            else:
+                # Genomic sequences (g, m, o) shouldn't have intronic positions
+                # as they are contiguous sequences including introns
+                logger.warning(f"Unexpected intronic position {pos} for sequence type '{sequence_type}'")
+                return None
+
+        # Non-intronic position
+        return base_pos - 1
+
+    elif isinstance(pos, int):
+        return pos - 1
+
+    return None
+
+
+def _validate_variant_format(hgvs_variant: str) -> bool:
+    """Validate HGVS variant format using efficient pattern matching.
 
     Args:
-        pos_idx: Position index to validate
-        sequence_length: Length of the sequence
-        allow_insertion: Whether to allow insertion position (-1)
+        hgvs_variant: HGVS variant string to validate
 
     Returns:
-        True if position is valid
+        True if format is valid
     """
-    if pos_idx is None:
-        return False
-    min_pos = -1 if allow_insertion else 0
-    return min_pos <= pos_idx < sequence_length
+    # Handle gene-prefixed variants (e.g., RAF1:n.1141G>A)
+    variant_to_check = hgvs_variant
+    if ':' in hgvs_variant:
+        # Split on colon to separate gene name from HGVS variant
+        _, variant_to_check = hgvs_variant.split(':', 1)
 
-def _has_intronic_positions(hgvs_variant: str) -> bool:
-    """Check if HGVS variant contains intronic positions.
+    # Quick check with combined pattern
+    if ALL_DNA_VARIANTS.match(variant_to_check):
+        return True
 
-    Args:
-        hgvs_variant: Complete HGVS variant string
-
-    Returns:
-        True if variant contains intronic positions
-    """
-    variants, errors = parse_variant_strings([hgvs_variant])
-    if errors[0] or not variants[0]:
-        return False
-
-    for variant_type, position, sequence_data in variants[0].variant_tuples():
-        if position is None:
-            continue
-        if isinstance(position, tuple):
-            if any(isinstance(p, VariantPosition) and p.is_intronic() for p in position):
-                return True
-        elif isinstance(position, VariantPosition) and position.is_intronic():
+    # Check for positioned synonymous variants (e.g., n.270=, c.123=)
+    if '.' in variant_to_check:
+        prefix, suffix = variant_to_check.split('.', 1)
+        if prefix in ['c', 'n', 'g', 'm', 'o'] and POSITIONED_EQUAL_PATTERN.match(suffix):
             return True
+
+    # Fallback to prefix-specific validation
+    if '.' in variant_to_check:
+        prefix = variant_to_check.split('.', 1)[0]
+        pattern = DNA_VARIANT_PATTERNS.get(prefix)
+        if pattern:
+            return bool(pattern.match(variant_to_check))
+
     return False
 
-def _filter_variants(hgvs_variant: str, reference_sequence: str = None) -> Optional[str]:
-    """Filter out intronic variants and synonymous variants using mavehgvs.
+def _parse_and_validate_variant(hgvs_variant: str, reference_sequence: str = None, verbose: bool = False) -> Optional[Any]:
+    """Parse and validate HGVS variant using mavehgvs with pattern pre-validation.
 
     Args:
         hgvs_variant: HGVS variant string
         reference_sequence: Optional reference sequence for validation
+        verbose: Whether to log detailed information
 
     Returns:
-        Filtered HGVS variant or None if should be skipped
+        Parsed variant object or None if invalid
     """
-    # Skip intronic variants
-    if _has_intronic_positions(hgvs_variant):
+    hgvs_variant = hgvs_variant.strip()
+
+    # Extract the actual HGVS variant part (handle gene-prefixed variants)
+    variant_part = hgvs_variant
+    if ':' in hgvs_variant:
+        _, variant_part = hgvs_variant.split(':', 1)
+
+    # Handle positioned synonymous variants (e.g., n.270=, c.123=)
+    if '.' in variant_part:
+        prefix, suffix = variant_part.split('.', 1)
+        if prefix in ['c', 'n', 'g', 'm', 'o'] and POSITIONED_EQUAL_PATTERN.match(suffix):
+            return None  # These are synonymous/wildtype
+
+    # Handle multi-variants with synonymous components by filtering them out
+    if re.match(r'^[cnhgmo]\.\[.*=.*\]$', variant_part):
+        match = re.match(r'^([cnhgmo])\.\[(.+)\]$', variant_part)
+        if match:
+            prefix = match.group(1)
+            components = match.group(2).split(';')
+            # Filter out synonymous components (those ending with =)
+            non_synonymous = [comp.strip() for comp in components if not comp.strip().endswith('=')]
+
+            if not non_synonymous:
+                return None  # All components are synonymous
+
+            # Reconstruct variant with only non-synonymous components
+            if len(non_synonymous) == 1:
+                new_variant_part = f'{prefix}.{non_synonymous[0]}'
+            else:
+                new_variant_part = f'{prefix}.[{";".join(non_synonymous)}]'
+
+            # Reconstruct full variant with gene prefix if it existed
+            if ':' in hgvs_variant:
+                gene_part, _ = hgvs_variant.split(':', 1)
+                hgvs_variant = f'{gene_part}:{new_variant_part}'
+            else:
+                hgvs_variant = new_variant_part
+
+    # Pre-validate format using patterns
+    if not _validate_variant_format(hgvs_variant):
         return None
 
-    # Parse with mavehgvs for validation
-    variants, errors = parse_variant_strings([hgvs_variant], targetseq=reference_sequence)
+    # Determine expected prefix safely from the actual sequence prefix
+    expected_prefix = None
+    variant_for_prefix = hgvs_variant
+    if ':' in hgvs_variant:
+        _, variant_for_prefix = hgvs_variant.split(':', 1)
+
+    if '.' in variant_for_prefix and not variant_for_prefix.startswith('.'):
+        prefix = variant_for_prefix.split('.')[0]
+        # Only set expected_prefix for valid prefixes
+        if prefix in ['c', 'n', 'g', 'm', 'o', 'p', 'r']:
+            expected_prefix = prefix
+
+    variants, errors = parse_variant_strings([hgvs_variant], targetseq=reference_sequence, expected_prefix=expected_prefix)
+
     if errors[0] or not variants[0]:
         return None
 
+    variant = variants[0]
+
+    # Log intronic positions for debugging
+    if verbose:
+        for variant_type, position, _ in variant.variant_tuples():
+            if position and isinstance(position, (VariantPosition, tuple)):
+                positions = [position] if isinstance(position, VariantPosition) else position
+                for pos in positions:
+                    if isinstance(pos, VariantPosition) and pos.is_intronic():
+                        seq_type = expected_prefix or 'unknown'
+                        if seq_type == 'c':
+                            logger.info(f"Intronic position {pos} in coding sequence - likely splice variant")
+                        elif seq_type == 'n':
+                            logger.info(f"Processing intronic position {pos} in non-coding sequence")
+                        else:
+                            logger.warning(f"Unexpected intronic position {pos} for sequence type '{seq_type}'")
+
     # Skip synonymous variants
-    if variants[0].is_target_identical():
+    if variant.is_target_identical():
         return None
 
-    return hgvs_variant
+    return variant
 
 def get_alternate_dna_sequence(dna_sequence: str, hgvs_nt: str, verbose: bool = True) -> Optional[str]:
     """Apply HGVS variant to DNA sequence using mavehgvs.
 
     Args:
-        dna_sequence: Reference DNA sequence
-        hgvs_nt: HGVS variant string (e.g., 'c.123A>T', 'n.[1A>C;2T>G]')
+        dna_sequence: Reference DNA sequence (can be coding, non-coding, or genomic)
+        hgvs_nt: HGVS variant string (e.g., 'c.123A>T', 'n.3+2A>T', 'g.100G>A')
         verbose: Whether to log warnings for invalid variants
 
     Returns:
         Modified DNA sequence if variant is valid, None if invalid or fails
+
+    Note:
+        Intronic positions (e.g., +2, -3) are supported for:
+        - Non-coding sequences (n.): positions map to the actual sequence
+        - Coding sequences (c.): positions indicate splice sites (not applied to cDNA)
+        Genomic sequences (g, m, o) use absolute positions without intronic notation.
     """
     # Handle empty/wildtype cases
     if hgvs_nt in ('_wt', '') or not hgvs_nt.strip():
         return dna_sequence
 
-    # Skip invalid variants
+    # Skip variants with invalid nucleotides
     if 'X>' in hgvs_nt or '>X' in hgvs_nt:
         return None
 
-    # Filter out intronic variants and validate
-    filtered_variant = _filter_variants(hgvs_nt, dna_sequence)
-    if filtered_variant is None:
-        if verbose and _has_intronic_positions(hgvs_nt):
-            logging.warning(f"Intronic variant '{hgvs_nt}' not supported for coding sequences")
-        return None
+    # Check for positioned synonymous variants first (handle gene-prefixed variants)
+    hgvs_nt_clean = hgvs_nt.strip()
+    variant_part = hgvs_nt_clean
+    if ':' in hgvs_nt_clean:
+        _, variant_part = hgvs_nt_clean.split(':', 1)
 
-    # Parse and apply variant using mavehgvs
-    expected_prefix = hgvs_nt.split('.')[0] if '.' in hgvs_nt else None
-    variants, errors = parse_variant_strings([hgvs_nt], targetseq=dna_sequence, expected_prefix=expected_prefix)
+    if '.' in variant_part:
+        prefix, suffix = variant_part.split('.', 1)
+        if prefix in ['c', 'n', 'g', 'm', 'o'] and POSITIONED_EQUAL_PATTERN.match(suffix):
+            return dna_sequence  # Synonymous variants return original sequence
 
-    if errors[0] or not variants[0]:
+    # Check for multi-variants that are all synonymous
+    if re.match(r'^[cnhgmo]\.\[.*=.*\]$', variant_part):
+        match = re.match(r'^([cnhgmo])\.\[(.+)\]$', variant_part)
+        if match:
+            components = match.group(2).split(';')
+            non_synonymous = [comp.strip() for comp in components if not comp.strip().endswith('=')]
+            if not non_synonymous:
+                return dna_sequence  # All components are synonymous
+
+    # Parse and validate variant using mavehgvs
+    variant = _parse_and_validate_variant(hgvs_nt, dna_sequence, verbose=verbose)
+    if variant is None:
         if verbose:
-            logging.warning(f"Failed to parse HGVS variant '{hgvs_nt}': {errors[0] or 'No variant parsed'}")
+            logging.warning(f"Failed to parse or validate HGVS variant '{hgvs_nt}'")
         return None
-
-    variant = variants[0]
 
     # Return original sequence for synonymous variants
     if variant.is_target_identical():
         return dna_sequence
 
+    # Determine sequence type from variant prefix
+    seq_type = variant.prefix if hasattr(variant, 'prefix') else None
+
     # Apply variant modifications using mavehgvs variant_tuples
     current_sequence = list(dna_sequence)
+
     for variant_type, position, sequence_data in variant.variant_tuples():
         if position is None:
             continue
 
-        _validate_position(position)
-        pos_idx = _get_position_index(position, len(current_sequence))
-
+        # Process based on variant type
         if variant_type == 'sub':
-            ref, alt = sequence_data
-            _validate_nucleotide_sequence(ref, "substitution reference")
-            _validate_nucleotide_sequence(alt, "substitution alternative")
-            if _is_position_valid(pos_idx, len(current_sequence)):
+            # Single position substitution
+            pos_idx = _extract_position_index(position, seq_type)
+            if pos_idx is not None and 0 <= pos_idx < len(current_sequence):
+                ref, alt = sequence_data
                 current_sequence[pos_idx] = alt
 
         elif variant_type == 'del':
-            if isinstance(sequence_data, tuple) and len(sequence_data) == 2:
-                start_pos, end_pos = sequence_data
-                start_idx = (start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1)
-                end_idx = (end_pos.position if isinstance(end_pos, VariantPosition) else end_pos)
-                if 0 <= start_idx < len(current_sequence) and 0 < end_idx <= len(current_sequence):
-                    del current_sequence[start_idx:end_idx]
-            elif _is_position_valid(pos_idx, len(current_sequence)):
-                del current_sequence[pos_idx]
+            # Deletion can be single or range
+            if isinstance(position, tuple):
+                start_idx = _extract_position_index(position[0], seq_type)
+                end_idx = _extract_position_index(position[1], seq_type)
+                if start_idx is not None and end_idx is not None:
+                    if 0 <= start_idx < len(current_sequence) and 0 <= end_idx < len(current_sequence):
+                        del current_sequence[start_idx:end_idx + 1]
+            else:
+                pos_idx = _extract_position_index(position, seq_type)
+                if pos_idx is not None and 0 <= pos_idx < len(current_sequence):
+                    del current_sequence[pos_idx]
 
         elif variant_type == 'ins':
-            _validate_nucleotide_sequence(sequence_data, "insertion")
-            if _is_position_valid(pos_idx, len(current_sequence), allow_insertion=True):
-                for i, base in enumerate(sequence_data):
-                    current_sequence.insert(pos_idx + 1 + i, base)
+            # Insertion happens between two positions
+            if isinstance(position, tuple):
+                # Insert after the end position
+                end_idx = _extract_position_index(position[1], seq_type)
+                if end_idx is not None and 0 <= end_idx < len(current_sequence):
+                    for i, base in enumerate(sequence_data):
+                        current_sequence.insert(end_idx + 1 + i, base)
 
         elif variant_type == 'dup':
-            if isinstance(sequence_data, tuple) and len(sequence_data) == 2:
-                start_pos, end_pos = sequence_data
-                start_idx = (start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1)
-                end_idx = (end_pos.position if isinstance(end_pos, VariantPosition) else end_pos)
-                if 0 <= start_idx < len(current_sequence) and 0 < end_idx <= len(current_sequence):
-                    dup_seq = current_sequence[start_idx:end_idx]
-                    current_sequence[end_idx:end_idx] = dup_seq
-            elif _is_position_valid(pos_idx, len(current_sequence)):
-                current_sequence.insert(pos_idx + 1, current_sequence[pos_idx])
+            # Duplication can be single or range
+            if isinstance(position, tuple):
+                start_idx = _extract_position_index(position[0], seq_type)
+                end_idx = _extract_position_index(position[1], seq_type)
+                if start_idx is not None and end_idx is not None:
+                    if 0 <= start_idx < len(current_sequence) and 0 <= end_idx < len(current_sequence):
+                        dup_seq = current_sequence[start_idx:end_idx + 1]
+                        current_sequence[end_idx + 1:end_idx + 1] = dup_seq
+            else:
+                pos_idx = _extract_position_index(position, seq_type)
+                if pos_idx is not None and 0 <= pos_idx < len(current_sequence):
+                    current_sequence.insert(pos_idx + 1, current_sequence[pos_idx])
 
         elif variant_type == 'delins':
-            _validate_nucleotide_sequence(sequence_data, "deletion-insertion")
+            # Delete and insert at same position
             if isinstance(position, tuple):
-                start_pos, end_pos = position
-                start_idx = (start_pos.position - 1 if isinstance(start_pos, VariantPosition) else start_pos - 1)
-                end_idx = (end_pos.position if isinstance(end_pos, VariantPosition) else end_pos)
-                if 0 <= start_idx < len(current_sequence) and 0 < end_idx <= len(current_sequence):
-                    current_sequence[start_idx:end_idx] = list(sequence_data)
-            elif _is_position_valid(pos_idx, len(current_sequence)):
-                current_sequence[pos_idx] = sequence_data
+                start_idx = _extract_position_index(position[0], seq_type)
+                end_idx = _extract_position_index(position[1], seq_type)
+                if start_idx is not None and end_idx is not None:
+                    if 0 <= start_idx < len(current_sequence) and 0 <= end_idx < len(current_sequence):
+                        current_sequence[start_idx:end_idx + 1] = list(sequence_data)
+            else:
+                pos_idx = _extract_position_index(position, seq_type)
+                if pos_idx is not None and 0 <= pos_idx < len(current_sequence):
+                    current_sequence[pos_idx] = sequence_data[0] if sequence_data else ''
 
     return ''.join(current_sequence)
 
+
+def _get_variant_type(hgvs_variant: str) -> str:
+    """Determine the variant type from HGVS notation.
+
+    Args:
+        hgvs_variant: HGVS variant string
+
+    Returns:
+        Variant type: 'sub', 'del', 'ins', 'dup', 'delins', 'synonymous', 'multi', or 'unknown'
+    """
+    # Handle gene-prefixed variants
+    variant_part = hgvs_variant.strip()
+    if ':' in hgvs_variant:
+        _, variant_part = hgvs_variant.split(':', 1)
+
+    # Check if multi-variant first (has brackets with semicolons)
+    if re.match(r'^[cnhgmo]\.\[.*\]$', variant_part) and ';' in variant_part:
+        return 'multi'
+
+    # Check for specific mutation types (order matters for delins)
+    if 'delins' in variant_part:
+        return 'delins'
+    elif 'del' in variant_part:
+        return 'del'
+    elif 'ins' in variant_part:
+        return 'ins'
+    elif 'dup' in variant_part:
+        return 'dup'
+    elif '>' in variant_part:
+        return 'sub'  # substitution/missense
+    elif '=' in variant_part:
+        return 'synonymous'
+    else:
+        return 'unknown'
+
+
+def _should_process_variant(row: pd.Series, region_type: Optional[str]) -> bool:
+    """Check if variant should be processed based on filtering criteria.
+
+    Args:
+        row: DataFrame row containing variant data
+        region_type: Region type filter ('coding', 'noncoding', or None)
+
+    Returns:
+        True if variant should be processed
+    """
+    if pd.isna(row['hgvs_nt']) or pd.isna(row['score']):
+        return False
+
+    hgvs_prefix = row['hgvs_nt'].split('.')[0]
+    if ((region_type == 'coding' and hgvs_prefix != 'c') or
+        (region_type == 'noncoding' and hgvs_prefix != 'n')):
+        return False
+
+    return True
 
 def get_maves(seq_length=1024, limit=None, target='score', sequence_type='dna', region_type=None, verbose_warnings=True):
     """Load MAVE data with comprehensive HGVS processing.
@@ -456,25 +649,28 @@ def get_maves(seq_length=1024, limit=None, target='score', sequence_type='dna', 
             if exp_idx == 0:
                 study_count += 1
 
+            # Prepare metadata components once per experiment
             title = exp.get('title', '')
             description = exp.get('description', '')
             annotation = f"{title}: {description}"
+            urn = exp.get('urn')
+            sequence_type_str = target_genes[0]['sequence_type']
 
-            for _, row in scores.iterrows():
-                if pd.isna(row['hgvs_nt']) or pd.isna(row['score']):
-                    continue
+            # Filter DataFrame rows efficiently
+            valid_rows = scores[scores.apply(lambda row: _should_process_variant(row, region_type), axis=1)]
 
-                hgvs_prefix = row['hgvs_nt'].split('.')[0]
-                if ((region_type == 'coding' and hgvs_prefix != 'c') or
-                    (region_type == 'noncoding' and hgvs_prefix != 'n')):
-                    continue
-
-                alt_sequence = get_alternate_dna_sequence(ref_sequence, row['hgvs_nt'], verbose=verbose_warnings)
+            for _, row in valid_rows.iterrows():
+                hgvs_nt = row['hgvs_nt']
+                alt_sequence = get_alternate_dna_sequence(ref_sequence, hgvs_nt, verbose=verbose_warnings)
                 if alt_sequence is None:
                     continue
 
                 processed_count += 1
-                pos_annotations = get_variant_position_annotations(row['hgvs_nt'])
+                pos_annotations = get_variant_position_annotations(hgvs_nt)
+                hgvs_prefix = hgvs_nt.split('.')[0]
+
+                # Determine variant type
+                variant_type = _get_variant_type(hgvs_nt)
 
                 position_info = f"Position Type: {pos_annotations['position_type']}"
                 if pos_annotations['is_utr']:
@@ -484,9 +680,9 @@ def get_maves(seq_length=1024, limit=None, target='score', sequence_type='dna', 
                 if pos_annotations['is_intronic']:
                     position_info += f", Intronic (pos: {pos_annotations['intronic_position']})"
 
-                metadata = (f"{annotation}, Sequence Type: {target_genes[0]['sequence_type']}, "
-                           f"HGVS Prefix: {hgvs_prefix}, {position_info}, "
-                           f"URN: {exp.get('urn')}, HGVS: {row['hgvs_nt']}")
+                metadata = (f"{annotation}, Sequence Type: {sequence_type_str}, "
+                           f"HGVS Prefix: {hgvs_prefix}, Variant Type: {variant_type}, "
+                           f"{position_info}, URN: {urn}, HGVS: {hgvs_nt}")
 
                 data.append([[ref_sequence, alt_sequence, metadata], row[target]])
 
