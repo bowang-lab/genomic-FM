@@ -277,9 +277,26 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model.load_state_dict(head_state_dict)
         else:
             print(f"Warning: State dict not found at {state_dict_path}")
+
+    # Create descriptive suffix for model output directory based on filters
+    filter_parts = []
+    if experimental_methods:
+        methods_str = "_".join(experimental_methods[:2])  # Take first 2 to avoid too long names
+        filter_parts.append(methods_str)
+
+    if region_type and region_type != 'all':
+        filter_parts.append(region_type)
+
+    filter_suffix = "_" + "_".join(filter_parts) if filter_parts else ""
+
+    # Set output directory and log it
+    output_path = f"{path_prefix}/pretrain_model_{model_type}_{task}{filter_suffix}"
+    accelerator.print(f"  - Output directory: {output_path}")
+
     # Prepare Training Arguments
     training_args = TrainingArguments(
-        output_dir=f"{path_prefix}/pretrain_model_{model_type}_{task}",
+        output_dir=output_path,
+        run_name=f"{model_type}_{task}{filter_suffix}",  # Add wandb run name with filter suffix
         learning_rate=learning_rate,
         max_grad_norm=max_grad_norm,
         per_device_train_batch_size=batch_size,

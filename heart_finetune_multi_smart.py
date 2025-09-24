@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script to run smart variant training across multiple thresholds.
-Runs training with thresholds: 49, 54, 59, 64, 69
+Runs training with thresholds: 50, 55, 60, 65, 70
 """
 
 import subprocess
@@ -33,7 +33,7 @@ def run_training(threshold, base_args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run smart variant training across multiple thresholds (49, 54, 59, 64, 69)"
+        description="Run smart variant training across multiple thresholds (50, 55, 60, 65, 70)"
     )
     
     parser.add_argument("--model", type=str, default="nt", help="Model type")
@@ -52,7 +52,7 @@ def main():
     
     args = parser.parse_args()
     
-    thresholds = [49.0, 54.0, 59.0, 64.0, 69.0]
+    thresholds = [50.0, 55.0, 60.0, 65.0, 70.0]
     base_args = []
     if args.model != "nt":
         base_args.extend(["--model", args.model])

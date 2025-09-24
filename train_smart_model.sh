@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH -t 4-00:0:0
-#SBATCH -J heart_finetune_multi_smart
+#SBATCH -J train_smart_multi
 #SBATCH -p gpu_bwanggroup
 #SBATCH --mem=240G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
-#SBATCH --gres=gpu:2 # match ddp.yaml num_processes
+#SBATCH --gres=gpu:4 # match ddp.yaml num_processes
 #SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
-#SBATCH --output=logs/heart_finetune_multi_output_%j.log 
-#SBATCH --error=logs/heart_finetune_multi_error_%j.log  
+#SBATCH --output=logs/smart_multi_output_%j.log
+#SBATCH --error=logs/smart_multi_error_%j.log  
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=vallisubasri@gmail.com
 
@@ -38,7 +38,7 @@ else
 fi
 
 echo "============================================"
-echo "Starting Heart Finetune Multi-Threshold Training"
+echo "Starting SMART Multi-Threshold Training"
 echo "Model: $MODEL"
 echo "============================================"
 
@@ -52,7 +52,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart
     --task CLNDN \
     --continue_on_error \
     $DECODER_FLAG \
-    2>&1 | tee logs/heart_finetune_multi_CLNDN_${SLURM_JOB_ID}.log
+    2>&1 | tee logs/smart_multi_CLNDN_${SLURM_JOB_ID}.log
 
 echo "Multi-threshold CLNDN training completed!"
 
@@ -66,10 +66,10 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29501 heart
     --task CLNSIG \
     --continue_on_error \
     $DECODER_FLAG \
-    2>&1 | tee logs/heart_finetune_multi_CLNSIG_${SLURM_JOB_ID}.log
+    2>&1 | tee logs/smart_multi_CLNSIG_${SLURM_JOB_ID}.log
 
 echo "Multi-threshold CLNSIG training completed!"
 
 echo "============================================"
-echo "Heart Finetune Multi-Threshold Training Completed!"
+echo "SMART Multi-Threshold Training Completed!"
 echo "============================================"

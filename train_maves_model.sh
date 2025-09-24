@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH -t 4-00:0:0
-#SBATCH -J maves_finetune
+#SBATCH -J train_maves
 #SBATCH -p gpu_bwanggroup
 #SBATCH --mem=240G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
 #SBATCH --gres=gpu:4 # match ddp.yaml num_processes
 #SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
-#SBATCH --output=logs/maves_finetune_output_%j.log
-#SBATCH --error=logs/maves_finetune_error_%j.log
+#SBATCH --output=logs/maves_output_%j.log
+#SBATCH --error=logs/maves_error_%j.log
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=vallisubasri@gmail.com
 
@@ -166,7 +166,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --task MAVES \
     --seed 127 \
     --learning_rate 0.000005 \
-    --batch_size 8 \
+    --batch_size 64 \
     --num_epochs 10 \
     --max_grad_norm 1.0 \
     --num_workers 8 \
