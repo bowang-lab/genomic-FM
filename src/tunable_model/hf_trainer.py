@@ -320,8 +320,12 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
         # requiring transformer 4.29.0
         # tiktoken gdown tiktoken datasets wandb
         # pip uninstall triton
-        model = AutoModelForSequenceClassification.from_pretrained(f"zhihan1996/DNABERT-2-117M",num_labels=class_num,trust_remote_code=True)
+        model = AutoModelForSequenceClassification.from_pretrained(f"zhihan1996/DNABERT-2-117M",num_labels=2,trust_remote_code=True)
         tokenizer = AutoTokenizer.from_pretrained("zhihan1996/DNABERT-2-117M", trust_remote_code=True)
+    elif model_type=='luca':
+        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
+        model = LucaGPLMModel.from_pretrained("LucaGroup/LucaOne-default-step36M")
+        tokenizer = LucaGPLMTokenizer.from_pretrained("LucaGroup/LucaOne-default-step36M")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -414,7 +418,7 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
 def main():
     parser = argparse.ArgumentParser(description="Multi-task Fine-tune and evaluate model.")
     parser.add_argument("--model", type=str, default='nt',
-                        help="Model type (e.g., omni_dna_116m, nt)")
+                        help="Model type (e.g., omni_dna_116m, nt, dnabert2, luca)")
     parser.add_argument("--seed", type=int, default=127,
                         help="Random seed value for training")
     # tasks = [

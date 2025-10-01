@@ -38,7 +38,7 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "=================================="
 
 # Training parameters
-MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-msa-sapiens
+MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
 WANDB_PROJECT="genomic-finetune-clinvar"
 BATCH_SIZE=64  # Batch size per GPU
 
@@ -61,6 +61,7 @@ echo "=================================="
 echo "Starting ClinVar CLNDN task training..."
 echo "=================================="
 TASK="CLNDN"
+# To filter by disease subset, add: --disease_subset_file heart_related_diseases.txt
 accelerate launch \
     --config_file configs/ddp.yaml \
     --main_process_port 29500 \

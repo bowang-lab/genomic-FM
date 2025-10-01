@@ -60,13 +60,13 @@ mave_score_gena-lm:
   model_initiator_name: AIRI-Institute/gena-lm-bert-base-t2t
   output_size: 1
 
-mave_score_gpn-msa-sapiens:
+mave_score_gpn-star:
   class: MAVEDataWrapper
   task: regression
   target: score
   Seq_length: 1024
   pca_components: 16
-  model_initiator_name: songlab/gpn-msa-sapiens
+  model_initiator_name: songlab/gpn-star-hg38-v100-200m
   output_size: 1
 
 gwas_pval_hyena-tiny:

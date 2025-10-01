@@ -186,17 +186,17 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
         tokenizer_path = model_path
         print(f"Using HuggingFace GENA-LM model: {model_path}")
-    elif model_type=='gpn-msa-sapiens':
+    elif model_type=='gpn-star':
         # Check if local model exists first
-        local_gpn_path = "./root/models/gpn-msa-sapiens"
+        local_gpn_path = "./root/models/gpn-star-hg38-v100-200m"
         if os.path.exists(local_gpn_path):
             model_path = local_gpn_path
             tokenizer_path = model_path
-            print(f"Using local GPN-MSA-Sapiens model from {model_path}")
+            print(f"Using local GPN-Star model from {model_path}")
         else:
-            model_path = "songlab/gpn-msa-sapiens"
+            model_path = "songlab/gpn-star-hg38-v100-200m"
             tokenizer_path = model_path
-            print(f"Using HuggingFace GPN-MSA-Sapiens model: {model_path}")
+            print(f"Using HuggingFace GPN-Star model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -205,7 +205,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path,
             trust_remote_code=True
         )
-    elif model_type == 'gpn-msa-sapiens':
+    elif model_type == 'gpn-star':
         base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
             trust_remote_code=True
@@ -255,7 +255,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     else:
         # Load ClinVar dataset for classification
         datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-            tokenizer, task, seed=seed
+            tokenizer, task, seed=seed, disease_subset_file=disease_subset_file
         )
     tokenizer.model_max_length = max_seq_len
     num_classes = task_num_classes[task]
@@ -286,6 +286,12 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     if region_type and region_type != 'all':
         filter_parts.append(region_type)
+
+    # Add disease subset identifier if provided
+    if disease_subset_file:
+        # Extract identifier from filename (e.g., "heart" from "heart_related_diseases.txt")
+        subset_name = os.path.basename(disease_subset_file).replace('_related_diseases.txt', '').replace('.txt', '')
+        filter_parts.append(subset_name)
 
     filter_suffix = "_" + "_".join(filter_parts) if filter_parts else ""
 
@@ -381,7 +387,9 @@ def main():
     parser.add_argument("--task", type=str, default="CLNSIG",
                         choices=["CLNDN", "CLNSIG", "MAVES"],
                         help="Prediction task: CLNDN (disease classification), CLNSIG (pathogenicity), or MAVES (variant effect regression)")
-    
+    parser.add_argument("--disease_subset_file", type=str, default=None,
+                        help="Path to text file containing disease names to filter (one per line). E.g., 'heart_related_diseases.txt' for cardiac diseases")
+
     # Training hyperparameters
     parser.add_argument("--learning_rate", type=float, default=0.000005,
                         help="Learning rate for training")

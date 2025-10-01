@@ -18,6 +18,7 @@ from transformers import (
 
 # Import from local modules
 from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator
+from ..pack_tunable_model.wrap_model import WrappedModelWithClassificationHead
 
 
 def calculate_metric_with_sklearn(predictions: np.ndarray, labels: np.ndarray):
@@ -222,6 +223,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             "zhihan1996/DNABERT-2-117M",
             trust_remote_code=True
         )
+    elif model_type=='luca':
+        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
+        model = LucaGPLMModel.from_pretrained("LucaGroup/LucaOne-default-step36M")
+        tokenizer = LucaGPLMTokenizer.from_pretrained("LucaGroup/LucaOne-default-step36M")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -233,7 +238,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     )
     # Create and attach classification head to the model
     num_classes = task_num_classes[task]
-    model = WrappedModelWithCustomHead(model, num_classes)
+    model = WrappedModelWithClassificationHead(model, num_classes, decoder=decoder)
 
     # Load saved classification head if testing
     if test_only:
@@ -314,7 +319,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 def main():
     parser = argparse.ArgumentParser(description="Single-task fine-tune and evaluate model.")
     parser.add_argument("--model", type=str, default='nt',
-                        help="Model type (e.g., omni_dna_116m, nt, dnabert2)")
+                        help="Model type (e.g., omni_dna_116m, nt, dnabert2, luca)")
     parser.add_argument("--seed", type=int, default=127,
                         help="Random seed value for training")
     parser.add_argument("--decoder", action="store_true",

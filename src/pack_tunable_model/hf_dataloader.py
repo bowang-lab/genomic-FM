@@ -5,7 +5,7 @@ from datasets import load_dataset
 import logging
 import typing
 from typing import Dict, Sequence, List, Tuple
-from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper
+from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper, set_disease_subset_from_file
 import random
 import numpy as np
 def split_train_val(dataset_train, val_split=0.1, seed=42):
@@ -26,7 +26,7 @@ def split_train_val(dataset_train, val_split=0.1, seed=42):
 
     return dataset_train_subset, dataset_val_subset
 
-def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLNDN', disease_subset=True,
+def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLNDN', disease_subset_file=None,
                                     seq_length=1024, val_split=0.1, test_split=0.1, seed=42):
     """
     3377987, Train: 6381, Validation: 708, Test: 787
@@ -35,7 +35,7 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
     Args:
         tokenizer: PreTrainedTokenizer for tokenizing sequences
         target: Target feature to predict ('CLNDN' for disease names by default, or 'CLNSIG' for clinical significance)
-        disease_subset: Whether to use a disease subset
+        disease_subset_file: Path to text file containing disease names for filtering (one per line)
         seq_length: Sequence length for extraction
         val_split: Validation split ratio
         test_split: Test split ratio
@@ -45,11 +45,15 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
         tuple: (multitask_datasets, task_num_classes, max_seq_len)
     """
     tokenizer.model_max_length = seq_length
+
+    # Load disease subset from file if provided
+    if disease_subset_file:
+        set_disease_subset_from_file(disease_subset_file)
+
     # Get ClinVar data
     # clinvar_wrapper = ClinVarDataWrapper(all_records=True) # full run
     clinvar_wrapper = ClinVarDataWrapper(all_records=False, use_default_dir=False, num_records=1000000) # for testing
-    # data = clinvar_wrapper.get_data(Seq_length=seq_length, target=target, disease_subset=disease_subset)
-    data = clinvar_wrapper.get_data(Seq_length=seq_length, target=target)
+    data = clinvar_wrapper.get_data(Seq_length=seq_length, target=target, disease_subset=bool(disease_subset_file))
     # Dictionary to store datasets
     multitask_datasets = {}
 

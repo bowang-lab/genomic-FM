@@ -28,7 +28,7 @@ conda activate genomic-fm
 wandb offline
 
 # Training parameters
-MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-msa-sapiens
+MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
 
 ################################################################################
 # 📋 MAVES FILTERING OPTIONS - Comprehensive Documentation
