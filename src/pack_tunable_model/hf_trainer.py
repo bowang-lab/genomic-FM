@@ -123,7 +123,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                             max_grad_norm=1.0, num_workers=8, gradient_checkpointing=False,
                             filter_genes=None, experimental_methods=None, region_type='all',
                             variant_types=None, seq_length_range=None, max_samples_per_experiment=None,
-                            normalize_scores=False):
+                            normalize_scores=False, disease_subset_file=None):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -478,7 +478,8 @@ def main():
                             variant_types=variant_types,
                             seq_length_range=seq_length_range,
                             max_samples_per_experiment=max_samples_per_experiment,
-                            normalize_scores=normalize_scores)
+                            normalize_scores=normalize_scores,
+                            disease_subset_file=args.disease_subset_file)
 
 if __name__ == "__main__":
     main()

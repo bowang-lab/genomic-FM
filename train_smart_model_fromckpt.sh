@@ -2,10 +2,10 @@
 #SBATCH -t 4-00:0:0
 #SBATCH -J train_smart_fromckpt
 #SBATCH -p gpu_bwanggroup
-#SBATCH --mem=240G # at most 450G
+#SBATCH --mem=400G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
-#SBATCH --gres=gpu:2 # match ddp.yaml num_processes
+#SBATCH --gres=gpu:4 # match ddp.yaml num_processes
 #SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
 #SBATCH --output=logs/smart_fromckpt_output_%j.log
 #SBATCH --error=logs/smart_fromckpt_error_%j.log  
@@ -38,8 +38,8 @@ else
 fi
 
 # Checkpoint paths
-CLNDN_CHECKPOINT="root/output/pretrain_model_${MODEL}_CLNDN"
-CLNSIG_CHECKPOINT="root/output/pretrain_model_${MODEL}_CLNSIG"
+CLNDN_CHECKPOINT="root/models/pretrain_model_${MODEL}_CLNDN"
+CLNSIG_CHECKPOINT="root/models/pretrain_model_${MODEL}_CLNSIG"
 
 echo "============================================"
 echo "Starting SMART Multi-Threshold Training from Checkpoints"
@@ -52,14 +52,33 @@ echo "============================================"
 echo "=================================="
 echo "Starting multi-threshold CLNDN task training (disease classification) from checkpoint..."
 echo "=================================="
-accelerate launch --config_file configs/ddp.yaml --main_process_port 29600 heart_finetune_multi_smart.py \
-    --model "$MODEL" \
-    --seed 127 \
-    --task CLNDN \
-    --checkpoint_path "$CLNDN_CHECKPOINT" \
-    --continue_on_error \
-    $DECODER_FLAG \
-    2>&1 | tee logs/smart_multi_CLNDN_fromckpt_${SLURM_JOB_ID}.log
+
+# Thresholds to train: 50, 55, 60, 65, 70
+for THRESHOLD in 50.0 55.0 60.0 65.0 70.0; do
+    echo ""
+    echo "============================================================"
+    echo "Running training with threshold: $THRESHOLD"
+    echo "============================================================"
+
+    accelerate launch \
+        --config_file configs/ddp.yaml \
+        --main_process_port 29700 \
+        -m src.pack_tunable_model.hf_trainer_smart \
+        --threshold "$THRESHOLD" \
+        --model "$MODEL" \
+        --seed 127 \
+        --task CLNDN \
+        --checkpoint_path "$CLNDN_CHECKPOINT" \
+        $DECODER_FLAG \
+        2>&1 | tee logs/smart_CLNDN_threshold_${THRESHOLD}_${SLURM_JOB_ID}.log
+
+    if [ $? -eq 0 ]; then
+        echo "✓ Training with threshold $THRESHOLD completed successfully"
+    else
+        echo "✗ Training with threshold $THRESHOLD failed"
+        exit 1
+    fi
+done
 
 echo "Multi-threshold CLNDN training from checkpoint completed!"
 
@@ -67,14 +86,33 @@ echo "Multi-threshold CLNDN training from checkpoint completed!"
 echo "=================================="
 echo "Starting multi-threshold CLNSIG task training (pathogenicity classification) from checkpoint..."
 echo "=================================="
-accelerate launch --config_file configs/ddp.yaml --main_process_port 29601 heart_finetune_multi_smart.py \
-    --model "$MODEL" \
-    --seed 127 \
-    --task CLNSIG \
-    --checkpoint_path "$CLNSIG_CHECKPOINT" \
-    --continue_on_error \
-    $DECODER_FLAG \
-    2>&1 | tee logs/smart_multi_CLNSIG_fromckpt_${SLURM_JOB_ID}.log
+
+# Thresholds to train: 50, 55, 60, 65, 70
+for THRESHOLD in 50.0 55.0 60.0 65.0 70.0; do
+    echo ""
+    echo "============================================================"
+    echo "Running training with threshold: $THRESHOLD"
+    echo "============================================================"
+
+    accelerate launch \
+        --config_file configs/ddp.yaml \
+        --main_process_port 29800 \
+        -m src.pack_tunable_model.hf_trainer_smart \
+        --threshold "$THRESHOLD" \
+        --model "$MODEL" \
+        --seed 127 \
+        --task CLNSIG \
+        --checkpoint_path "$CLNSIG_CHECKPOINT" \
+        $DECODER_FLAG \
+        2>&1 | tee logs/smart_CLNSIG_threshold_${THRESHOLD}_${SLURM_JOB_ID}.log
+
+    if [ $? -eq 0 ]; then
+        echo "✓ Training with threshold $THRESHOLD completed successfully"
+    else
+        echo "✗ Training with threshold $THRESHOLD failed"
+        exit 1
+    fi
+done
 
 echo "Multi-threshold CLNSIG training from checkpoint completed!"
 
