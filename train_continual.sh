@@ -2,7 +2,7 @@
 #SBATCH -t 4-00:0:0
 #SBATCH -J train_continual
 #SBATCH -p gpu_bwanggroup
-#SBATCH --mem=400G # at most 450G
+#SBATCH --mem=450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
 #SBATCH --gres=gpu:4 # match ddp.yaml num_processes
@@ -57,7 +57,7 @@ TRAINING_MODE="clinvar"  # Options: clinvar, smart
 THRESHOLDS="50.0 55.0 60.0 65.0 70.0"
 
 # Batch size
-BATCH_SIZE=64
+BATCH_SIZE=32
 
 # ============================================
 
