@@ -42,10 +42,10 @@ echo "=================================="
 # ============================================
 
 # Model architecture to use
-MODEL="nt"  # Options: nt, hyenadna, omni_dna_116m, etc.
+MODEL="omni_dna_116m"  # Options: nt, hyenadna, omni_dna_116m, etc.
 
 # Checkpoint to load from (relative to root/models/ or absolute path)
-CHECKPOINT="pretrain_model_nt_MAVES_score_DMS"
+CHECKPOINT="pretrain_model_${MODEL}_MAVES_score_DMS"
 
 # Target tasks to train on (space-separated list)
 TASKS="CLNDN CLNSIG"  # Options: CLNDN, CLNSIG, MAVES (or any combination)
