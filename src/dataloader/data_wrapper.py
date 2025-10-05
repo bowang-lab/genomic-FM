@@ -754,6 +754,7 @@ class SmartVariantDataWrapper:
         insert_Ns: bool = True,
         progress_bar: bool = True,
         target: str = 'score',
+        threshold: float = 50.0,
     ) -> List[Tuple[Tuple[str, str], Union[float, str]]]:
         data: list[tuple[tuple[str, str], Union[float, str]]] = []
         iterator = range(self.num_records)
@@ -778,10 +779,11 @@ class SmartVariantDataWrapper:
             if target == 'disease':
                 # Extract disease class from patient phenotype data
                 disease_class = self._extract_disease_class(row)
-                if disease_class is not None:
+                smart_score = float(row["smart_score"])
+                # Only include pathogenic variants (smart_score >= threshold)
+                if disease_class is not None and smart_score >= threshold:
                     y = disease_class
                     data.append(([ref_seq, alt_seq, None], y))
-                # Skip samples without disease labels
             else:  # target == 'score' or pathogenicity
                 y = float(row["smart_score"])
                 data.append(([ref_seq, alt_seq, None], y))

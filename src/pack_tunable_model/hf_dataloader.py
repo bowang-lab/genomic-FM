@@ -114,7 +114,7 @@ def return_smart_dataset(
     csv_path: str,
     target: str = 'score',  # 'disease' for disease classification, 'score' for pathogenicity
     task_name: str = 'CLNDN',  # For dataset naming only
-    threshold: float = 54.0,  # Only used for pathogenicity (target='score')
+    threshold: float = 50.0,  # For pathogenicity: binarization cutoff; For disease: minimum pathogenicity score
     seq_length: int = 1024,
     val_split: float = 0.1,
     test_split: float = 0.1,
@@ -132,7 +132,7 @@ def return_smart_dataset(
     )
     
     # Get data based on target type
-    raw = wrapper.get_data(Seq_length=seq_length, target=target)
+    raw = wrapper.get_data(Seq_length=seq_length, target=target, threshold=threshold)
     
     if target == 'disease':
         # Disease classification mode

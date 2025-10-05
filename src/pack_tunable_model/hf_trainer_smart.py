@@ -93,8 +93,8 @@ def compute_metrics(eval_pred):
     return calculate_metric_with_sklearn(predictions, labels)
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
-                            learning_rate=0.000005, batch_size=8, num_epochs=10, 
-                            max_grad_norm=1.0, num_workers=8, threshold=54.0, checkpoint_path=None, checkpoint_step=None):
+                            learning_rate=0.000005, batch_size=8, num_epochs=10,
+                            max_grad_norm=1.0, num_workers=8, threshold=50.0, checkpoint_path=None, checkpoint_step=None):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -367,8 +367,8 @@ def main():
                         help="Maximum gradient norm for clipping")
     parser.add_argument("--num_workers", type=int, default=8,
                         help="Number of dataloader workers")
-    parser.add_argument("--threshold", type=float, default=54.0,
-                        help="Threshold for binarizing smart scores")
+    parser.add_argument("--threshold", type=float, default=50.0,
+                        help="Threshold for binarizing smart scores (pathogenicity) or filtering disease variants")
     parser.add_argument("--checkpoint_path", type=str, default=None,
                         help="Path to pre-trained ClinVar checkpoint to load from")
     parser.add_argument("--checkpoint_step", type=int, default=None,

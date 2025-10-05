@@ -25,6 +25,7 @@ from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollat
 # from .hf_dataloader import return_smart_dataset, MultiTaskDataCollator
 # Import our custom wrapper model
 from .wrap_model import WrappedModelWithClassificationHead
+from .checkpoint_utils import load_checkpoint_into_model
 # from .seq_pack import FramePackCausalLM
 
 class SafeDistributedTrainer(Trainer):
@@ -123,7 +124,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                             max_grad_norm=1.0, num_workers=8, gradient_checkpointing=False,
                             filter_genes=None, experimental_methods=None, region_type='all',
                             variant_types=None, seq_length_range=None, max_samples_per_experiment=None,
-                            normalize_scores=False, disease_subset_file=None):
+                            normalize_scores=False, disease_subset_file=None, pretrained_model=None):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -219,6 +220,15 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         tokenizer_path,
         trust_remote_code=True
     )
+
+    # Load checkpoint weights if provided
+    if pretrained_model:
+        # Support both absolute paths and relative paths (directory names in ./root/models/)
+        if os.path.isabs(pretrained_model):
+            checkpoint_path = pretrained_model
+        else:
+            checkpoint_path = f"{path_prefix}/{pretrained_model}"
+        load_checkpoint_into_model(base_model, checkpoint_path)
 
     ########### Load Dataset ##################
     if task == "MAVES":
@@ -421,6 +431,8 @@ def main():
                         help="Maximum samples to use per experiment (for balanced training)")
     parser.add_argument("--normalize_scores", action="store_true",
                         help="Enable score normalization for MAVE regression tasks")
+    parser.add_argument("--pretrained_model", type=str, default=None,
+                        help="Checkpoint to load weights from. Can be a directory name in ./root/models/ (e.g., 'pretrain_model_nt_MAVES_score_DMS') or an absolute path. Automatically uses best checkpoint if multiple exist.")
 
     args = parser.parse_args()
 
@@ -479,7 +491,8 @@ def main():
                             seq_length_range=seq_length_range,
                             max_samples_per_experiment=max_samples_per_experiment,
                             normalize_scores=normalize_scores,
-                            disease_subset_file=args.disease_subset_file)
+                            disease_subset_file=args.disease_subset_file,
+                            pretrained_model=args.pretrained_model)
 
 if __name__ == "__main__":
     main()
