@@ -51,7 +51,7 @@ CHECKPOINT="pretrain_model_${MODEL}_MAVES_score_DMS"
 TASKS="CLNDN CLNSIG"  # Options: CLNDN, CLNSIG, MAVES (or any combination)
 
 # Training mode
-TRAINING_MODE="regular"  # Options: regular, smart
+TRAINING_MODE="clinvar"  # Options: clinvar, smart
 
 # Thresholds for SMART mode (only used when TRAINING_MODE=smart)
 THRESHOLDS="50.0 55.0 60.0 65.0 70.0"
@@ -89,8 +89,8 @@ BASE_PORT=29502
 # Port counter for unique ports
 PORT_COUNTER=0
 
-if [ "$TRAINING_MODE" == "regular" ]; then
-    # Regular mode: train each task once
+if [ "$TRAINING_MODE" == "clinvar" ]; then
+    # ClinVar mode: train each task once
     for TASK in "${TASK_ARRAY[@]}"; do
         PORT=$((BASE_PORT + PORT_COUNTER))
         PORT_COUNTER=$((PORT_COUNTER + 1))
@@ -159,7 +159,7 @@ elif [ "$TRAINING_MODE" == "smart" ]; then
         done
     done
 else
-    echo "Error: Invalid TRAINING_MODE '$TRAINING_MODE'. Must be 'regular' or 'smart'."
+    echo "Error: Invalid TRAINING_MODE '$TRAINING_MODE'. Must be 'clinvar' or 'smart'."
     exit 1
 fi
 
