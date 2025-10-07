@@ -222,6 +222,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     )
 
     # Load checkpoint weights if provided
+    checkpoint_suffix = ""
     if pretrained_model:
         # Support both absolute paths and relative paths (directory names in ./root/models/)
         if os.path.isabs(pretrained_model):
@@ -229,6 +230,8 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         else:
             checkpoint_path = f"{path_prefix}/{pretrained_model}"
         load_checkpoint_into_model(base_model, checkpoint_path)
+        # Add checkpoint suffix for continual learning tracking
+        checkpoint_suffix = f"_from_{os.path.basename(checkpoint_path)}"
 
     ########### Load Dataset ##################
     if task == "MAVES":
@@ -306,7 +309,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     filter_suffix = "_" + "_".join(filter_parts) if filter_parts else ""
 
     # Set output directory and log it
-    output_path = f"{path_prefix}/pretrain_model_{model_type}_{task}{filter_suffix}"
+    output_path = f"{path_prefix}/pretrain_model_{model_type}_{task}{filter_suffix}{checkpoint_suffix}"
     accelerator.print(f"  - Output directory: {output_path}")
 
     # Prepare Training Arguments
