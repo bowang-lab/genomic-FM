@@ -755,38 +755,90 @@ class SmartVariantDataWrapper:
         progress_bar: bool = True,
         target: str = 'score',
         threshold: float = 50.0,
+        min_samples_per_class: int = 2,
     ) -> List[Tuple[Tuple[str, str], Union[float, str]]]:
         data: list[tuple[tuple[str, str], Union[float, str]]] = []
-        iterator = range(self.num_records)
-        if progress_bar:
-            iterator = tqdm(iterator, desc="extracting variant contexts")
 
-        for idx in iterator:
-            row = self.variants.iloc[idx]
+        if target == 'disease':
+            # First pass: collect all samples by disease class
+            class_samples = {
+                'Aortopathy': [],
+                'Cardiomyopathy': [],
+                'Arrhythmia': [],
+                'Structural defect': []
+            }
 
-            record = create_variant_record(
-                chrom=row["CHROM"],
-                pos=int(row["start"]),
-                ref=row["ref_allele"],
-                alt=row["alt_allele"],
-                variant_id=idx,
-            )
+            iterator = range(self.num_records)
+            if progress_bar:
+                iterator = tqdm(iterator, desc="extracting variant contexts")
 
-            ref_seq, alt_seq = self.genome_extractor.extract_sequence_from_record(
-                record, sequence_length=Seq_length
-            )
-
-            if target == 'disease':
-                # Extract disease class from patient phenotype data
+            for idx in iterator:
+                row = self.variants.iloc[idx]
                 disease_class = self._extract_disease_class(row)
-                smart_score = float(row["smart_score"])
-                # Only include pathogenic variants (smart_score >= threshold)
-                if disease_class is not None and smart_score >= threshold:
-                    y = disease_class
+
+                if disease_class is not None:
+                    smart_score = float(row["smart_score"])
+                    record = create_variant_record(
+                        chrom=row["CHROM"],
+                        pos=int(row["start"]),
+                        ref=row["ref_allele"],
+                        alt=row["alt_allele"],
+                        variant_id=idx,
+                    )
+                    ref_seq, alt_seq = self.genome_extractor.extract_sequence_from_record(
+                        record, sequence_length=Seq_length
+                    )
+                    if ref_seq is not None and alt_seq is not None:
+                        class_samples[disease_class].append(([ref_seq, alt_seq, None], disease_class, smart_score))
+
+            # Second pass: apply threshold with minimum samples per class
+            print(f"\nClass distribution before threshold filtering:")
+            for cls, samples in class_samples.items():
+                print(f"  {cls}: {len(samples)}")
+
+            # For each class, keep samples above threshold OR top N samples if below min_samples_per_class
+            for cls, samples in class_samples.items():
+                # Sort by SMART score descending
+                samples.sort(key=lambda x: x[2], reverse=True)
+
+                # Filter by threshold
+                filtered = [s for s in samples if s[2] >= threshold]
+
+                # If too few samples, take top N regardless of threshold
+                if len(filtered) < min_samples_per_class and len(samples) > 0:
+                    print(f"Warning: {cls} has only {len(filtered)} samples >= {threshold}. Taking top {min(min_samples_per_class, len(samples))}.")
+                    filtered = samples[:min(min_samples_per_class, len(samples))]
+
+                # Add to data (drop the smart_score)
+                data.extend([(x[0], x[1]) for x in filtered])
+
+            print(f"\nClass distribution after threshold filtering (threshold={threshold}):")
+            from collections import Counter
+            class_counts = Counter([x[1] for x in data])
+            for cls in ['Aortopathy', 'Cardiomyopathy', 'Arrhythmia', 'Structural defect']:
+                print(f"  {cls}: {class_counts.get(cls, 0)}")
+
+        else:  # target == 'score' or pathogenicity
+            # Original logic for non-disease targets
+            iterator = range(self.num_records)
+            if progress_bar:
+                iterator = tqdm(iterator, desc="extracting variant contexts")
+
+            for idx in iterator:
+                row = self.variants.iloc[idx]
+                record = create_variant_record(
+                    chrom=row["CHROM"],
+                    pos=int(row["start"]),
+                    ref=row["ref_allele"],
+                    alt=row["alt_allele"],
+                    variant_id=idx,
+                )
+                ref_seq, alt_seq = self.genome_extractor.extract_sequence_from_record(
+                    record, sequence_length=Seq_length
+                )
+                if ref_seq is not None and alt_seq is not None:
+                    y = float(row["smart_score"])
                     data.append(([ref_seq, alt_seq, None], y))
-            else:  # target == 'score' or pathogenicity
-                y = float(row["smart_score"])
-                data.append(([ref_seq, alt_seq, None], y))
 
         return data
     

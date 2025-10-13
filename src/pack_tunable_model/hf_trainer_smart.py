@@ -94,7 +94,8 @@ def compute_metrics(eval_pred):
 
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
-                            max_grad_norm=1.0, num_workers=8, threshold=50.0, checkpoint_path=None, checkpoint_step=None):
+                            max_grad_norm=1.0, num_workers=8, threshold=50.0, checkpoint_path=None, checkpoint_step=None,
+                            min_samples_per_class=2):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -258,7 +259,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     
     datasets, task_num_classes, max_seq_len = return_smart_dataset(
         tokenizer, 'root/data/unfiltered_variants.csv',
-        target=target, task_name=task, threshold=threshold
+        target=target, task_name=task, threshold=threshold, min_samples_per_class=min_samples_per_class
     )
     tokenizer.model_max_length = max_seq_len
         # << all ranks continue here >>
@@ -369,6 +370,8 @@ def main():
                         help="Number of dataloader workers")
     parser.add_argument("--threshold", type=float, default=50.0,
                         help="Threshold for binarizing smart scores (pathogenicity) or filtering disease variants")
+    parser.add_argument("--min_samples_per_class", type=int, default=2,
+                        help="Minimum samples per disease class")
     parser.add_argument("--checkpoint_path", type=str, default=None,
                         help="Path to pre-trained ClinVar checkpoint to load from")
     parser.add_argument("--checkpoint_step", type=int, default=None,
@@ -380,7 +383,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # Run with specified task
-    run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only, 
+    run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only,
                             learning_rate=args.learning_rate,
                             batch_size=args.batch_size,
                             num_epochs=args.num_epochs,
@@ -388,7 +391,8 @@ def main():
                             num_workers=args.num_workers,
                             threshold=args.threshold,
                             checkpoint_path=args.checkpoint_path,
-                            checkpoint_step=args.checkpoint_step)
+                            checkpoint_step=args.checkpoint_step,
+                            min_samples_per_class=args.min_samples_per_class)
 
 if __name__ == "__main__":
     main()

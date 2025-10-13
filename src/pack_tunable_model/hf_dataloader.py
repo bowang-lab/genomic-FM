@@ -121,6 +121,7 @@ def return_smart_dataset(
     seed: int = 42,
     all_records: bool = True,
     num_records: int | None = None,
+    min_samples_per_class: int = 2,
 ):
     # ----------------------- load & prepare raw examples -------------------
     tokenizer.model_max_length = seq_length
@@ -130,55 +131,89 @@ def return_smart_dataset(
         num_records=num_records or 0,
         all_records=all_records,
     )
-    
-    # Get data based on target type
-    raw = wrapper.get_data(Seq_length=seq_length, target=target, threshold=threshold)
-    
+
+    # Get data based on target type with min_samples_per_class parameter
+    raw = wrapper.get_data(Seq_length=seq_length, target=target, threshold=threshold, min_samples_per_class=min_samples_per_class)
+
     if target == 'disease':
         # Disease classification mode
         all_disease_labels = sorted(set(item[1] for item in raw if item[1] is not None))
         label_to_id = {label: idx for idx, label in enumerate(all_disease_labels)}
         num_labels = len(all_disease_labels)
-        
+
         # Filter out samples without disease labels
         labeled_data = [[seq_pair, label] for seq_pair, label in raw if label is not None and label in label_to_id]
-        
+
         print(f"Disease classification: Found {num_labels} disease classes: {all_disease_labels}")
         print(f"Total labeled samples: {len(labeled_data)}")
-        
+
     else:  # target == 'score' (pathogenicity classification)
         # Binarise the target
         labeled_data: List[Tuple[Tuple[str, str], int]] = [
             [seq_pair, 1 if score >= threshold else 0] for seq_pair, score in raw
         ]
-        
+
         all_disease_labels = [0, 1]  # Binary: benign (0), pathogenic (1)
         label_to_id = {label: idx for idx, label in enumerate(all_disease_labels)}
         num_labels = len(all_disease_labels)
-        
+
         print(f"Pathogenicity classification: Binary classification with threshold {threshold}")
         print(f"Total samples: {len(labeled_data)}")
-    
+
     multitask_datasets = {}
 
-    # ------------------------------ splitting ------------------------------
-    random.seed(seed)
-    random.shuffle(labeled_data)
-    all_labels = all_disease_labels
+    # ------------------------------ stratified splitting ------------------------------
+    if target == 'disease':
+        # Use stratified split for disease classification to preserve class proportions
+        from sklearn.model_selection import train_test_split
 
-    total = len(labeled_data)
-    test_sz = int(total * test_split)
-    val_sz = int((total - test_sz) * val_split)
-    train_sz = total - test_sz - val_sz
+        # Extract labels for stratification
+        labels = [item[1] for item in labeled_data]
 
-    train_data = labeled_data[:train_sz]
-    val_data = labeled_data[train_sz : train_sz + val_sz]
-    test_data = labeled_data[train_sz + val_sz :]
+        # First split: train vs (val + test)
+        train_data, temp_data = train_test_split(
+            labeled_data,
+            test_size=test_split + val_split,
+            stratify=labels,
+            random_state=seed
+        )
 
-    print(
-        f"Smart Variant data → Train: {len(train_data)}, "
-        f"Val: {len(val_data)}, Test: {len(test_data)}"
-    )
+        # Second split: val vs test
+        temp_labels = [item[1] for item in temp_data]
+        val_ratio = val_split / (val_split + test_split)
+        val_data, test_data = train_test_split(
+            temp_data,
+            test_size=(1 - val_ratio),
+            stratify=temp_labels,
+            random_state=seed
+        )
+
+        print(f"Stratified splits → Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+
+        # Print class distribution per split
+        from collections import Counter
+        for split_name, split_data in [('Train', train_data), ('Val', val_data), ('Test', test_data)]:
+            split_labels = [item[1] for item in split_data]
+            counts = Counter(split_labels)
+            print(f"  {split_name} distribution: {dict(counts)}")
+    else:
+        # For pathogenicity (binary classification), use regular random split
+        random.seed(seed)
+        random.shuffle(labeled_data)
+
+        total = len(labeled_data)
+        test_sz = int(total * test_split)
+        val_sz = int((total - test_sz) * val_split)
+        train_sz = total - test_sz - val_sz
+
+        train_data = labeled_data[:train_sz]
+        val_data = labeled_data[train_sz : train_sz + val_sz]
+        test_data = labeled_data[train_sz + val_sz :]
+
+        print(
+            f"Smart Variant data → Train: {len(train_data)}, "
+            f"Val: {len(val_data)}, Test: {len(test_data)}"
+        )
 
     # ------------------------------ datasets --------------------------------
     train_ds = ClinVarDataset(train_data, tokenizer,task_name,label_to_id)
