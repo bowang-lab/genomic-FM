@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import ConcatDataset, Dataset, Subset
 from transformers import PreTrainedTokenizer
-from datasets import load_dataset
+import datasets as hf_datasets
 import logging
 import typing
 from typing import Dict, Sequence, List, Tuple
@@ -380,17 +380,17 @@ def return_eqtl_dataset(tokenizer: PreTrainedTokenizer, target='Adipose_Subcutan
     multitask_datasets = {}
 
     # Load raw datasets
-    val_data = load_dataset(
+    val_data = hf_datasets.load_dataset(
         "json",
         data_files=f"./root/data/DNALongBench/dnalongbench_hf_{target}/validation.jsonl",
         split="train",
     )
-    train_data = load_dataset(
+    train_data = hf_datasets.load_dataset(
         "json",
         data_files=f"./root/data/DNALongBench/dnalongbench_hf_{target}/train.jsonl",
         split="train",
     )
-    test_data = load_dataset(
+    test_data = hf_datasets.load_dataset(
         "json",
         data_files=f"./root/data/DNALongBench/dnalongbench_hf_{target}/test.jsonl",
         split="train",

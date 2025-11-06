@@ -2,7 +2,7 @@
 #SBATCH -t 4-00:0:0
 #SBATCH -J train_smart_multi
 #SBATCH -p gpu_bwanggroup
-#SBATCH --mem=240G # at most 450G
+#SBATCH --mem=450G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
 #SBATCH --gres=gpu:4 # match ddp.yaml num_processes
@@ -28,7 +28,7 @@ conda activate genomic-fm
 wandb offline
 
 # Training parameters
-MODEL="nt"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
+MODEL="luca"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, luca
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then

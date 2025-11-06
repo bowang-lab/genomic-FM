@@ -198,6 +198,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path = "songlab/gpn-star-hg38-v100-200m"
             tokenizer_path = model_path
             print(f"Using HuggingFace GPN-Star model: {model_path}")
+    elif model_type=='luca':
+        model_path = "LucaGroup/LucaOne-default-step36M"
+        tokenizer_path = model_path
+        print(f"Using HuggingFace LucaOne model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -211,15 +215,21 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path,
             trust_remote_code=True
         )
+    elif model_type == 'luca':
+        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
+        base_model = LucaGPLMModel.from_pretrained(model_path)
+        tokenizer = LucaGPLMTokenizer.from_pretrained(tokenizer_path)
     else:
         base_model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             trust_remote_code=True
         )
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path,
-        trust_remote_code=True
-    )
+
+    if model_type != 'luca':
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_path,
+            trust_remote_code=True
+        )
 
     # Load checkpoint weights if provided
     checkpoint_suffix = ""

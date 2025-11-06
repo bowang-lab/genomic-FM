@@ -32,14 +32,15 @@ pip install kipoiseq==0.7.1
 pip install -r requirements.txt
 pip install opencv-python-headless numpy decord tqdm omegaconf pytz scikit-learn
 pip install trl==0.13.0 transformers==4.50.3 accelerate==1.6.0 datasets==3.5.0 wandb
-
+pip install tiktoken gdown tiktoken datasets
 
 # Model-specific installations
 case "$MODEL_NAME" in
     "dnabert2"|"dnabert-2")
         echo "Installing DNABERT-2 specific packages..."
 	# pip install --user transformers==4.29.0
-	pip install tiktoken gdown tiktoken datasets wandb
+        pip install "numpy<2.0"
+        pip install opencv-python-headless==4.8.1.78
         # Remove triton for DNABERT-2
         pip uninstall -y triton || true
         ;;

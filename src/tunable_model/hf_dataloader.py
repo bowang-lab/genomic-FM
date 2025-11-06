@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import ConcatDataset, Dataset, Subset
 from transformers import PreTrainedTokenizer
-from datasets import load_dataset
+import datasets as hf_datasets
 import logging
 import typing
 from typing import Dict, Sequence
