@@ -15,32 +15,21 @@ import json
 import numpy as np
 from pathlib import Path
 import wandb
-from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification, AutoModelForCausalLM
 from sklearn.metrics import accuracy_score, f1_score, matthews_corrcoef, precision_score, recall_score
 import random
 from typing import Dict, List, Tuple, Optional, Any
 import sys
 import os
 
-# Add necessary paths to sys.path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-geneRepEng_dir = os.path.dirname(current_dir)
-pack_tunable_model_dir = os.path.dirname(geneRepEng_dir)
-src_dir = os.path.dirname(pack_tunable_model_dir)
-root_dir = os.path.dirname(src_dir)
+# Import using proper module paths (run with: python -m src.geneRepEng.sweep.sweep from project root)
+from src.geneRepEng import ControlModel, ControlVector, GenomicDatasetEntry
+from src.geneRepEng.dataset import create_smart_variant_control_dataset, create_synthetic_control_dataset
+from src.geneRepEng.util.omni_dna import create_omni_dna_control_model, get_omni_dna_layer_list
+from src.geneRepEng.extractor import create_control_vector_from_sequences
 
-sys.path.insert(0, root_dir)
-sys.path.insert(0, src_dir)
-sys.path.insert(0, pack_tunable_model_dir)
-sys.path.insert(0, geneRepEng_dir)
-
-from geneRepEng import ControlModel, ControlVector, GenomicDatasetEntry
-from geneRepEng.dataset import create_smart_variant_control_dataset, create_synthetic_control_dataset
-from geneRepEng.util.omni_dna import create_omni_dna_control_model, get_omni_dna_layer_list
-from geneRepEng.extractor import create_control_vector_from_sequences
-
-# Import from the parent module for dataset integration
-from hf_dataloader import return_smart_dataset, MultiTaskDataCollator
+# Import from sibling package
+from src.pack_tunable_model.hf_dataloader import return_smart_dataset, MultiTaskDataCollator
 
 # ----------------------------------------------------------------------
 # Module-level globals for caching
@@ -51,12 +40,38 @@ _global_model_id = None
 _global_control_vector = None
 _global_datasets = None
 
+def _resolve_model_path(model_id: str) -> str:
+    """Resolve model ID to local path if available, otherwise return original ID."""
+    import os
+
+    # Local model path mappings (matches training scripts)
+    local_paths = {
+        "zehui127/Omni-DNA-116M": "./root/models/omni_dna_116m",
+        "omni_dna": "./root/models/omni_dna_116m",
+        "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species": "./root/models/nucleotide_transformer",
+    }
+
+    # Check if we have a local path for this model
+    if model_id in local_paths:
+        local_path = local_paths[model_id]
+        if os.path.exists(local_path):
+            print(f"[Model] Using local model from {local_path}")
+            return local_path
+        else:
+            print(f"[Model] Local path {local_path} not found, using HuggingFace: {model_id}")
+            return model_id
+
+    return model_id
+
+
 def _load_once(model_id: str, max_length: int = 1024):
     """Load model and tokenizer once per process, cache in module-level globals."""
     global _global_tokenizer, _global_model, _global_model_id
 
     if (_global_model is None or _global_tokenizer is None or _global_model_id != model_id):
-        print(f"[Load-Once] Loading {model_id} ...")
+        # Resolve to local path if available
+        resolved_path = _resolve_model_path(model_id)
+        print(f"[Load-Once] Loading {resolved_path} ...")
 
         # Clear any existing cached objects
         if _global_model is not None:
@@ -67,20 +82,21 @@ def _load_once(model_id: str, max_length: int = 1024):
 
         # Load fresh instances
         _global_tokenizer = AutoTokenizer.from_pretrained(
-            model_id,
+            resolved_path,
             trust_remote_code=True
         )
         _global_tokenizer.model_max_length = max_length
 
         # Load model to a single device to avoid device mismatch issues
+        # Use AutoModelForCausalLM to get proper hidden states from all layers
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _global_model = AutoModelForSequenceClassification.from_pretrained(
-            model_id,
+        _global_model = AutoModelForCausalLM.from_pretrained(
+            resolved_path,
             trust_remote_code=True,
             torch_dtype=torch.float16
         ).to(device)
         print(_global_model)
-        _global_model_id = model_id
+        _global_model_id = model_id  # Keep original ID for cache key
 
         # Set model to eval mode
         _global_model.eval()
@@ -101,7 +117,7 @@ def parse_args():
     parser.add_argument("--dataset_type", type=str, default="smart",
                         help="Dataset type ('smart', 'synthetic').")
     parser.add_argument("--csv_path", type=str,
-                        default="/zehui/genomic_fm/all_clinvar/unfiltered_variants.csv",
+                        default="./root/data/unfiltered_variants.csv",
                         help="Path to SMART variant CSV file.")
     parser.add_argument("--method", type=str, default="pca_diff",
                         help="Method for extracting control vector ('pca_diff', 'mean_diff').")
@@ -123,6 +139,8 @@ def parse_args():
                         help="Wandb entity (username or team name).")
     parser.add_argument("--count", type=int, default=100,
                         help="Number of runs for the sweep.")
+    parser.add_argument("--offline", action="store_true",
+                        help="Run wandb in offline mode.")
     return parser.parse_args()
 
 # ----------------------------------------------------------------------
@@ -540,6 +558,88 @@ def run_single_experiment():
     print(f"Results saved to: {sweep_results_dir / f'{run_name}.json'}")
 
 # ----------------------------------------------------------------------
+# Local Experiment Function (no wandb)
+# ----------------------------------------------------------------------
+def run_local_experiments(args, num_experiments: int = 10):
+    """Run experiments locally without wandb."""
+    global _global_control_vector, _global_datasets
+
+    num_layers = len(_global_control_vector.directions)
+    print(f"\n[Local Mode] Running {num_experiments} experiments with {num_layers} layers")
+
+    results_dir = Path(f"results/local_sweep_{args.seed}")
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    all_results = []
+
+    for exp_idx in range(num_experiments):
+        print(f"\n--- Experiment {exp_idx + 1}/{num_experiments} ---")
+
+        # Generate random alpha values
+        alpha_vals = np.random.uniform(-2.0, 2.0, num_layers)
+        print(f"Alpha values: {alpha_vals[:3]}... (showing first 3)")
+
+        # Model setup
+        if args.model_type == "omni_dna":
+            model_id = "zehui127/Omni-DNA-116M"
+        else:
+            model_id = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+
+        tokenizer, base_model = _load_once(model_id)
+
+        # Create controlled model
+        layer_ids = list(_global_control_vector.directions.keys())
+        controlled_model = create_omni_dna_control_model(
+            model=base_model,
+            layer_ids=layer_ids
+        )
+
+        # Apply layer-specific control strengths
+        from src.geneRepEng import ControlVector
+        scaled_directions = {}
+        for i, layer_id in enumerate(layer_ids):
+            scaled_directions[layer_id] = _global_control_vector.directions[layer_id] * alpha_vals[i]
+
+        scaled_control_vector = ControlVector(
+            model_type=_global_control_vector.model_type,
+            directions=scaled_directions
+        )
+        controlled_model.set_control(scaled_control_vector, strength=1.0)
+
+        # Evaluate
+        baseline_metrics = _global_datasets["baseline_metrics"]
+        experiment_results = {"alpha_values": alpha_vals.tolist()}
+
+        for split_name in ["val", "test"]:
+            sequences, labels = _global_datasets["sequences"][split_name]
+            controlled_metrics = evaluate_genomic_model(
+                controlled_model, tokenizer, sequences, labels
+            )
+
+            baseline_split = baseline_metrics[split_name]
+            improvement = controlled_metrics["accuracy"] - baseline_split["accuracy"]
+
+            experiment_results[f"{split_name}_accuracy"] = controlled_metrics["accuracy"]
+            experiment_results[f"{split_name}_improvement"] = improvement
+
+            print(f"  {split_name}: acc={controlled_metrics['accuracy']:.3f} (improvement: {improvement:+.3f})")
+
+        controlled_model.clear_control()
+        all_results.append(experiment_results)
+
+    # Save all results
+    save_json({"experiments": all_results, "args": vars(args)}, results_dir / "all_results.json")
+    print(f"\nResults saved to: {results_dir / 'all_results.json'}")
+
+    # Print best result
+    best_idx = np.argmax([r["val_improvement"] for r in all_results])
+    best = all_results[best_idx]
+    print(f"\nBest experiment: {best_idx + 1}")
+    print(f"  Val improvement: {best['val_improvement']:+.3f}")
+    print(f"  Test improvement: {best['test_improvement']:+.3f}")
+
+
+# ----------------------------------------------------------------------
 # Main Function
 # ----------------------------------------------------------------------
 def main():
@@ -552,6 +652,11 @@ def main():
 
     # Pre-compute shared data once before starting sweep
     precompute_shared_data(args)
+
+    # Set wandb to offline mode if requested
+    if args.offline:
+        print("\n[Offline Mode] Setting wandb to offline mode...")
+        os.environ["WANDB_MODE"] = "offline"
 
     if args.sweep_id:
         # Continue existing sweep

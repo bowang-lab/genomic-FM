@@ -56,44 +56,69 @@ def extract_layer_representations(
             max_length=max_length
         )
 
-        # Move to device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+        # Move to device and filter out unsupported keys (e.g., token_type_ids for OLMo)
+        supported_keys = ['input_ids', 'attention_mask']
+        inputs = {k: v.to(device) for k, v in inputs.items() if k in supported_keys}
 
         with torch.no_grad():
             outputs = model(**inputs, output_hidden_states=True)
             hidden_states = outputs.hidden_states
 
+            # Handle hidden_states - could be tuple, list, or None
+            if hidden_states is None:
+                raise ValueError("Model did not return hidden states. Make sure output_hidden_states=True is supported.")
+
+            # Convert to list if needed
+            if isinstance(hidden_states, tuple):
+                hidden_states = list(hidden_states)
+
+            num_hidden_states = len(hidden_states)
+
             # Extract representations for each requested layer
             for layer_id in layer_ids:
-                layer_hidden = hidden_states[layer_id + 1]  # +1 because hidden_states includes input embeddings
+                # Map layer_id to actual hidden_states index
+                # hidden_states typically includes embeddings at index 0, then layer outputs
+                # But some models may have different structures
+                hs_index = layer_id + 1
+                if hs_index >= num_hidden_states:
+                    hs_index = num_hidden_states - 1  # Use last available layer
+                layer_hidden = hidden_states[hs_index]
 
-                # Aggregate representations based on position
-                if position == "last":
-                    # Use the last non-padding token
-                    attention_mask = inputs.get('attention_mask')
-                    if attention_mask is not None:
-                        seq_lengths = attention_mask.sum(dim=1)
-                        batch_representations = []
-                        for j, seq_len in enumerate(seq_lengths):
-                            batch_representations.append(layer_hidden[j, seq_len - 1].cpu().numpy())
-                        batch_representations = np.array(batch_representations)
+                # Check if hidden states are already pooled (2D) or full (3D)
+                if layer_hidden.dim() == 2:
+                    # Already pooled: [batch_size, hidden_size]
+                    batch_representations = layer_hidden.cpu().numpy()
+                elif layer_hidden.dim() == 3:
+                    # Full hidden states: [batch_size, seq_len, hidden_size]
+                    # Aggregate representations based on position
+                    if position == "last":
+                        # Use the last non-padding token
+                        attention_mask = inputs.get('attention_mask')
+                        if attention_mask is not None:
+                            seq_lengths = attention_mask.sum(dim=1)
+                            batch_representations = []
+                            for j, seq_len in enumerate(seq_lengths):
+                                batch_representations.append(layer_hidden[j, int(seq_len.item()) - 1].cpu().numpy())
+                            batch_representations = np.array(batch_representations)
+                        else:
+                            batch_representations = layer_hidden[:, -1].cpu().numpy()
+                    elif position == "mean":
+                        # Mean pooling over sequence length
+                        attention_mask = inputs.get('attention_mask')
+                        if attention_mask is not None:
+                            mask_expanded = attention_mask.unsqueeze(-1).expand(layer_hidden.size()).float()
+                            sum_hidden = torch.sum(layer_hidden * mask_expanded, dim=1)
+                            sum_mask = torch.clamp(mask_expanded.sum(dim=1), min=1e-9)
+                            batch_representations = (sum_hidden / sum_mask).cpu().numpy()
+                        else:
+                            batch_representations = layer_hidden.mean(dim=1).cpu().numpy()
+                    elif position == "cls":
+                        # Use CLS token (first token)
+                        batch_representations = layer_hidden[:, 0].cpu().numpy()
                     else:
-                        batch_representations = layer_hidden[:, -1].cpu().numpy()
-                elif position == "mean":
-                    # Mean pooling over sequence length
-                    attention_mask = inputs.get('attention_mask')
-                    if attention_mask is not None:
-                        mask_expanded = attention_mask.unsqueeze(-1).expand(layer_hidden.size()).float()
-                        sum_hidden = torch.sum(layer_hidden * mask_expanded, dim=1)
-                        sum_mask = torch.clamp(mask_expanded.sum(dim=1), min=1e-9)
-                        batch_representations = (sum_hidden / sum_mask).cpu().numpy()
-                    else:
-                        batch_representations = layer_hidden.mean(dim=1).cpu().numpy()
-                elif position == "cls":
-                    # Use CLS token (first token)
-                    batch_representations = layer_hidden[:, 0].cpu().numpy()
+                        raise ValueError(f"Unknown position: {position}")
                 else:
-                    raise ValueError(f"Unknown position: {position}")
+                    raise ValueError(f"Unexpected hidden state dimensions: {layer_hidden.dim()}")
 
                 representations[layer_id].extend(batch_representations)
 

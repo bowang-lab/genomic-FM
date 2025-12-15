@@ -24,10 +24,16 @@ class BertPooler(nn.Module):
         return pooled_output
 
 class WrappedModelWithClassificationHead(nn.Module):
-    def __init__(self, base_model, num_classes, decoder=False, hidden_states_pooler=False):
+    def __init__(self, base_model, num_classes, decoder=False, hidden_states_pooler=False,
+                 comparison_mode="delta"):
+        """
+        Args:
+            comparison_mode: "delta" (subtraction) or "concat" (concatenation like DYNA)
+        """
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
+        self.comparison_mode = comparison_mode
 
         # Get the hidden size from the base model configuration
         if hasattr(base_model, "config"):
@@ -38,24 +44,39 @@ class WrappedModelWithClassificationHead(nn.Module):
         else:
             # Fallback if config is not available
             hidden_size = 768  # Default size, adjust as needed
+
+        self.hidden_size = hidden_size
+
         if hidden_states_pooler:
             # Add a pooler layer if needed
             self.pooler = BertPooler(base_model.config)
         else:
             self.pooler = None
-        self.classification_head = nn.Linear(hidden_size, num_classes)
 
-        # Initialize properly for regression vs classification
-        if num_classes == 1:
-            # Regression: Initialize weights near 0 to start as constant predictor
-            # This allows the model to learn residuals from the baseline
-            nn.init.normal_(self.classification_head.weight, mean=0.0, std=1e-4)  # tiny noise for rank losses
-            # Bias = prior mean in link space (0 for z-scored MAVES data)
-            nn.init.constant_(self.classification_head.bias, 0.0)
+        # Determine input size based on comparison mode
+        if comparison_mode == "delta":
+            head_input_size = hidden_size
+        elif comparison_mode == "concat":
+            head_input_size = hidden_size * 2
         else:
-            # Classification: Standard initialization
-            nn.init.xavier_uniform_(self.classification_head.weight)
-            nn.init.constant_(self.classification_head.bias, 0.0)
+            raise ValueError(f"Unknown comparison_mode: {comparison_mode}. Use 'delta' or 'concat'.")
+
+        # MLP head instead of single linear (like DYNA)
+        self.classification_head = nn.Sequential(
+            nn.Linear(head_input_size, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, num_classes)
+        )
+
+        # Initialize final layer properly for regression vs classification
+        final_layer = self.classification_head[-1]
+        if num_classes == 1:
+            nn.init.normal_(final_layer.weight, mean=0.0, std=1e-4)
+            nn.init.constant_(final_layer.bias, 0.0)
+        else:
+            nn.init.xavier_uniform_(final_layer.weight)
+            nn.init.constant_(final_layer.bias, 0.0)
 
 
     def forward(self,
@@ -119,40 +140,30 @@ class WrappedModelWithClassificationHead(nn.Module):
                 outputs_alt.hidden_states = (outputs_alt.hidden_states,)
         if not self.decoder:
             # For encoder models, take the [CLS] token (first token) from the last hidden state
-            # print(f"outputs_ref.hidden_states: {outputs_ref.hidden_states.shape}")
             last_hidden_state_ref = outputs_ref.hidden_states[-1][:, 0, :]
-            # last_hidden_state_ref = outputs_ref.hidden_states[-1].mean(dim=1)
             last_hidden_state_alt = outputs_alt.hidden_states[-1][:, 0, :]
-            # last_hidden_state_alt = outputs_alt.hidden_states[-1].mean(dim=1)
             if self.pooler is not None:
-                # Apply pooler if needed
                 last_hidden_state_ref = self.pooler(last_hidden_state_ref)
                 last_hidden_state_alt = self.pooler(last_hidden_state_alt)
-            difference = last_hidden_state_alt - last_hidden_state_ref
         else:
             # For decoder models, take the last token from the sequence
-            # compute true sequence lengths
-
-            # ref_seq_lens = outputs_ref.attention_mask.sum(dim=-1)  # (batch_size,)
-            # alt_seq_lens = outputs_alt.attention_mask.sum(dim=-1)  # (batch_size,)
-            ref_seq_lens = ref_attention_mask.sum(dim=-1)  # (batch_size,)
-            alt_seq_lens = alt_attention_mask.sum(dim=-1)  # (batch_size,)
-
-            # build an index for batch dimension
+            ref_seq_lens = ref_attention_mask.sum(dim=-1)
+            alt_seq_lens = alt_attention_mask.sum(dim=-1)
             batch_index = torch.arange(ref_seq_lens.size(0), device=outputs_ref.hidden_states[-1].device)
-
-            # select the last‐token vector for each example
-            last_ref = outputs_ref.hidden_states[-1][batch_index, ref_seq_lens - 1, :]
-            last_alt = outputs_alt.hidden_states[-1][batch_index, alt_seq_lens - 1, :]
+            last_hidden_state_ref = outputs_ref.hidden_states[-1][batch_index, ref_seq_lens - 1, :]
+            last_hidden_state_alt = outputs_alt.hidden_states[-1][batch_index, alt_seq_lens - 1, :]
             if self.pooler is not None:
-                # Apply pooler if needed
-                last_ref = self.pooler(last_ref)
-                last_alt = self.pooler(last_alt)
-            # take the difference
-            difference = last_alt - last_ref
+                last_hidden_state_ref = self.pooler(last_hidden_state_ref)
+                last_hidden_state_alt = self.pooler(last_hidden_state_alt)
+
+        # Build features based on comparison mode
+        if self.comparison_mode == "delta":
+            features = last_hidden_state_alt - last_hidden_state_ref
+        elif self.comparison_mode == "concat":
+            features = torch.cat([last_hidden_state_ref, last_hidden_state_alt], dim=1)
 
         # Apply classification head
-        logits = self.classification_head(difference)
+        logits = self.classification_head(features)
 
         # Calculate loss if labels are provided
         loss = None

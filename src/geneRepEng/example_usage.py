@@ -3,31 +3,49 @@
 Example script demonstrating how to use geneRepEng for genomic control vector creation
 """
 
+import os
 import torch
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from typing import List, Dict
 import numpy as np
 
 # Import the geneRepEng library
-from geneRepEng import ControlModel, ControlVector, GenomicDatasetEntry
-from geneRepEng.dataset import create_synthetic_control_dataset, create_clinvar_control_dataset
-from geneRepEng.util.omni_dna import create_omni_dna_control_model
+from src.geneRepEng import ControlModel, ControlVector, GenomicDatasetEntry
+from src.geneRepEng.dataset import (
+    create_synthetic_control_dataset,
+    create_clinvar_control_dataset,
+    load_cgc_primary_findings,
+    load_cardiac_benign_variants,
+    create_balanced_control_dataset
+)
+from src.geneRepEng.util.omni_dna import create_omni_dna_control_model
 
 
-def load_omni_dna_model(model_name_or_path: str = "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"):
+def load_omni_dna_model(model_name_or_path: str = None):
     """
     Load an Omni-DNA or similar genomic model
 
     Args:
-        model_name_or_path: Path or name of the model to load
+        model_name_or_path: Path or name of the model to load.
+                           If None, uses local model or zehui127/Omni-DNA-116M
 
     Returns:
         Tuple of (model, tokenizer)
     """
-    print(f"Loading model: {model_name_or_path}")
+    # Match training code logic
+    if model_name_or_path is None:
+        local_model_path = "./root/models/omni_dna_116m"
+        if os.path.exists(local_model_path):
+            model_name_or_path = local_model_path
+            print(f"Using local model from {model_name_or_path}")
+        else:
+            model_name_or_path = "zehui127/Omni-DNA-116M"
+            print(f"Using HuggingFace model: {model_name_or_path}")
+    else:
+        print(f"Loading model: {model_name_or_path}")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-    model = AutoModel.from_pretrained(model_name_or_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(model_name_or_path, trust_remote_code=True)
 
     # Set appropriate sequence length
     if hasattr(tokenizer, 'model_max_length'):
@@ -232,7 +250,7 @@ def compare_ref_alt_representations():
         print(f"    Alt: {alt}")
 
     # Get representations
-    from geneRepEng.extractor import extract_layer_representations
+    from src.geneRepEng.extractor import extract_layer_representations
 
     ref_reps = extract_layer_representations(
         model, tokenizer, ref_sequences, layer_ids=[6, 12, 18], batch_size=3
@@ -253,28 +271,139 @@ def compare_ref_alt_representations():
         print(f"Layer {layer_id}: Mean representation difference = {mean_diff:.4f}")
 
 
+def train_cgc_cardiac_control_vector():
+    """
+    Train control vector using CGC pediatric cardiac patient variants.
+
+    Uses real pathogenic variants from CGC patients as the "alternative" and
+    benign ClinVar cardiac variants as the "reference" to learn pathogenicity direction.
+    """
+    print("\n=== CGC Cardiac Pathogenicity Control Vector Training ===\n")
+
+    # Step 1: Load the genomic model
+    model, tokenizer = load_omni_dna_model()
+
+    # Step 2: Load CGC pathogenic variants (primary findings)
+    print("Loading CGC primary findings (pathogenic variants)...")
+    cgc_pathogenic = load_cgc_primary_findings(
+        csv_path="root/data/primary_findings_analysis/primary_findings_analysis_results.csv",
+        genome_fa="root/data/hg19.fa",
+        seq_length=512
+    )
+    print(f"Loaded {len(cgc_pathogenic)} CGC pathogenic variants")
+
+    # Step 3: Load ClinVar benign cardiac variants as controls
+    print("\nLoading ClinVar benign cardiac variants (controls)...")
+    clinvar_benign = load_cardiac_benign_variants(
+        n_samples=500,  # Use 500 benign variants
+        seq_length=512,
+        seed=42
+    )
+    print(f"Loaded {len(clinvar_benign)} ClinVar benign variants")
+
+    # Step 4: Create balanced dataset
+    print("\nCreating balanced control dataset...")
+    balanced_dataset = create_balanced_control_dataset(
+        pathogenic_dataset=cgc_pathogenic,
+        benign_dataset=clinvar_benign,
+        balance_method="upsample",  # Upsample pathogenic to match benign count
+        seed=42
+    )
+
+    # Step 5: Train control vector
+    print("\nTraining control vector...")
+    control_vector = ControlVector.train(
+        model=model,
+        processors=[tokenizer],
+        dataset=balanced_dataset.entries,
+        max_batch_size=4,  # Small batch size for large sequences
+        method="pca_diff"
+    )
+
+    print(f"Control vector trained for {len(control_vector.directions)} layers")
+
+    # Step 6: Create controlled model
+    print("\nCreating controlled model...")
+    controlled_model = create_omni_dna_control_model(
+        model=model,
+        layer_ids=list(control_vector.directions.keys())
+    )
+
+    # Step 7: Apply control vector
+    controlled_model.set_control(control_vector, strength=1.0)
+    print("Control vector applied successfully!")
+
+    # Step 8: Test on a CGC variant
+    if len(cgc_pathogenic) > 0:
+        test_entry = cgc_pathogenic.entries[0]
+        test_sequence = test_entry.alt_sequence  # Use pathogenic alt sequence
+
+        print(f"\nTesting with CGC pathogenic variant...")
+        print(f"Sequence length: {len(test_sequence)}")
+
+        # Tokenize test sequence
+        inputs = tokenizer(
+            test_sequence,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=tokenizer.model_max_length
+        )
+
+        # Get original model output
+        with torch.no_grad():
+            original_output = model(**inputs, output_hidden_states=True)
+            original_hidden = original_output.hidden_states[-1][:, -1, :]
+
+        # Get controlled model output
+        with torch.no_grad():
+            controlled_output = controlled_model(**inputs, output_hidden_states=True)
+            controlled_hidden = controlled_output.hidden_states[-1][:, -1, :]
+
+        # Compare outputs
+        difference = torch.norm(controlled_hidden - original_hidden).item()
+        print(f"Difference in final hidden states: {difference:.4f}")
+
+    # Step 9: Save control vector
+    output_path = "cgc_cardiac_pathogenicity_control.npz"
+    control_vector.save(output_path)
+    print(f"\nControl vector saved to: {output_path}")
+
+    # Step 10: Print summary
+    print("\n" + "=" * 60)
+    print("Summary:")
+    print(f"  CGC pathogenic variants: {len(cgc_pathogenic)}")
+    print(f"  ClinVar benign variants: {len(clinvar_benign)}")
+    print(f"  Total training samples: {len(balanced_dataset)}")
+    print(f"  Layers with control: {len(control_vector.directions)}")
+    print(f"  Saved to: {output_path}")
+    print("=" * 60)
+
+    return controlled_model, control_vector
+
+
 if __name__ == "__main__":
     print("Genomic Representation Engineering (geneRepEng) Examples")
     print("=" * 60)
 
     # Run examples
     try:
-        # Main training example
-        controlled_model, control_vector = train_control_vector_example()
-
-        # Test different strengths
-        test_different_control_strengths()
-
-        # Load saved control vector
-        load_and_test_saved_control_vector()
-
-        # Compare representations
-        compare_ref_alt_representations()
+        # CGC Cardiac Control Vector Training (PRIMARY USE CASE)
+        print("\n" + "=" * 60)
+        print("Training CGC Cardiac Pathogenicity Control Vector")
+        print("=" * 60)
+        controlled_model, control_vector = train_cgc_cardiac_control_vector()
 
         print("\n" + "=" * 60)
-        print("All examples completed successfully!")
+        print("CGC training completed successfully!")
+        print("=" * 60)
+
+        # Optional: Run other examples (commented out by default)
+        # test_different_control_strengths()
+        # load_and_test_saved_control_vector()
+        # compare_ref_alt_representations()
 
     except Exception as e:
-        print(f"\nError running examples: {e}")
+        print(f"\nError running CGC training: {e}")
         import traceback
         traceback.print_exc()

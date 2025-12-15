@@ -11,10 +11,15 @@ from pathlib import Path
 def run_sweep_command(args):
     """Construct and run the sweep command."""
 
-    # Base command
+    # Get the project root directory (genomic-FM/)
+    current_dir = Path(__file__).parent  # sweep/
+    src_dir = current_dir.parent.parent  # src/
+    root_dir = src_dir.parent            # genomic-FM/
+
+    # Run as module from project root (src is the top-level package)
     cmd = [
         sys.executable,
-        "sweep.py",
+        "-m", "src.geneRepEng.sweep.sweep",
         "--model_type", args.model_type,
         "--dataset_type", args.dataset_type,
         "--method", args.method,
@@ -39,9 +44,13 @@ def run_sweep_command(args):
     if args.entity:
         cmd.extend(["--entity", args.entity])
 
-    # Run the command
+    if args.offline:
+        cmd.append("--offline")
+
+    # Run the command from project root so module imports work
     print(f"Running command: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=Path(__file__).parent)
+    print(f"Working directory: {root_dir}")
+    result = subprocess.run(cmd, cwd=root_dir)
     return result.returncode
 
 def main():
@@ -55,7 +64,7 @@ def main():
                         choices=["smart", "synthetic"],
                         help="Dataset type to use")
     parser.add_argument("--csv_path", type=str,
-                        default="/zehui/genomic_fm/all_clinvar/unfiltered_variants.csv",
+                        default="./root/data/unfiltered_variants.csv",
                         help="Path to SMART variant CSV file")
 
     # Experiment configuration
@@ -82,6 +91,8 @@ def main():
                         help="Existing sweep ID to continue")
     parser.add_argument("--count", type=int, default=100,
                         help="Number of sweep runs")
+    parser.add_argument("--offline", action="store_true",
+                        help="Run wandb in offline mode")
 
     # Preset configurations
     parser.add_argument("--preset", type=str, default=None,

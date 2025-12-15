@@ -62,7 +62,7 @@ def create_clinvar_control_dataset(
         GenomicDataset with reference/alternative sequence pairs
     """
     # This would integrate with the existing ClinVar data wrapper
-    from ....hf_dataloader import return_clinvar_multitask_dataset
+    from ...pack_tunable_model.hf_dataloader import return_clinvar_multitask_dataset
     from transformers import AutoTokenizer
 
     # Create a dummy tokenizer for data loading
@@ -129,7 +129,7 @@ def create_smart_variant_control_dataset(
         GenomicDataset with reference/alternative sequence pairs
     """
     # This would integrate with the existing SMART data wrapper
-    from ....hf_dataloader import return_smart_dataset
+    from ...pack_tunable_model.hf_dataloader import return_smart_dataset
     from transformers import AutoTokenizer
 
     # Create a dummy tokenizer for data loading

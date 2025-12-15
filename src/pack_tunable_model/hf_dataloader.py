@@ -92,15 +92,17 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
         print(f"Using {num_labels} pathogenicity classes")
     else:
         raise ValueError(f"Unsupported target: {target}")
-    # Create datasets
+    # Create datasets (only create val/test if they have data)
     train_dataset = ClinVarDataset(train_data, tokenizer, task_name, label_to_id)
-    val_dataset = ClinVarDataset(val_data, tokenizer, task_name, label_to_id)
-    test_dataset = ClinVarDataset(test_data, tokenizer, task_name, label_to_id)
-
-    # Store datasets
     multitask_datasets['train'] = train_dataset
-    multitask_datasets[f"{task_name}_val"] = val_dataset
-    multitask_datasets[f"{task_name}_test"] = test_dataset
+
+    if val_data:
+        val_dataset = ClinVarDataset(val_data, tokenizer, task_name, label_to_id)
+        multitask_datasets[f"{task_name}_val"] = val_dataset
+
+    if test_data:
+        test_dataset = ClinVarDataset(test_data, tokenizer, task_name, label_to_id)
+        multitask_datasets[f"{task_name}_test"] = test_dataset
 
     # Track task info
     task_num_classes = {task_name: num_labels}

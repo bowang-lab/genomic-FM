@@ -12,6 +12,8 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 import tqdm
 
+from .control import ControlModel
+
 @dataclasses.dataclass
 class GenomicDatasetEntry:
     """Dataset entry for genomic data with reference and alternative sequences"""
@@ -136,11 +138,7 @@ def batched_preprocess(processors, inputs: list, batch_size: int, dtype=None):
                 max_length=getattr(processor, 'model_max_length', 1024)
             )
 
-            # Remove batch dimension if present (will be added back later if needed)
-            for k, v in processed.items():
-                if v.dim() > 1:
-                    processed[k] = v.squeeze(0)
-
+            # Keep batch dimension - model expects (batch_size, seq_len)
             input_dicts.append(processed)
 
     return input_dicts
