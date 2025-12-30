@@ -4,10 +4,288 @@ from transformers import PreTrainedTokenizer
 import datasets as hf_datasets
 import logging
 import typing
-from typing import Dict, Sequence, List, Tuple
+from typing import Dict, Sequence, List, Tuple, Optional
 from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper, set_disease_subset_from_file
 import random
 import numpy as np
+
+
+# =============================================================================
+# Multi-Label Dataset Classes (AlphaGenome-style: all heads evaluated per sample)
+# =============================================================================
+
+class MultiLabelDataset(Dataset):
+    """
+    Dataset where each sample has multiple task labels (AlphaGenome-style).
+
+    For SMART data: Each variant has both CLNDN (disease) and CLNSIG (pathogenicity).
+    All heads are evaluated for every sample during training.
+    """
+
+    IGNORE_INDEX = -100  # Standard PyTorch ignore index for loss masking
+
+    def __init__(
+        self,
+        data: List[Dict],
+        tokenizer: PreTrainedTokenizer,
+        task_configs: Dict[str, Dict],
+        seq_length: int = 1024
+    ):
+        """
+        Args:
+            data: List of dicts with keys 'ref', 'alt', 'CLNDN', 'CLNSIG'
+                  e.g., [{'ref': 'ACGT...', 'alt': 'ACGT...', 'CLNDN': 2, 'CLNSIG': 1}, ...]
+            tokenizer: Tokenizer for DNA sequences
+            task_configs: Dict mapping task names to config
+                  e.g., {'CLNDN': {'num_classes': 4}, 'CLNSIG': {'num_classes': 2}}
+            seq_length: Maximum sequence length
+        """
+        super().__init__()
+        self.task_configs = task_configs
+        self.task_names = list(task_configs.keys())
+
+        ref_sequences = []
+        alt_sequences = []
+        self.labels = {task: [] for task in self.task_names}
+
+        for item in data:
+            ref_sequences.append(item['ref'])
+            alt_sequences.append(item['alt'])
+
+            for task in self.task_names:
+                label = item.get(task)
+                if label is None:
+                    self.labels[task].append(self.IGNORE_INDEX)
+                else:
+                    self.labels[task].append(label)
+
+        # Tokenize sequences
+        ref_output = tokenizer(
+            ref_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=seq_length,
+            truncation=True,
+        )
+        alt_output = tokenizer(
+            alt_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=seq_length,
+            truncation=True,
+        )
+
+        self.ref_input_ids = ref_output["input_ids"]
+        self.ref_attention_mask = ref_output.get("attention_mask")
+        self.alt_input_ids = alt_output["input_ids"]
+        self.alt_attention_mask = alt_output.get("attention_mask")
+
+        # Log label statistics
+        for task in self.task_names:
+            valid_count = sum(1 for l in self.labels[task] if l != self.IGNORE_INDEX)
+            logging.info(f"MultiLabelDataset: {task} has {valid_count}/{len(self.labels[task])} valid labels")
+
+    def __len__(self):
+        return len(self.ref_input_ids)
+
+    def __getitem__(self, i):
+        item = {
+            "ref_input_ids": self.ref_input_ids[i],
+            "alt_input_ids": self.alt_input_ids[i],
+        }
+
+        # Add all task labels
+        for task in self.task_names:
+            item[f"label_{task}"] = self.labels[task][i]
+
+        if self.ref_attention_mask is not None:
+            item["ref_attention_mask"] = self.ref_attention_mask[i]
+        if self.alt_attention_mask is not None:
+            item["alt_attention_mask"] = self.alt_attention_mask[i]
+
+        return item
+
+
+class MultiLabelDataCollator:
+    """Collator for MultiLabelDataset - handles multiple labels per sample."""
+
+    def __init__(self, tokenizer: PreTrainedTokenizer, task_names: List[str]):
+        self.tokenizer = tokenizer
+        self.task_names = task_names
+
+    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
+        ref_input_ids = []
+        alt_input_ids = []
+        ref_attention_masks = []
+        alt_attention_masks = []
+
+        # Collect labels for each task
+        task_labels = {task: [] for task in self.task_names}
+
+        for instance in instances:
+            ref_input_ids.append(instance["ref_input_ids"])
+            alt_input_ids.append(instance["alt_input_ids"])
+
+            if "ref_attention_mask" in instance:
+                ref_attention_masks.append(instance["ref_attention_mask"])
+            if "alt_attention_mask" in instance:
+                alt_attention_masks.append(instance["alt_attention_mask"])
+
+            for task in self.task_names:
+                task_labels[task].append(instance.get(f"label_{task}", -100))
+
+        # Pad sequences
+        ref_input_ids = torch.nn.utils.rnn.pad_sequence(
+            ref_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
+        )
+        alt_input_ids = torch.nn.utils.rnn.pad_sequence(
+            alt_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
+        )
+
+        batch = {
+            "ref_input_ids": ref_input_ids,
+            "alt_input_ids": alt_input_ids,
+        }
+
+        # Convert labels to tensors (classification = long)
+        for task in self.task_names:
+            batch[f"label_{task}"] = torch.tensor(task_labels[task], dtype=torch.long)
+
+        # Handle attention masks
+        if ref_attention_masks:
+            batch["ref_attention_mask"] = torch.nn.utils.rnn.pad_sequence(
+                ref_attention_masks, batch_first=True, padding_value=0
+            )
+        else:
+            batch["ref_attention_mask"] = ref_input_ids.ne(self.tokenizer.pad_token_id)
+
+        if alt_attention_masks:
+            batch["alt_attention_mask"] = torch.nn.utils.rnn.pad_sequence(
+                alt_attention_masks, batch_first=True, padding_value=0
+            )
+        else:
+            batch["alt_attention_mask"] = alt_input_ids.ne(self.tokenizer.pad_token_id)
+
+        return batch
+
+
+def return_multilabel_dataset(
+    tokenizer: PreTrainedTokenizer,
+    csv_path: str = 'root/data/unfiltered_variants.csv',
+    threshold: float = 65.0,
+    seq_length: int = 1024,
+    val_split: float = 0.1,
+    test_split: float = 0.1,
+    seed: int = 42,
+    all_records: bool = True,
+    num_records: Optional[int] = None,
+):
+    """
+    Load SMART dataset with paired CLNDN + CLNSIG labels (AlphaGenome-style).
+
+    Each variant gets BOTH labels:
+    - CLNDN: Disease classification (4 classes)
+    - CLNSIG: Pathogenicity binary (score >= threshold)
+
+    Returns:
+        tuple: (datasets_dict, task_num_classes, task_configs, seq_length)
+    """
+    from sklearn.model_selection import train_test_split
+
+    tokenizer.model_max_length = seq_length
+
+    # Fixed disease labels for SMART data
+    disease_labels = sorted(['Aortopathy', 'Arrhythmia', 'Cardiomyopathy', 'Structural defect'])
+    disease_to_id = {label: idx for idx, label in enumerate(disease_labels)}
+
+    # Task configurations
+    task_configs = {
+        'CLNDN': {'num_classes': len(disease_labels)},
+        'CLNSIG': {'num_classes': 2},
+    }
+
+    # Load SMART data with both disease and score
+    wrapper = SmartVariantDataWrapper(
+        csv_path=csv_path,
+        num_records=num_records or 0,
+        all_records=all_records
+    )
+    raw_data = wrapper.get_multitask_data(Seq_length=seq_length, threshold=threshold)
+
+    # Convert to multi-label format
+    multilabel_data = []
+    skipped_no_disease = 0
+
+    for ref, alt, disease, score in raw_data:
+        sample = {'ref': ref, 'alt': alt}
+
+        # CLNDN: Disease classification
+        if disease in disease_to_id:
+            sample['CLNDN'] = disease_to_id[disease]
+        else:
+            sample['CLNDN'] = None
+            skipped_no_disease += 1
+            continue  # Skip samples without valid disease label
+
+        # CLNSIG: Pathogenicity (always present for SMART data)
+        if score is not None:
+            sample['CLNSIG'] = 1 if score >= threshold else 0
+        else:
+            sample['CLNSIG'] = None
+
+        multilabel_data.append(sample)
+
+    print(f"Loaded {len(multilabel_data)} SMART variants with paired labels")
+    print(f"  Skipped {skipped_no_disease} variants without valid disease label")
+
+    # Count label availability
+    for task in task_configs:
+        valid_count = sum(1 for s in multilabel_data if s.get(task) is not None)
+        print(f"  {task}: {valid_count} samples ({100*valid_count/len(multilabel_data):.1f}%)")
+
+    # Stratified split based on CLNDN (disease class)
+    stratify_labels = [s['CLNDN'] for s in multilabel_data]
+
+    train_data, temp_data = train_test_split(
+        multilabel_data,
+        test_size=test_split + val_split,
+        stratify=stratify_labels,
+        random_state=seed
+    )
+
+    temp_stratify = [s['CLNDN'] for s in temp_data]
+    val_data, test_data = train_test_split(
+        temp_data,
+        test_size=test_split / (val_split + test_split),
+        stratify=temp_stratify,
+        random_state=seed
+    )
+
+    print(f"Splits → Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+
+    # Print class distribution
+    from collections import Counter
+    for split_name, split_data in [('Train', train_data), ('Val', val_data), ('Test', test_data)]:
+        clndn_counts = Counter(s['CLNDN'] for s in split_data)
+        clnsig_counts = Counter(s['CLNSIG'] for s in split_data)
+        print(f"  {split_name} - CLNDN: {dict(clndn_counts)}, CLNSIG: {dict(clnsig_counts)}")
+
+    # Create datasets
+    datasets = {
+        'train': MultiLabelDataset(train_data, tokenizer, task_configs, seq_length),
+        'val': MultiLabelDataset(val_data, tokenizer, task_configs, seq_length),
+        'test': MultiLabelDataset(test_data, tokenizer, task_configs, seq_length),
+    }
+
+    # Task num_classes for trainer
+    task_num_classes = {task: cfg['num_classes'] for task, cfg in task_configs.items()}
+
+    return datasets, task_num_classes, task_configs, seq_length
+
+
+# =============================================================================
+# Original single-label dataset classes below
+# =============================================================================
 def split_train_val(dataset_train, val_split=0.1, seed=42):
     """
     Randomly split dataset into train and validation sets.
@@ -302,7 +580,8 @@ def return_multitask_dataset(
             raw_data = wrapper.get_multitask_data(Seq_length=seq_length, threshold=threshold)
 
             if include_clndn:
-                clndn_data = [(([r, a, None],), d) for r, a, d, s in raw_data if d in disease_to_id]
+                # Format: ([ref, alt, None], label) - item[0] must be a list with 3 elements
+                clndn_data = [([r, a, None], d) for r, a, d, s in raw_data if d in disease_to_id]
                 labels = [x[1] for x in clndn_data]
                 train, temp = train_test_split(clndn_data, test_size=test_split + val_split, stratify=labels, random_state=seed)
                 val, test = train_test_split(temp, test_size=test_split/(val_split+test_split), stratify=[x[1] for x in temp], random_state=seed)
@@ -313,7 +592,8 @@ def return_multitask_dataset(
                 print(f"CLNDN → Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
 
             if include_clnsig:
-                clnsig_data = [(([r, a, None],), 1 if s >= threshold else 0) for r, a, d, s in raw_data]
+                # Format: ([ref, alt, None], label) - item[0] must be a list with 3 elements
+                clnsig_data = [([r, a, None], 1 if s >= threshold else 0) for r, a, d, s in raw_data]
                 labels = [x[1] for x in clnsig_data]
                 train, temp = train_test_split(clnsig_data, test_size=test_split + val_split, stratify=labels, random_state=seed)
                 val, test = train_test_split(temp, test_size=test_split/(val_split+test_split), stratify=[x[1] for x in temp], random_state=seed)

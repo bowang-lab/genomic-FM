@@ -10,7 +10,6 @@ from typing import Any, Optional, Dict, Sequence, Tuple, List, Union
 
 import transformers
 from transformers import (
-    AutoModelForSequenceClassification,
     AutoModel,
     AutoModelForMaskedLM,
     TrainingArguments,
@@ -20,9 +19,16 @@ from transformers import (
 )
 from accelerate import Accelerator
 # Import from local modules
-from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator, return_smart_dataset, return_multitask_dataset
+from .hf_dataloader import (
+    return_clinvar_multitask_dataset,
+    MultiTaskDataCollator,
+    return_smart_dataset,
+    return_multitask_dataset,
+    return_multilabel_dataset,
+    MultiLabelDataCollator,
+)
 from .wrap_model import WrappedModelWithClassificationHead
-from ..tunable_model.hf_trainer import MultitaskTrainer
+from ..tunable_model.hf_trainer import MultitaskTrainer, AllHeadsMultitaskTrainer
 # from .seq_pack import FramePackCausalLM
 
 class SafeDistributedTrainer(Trainer):
@@ -92,10 +98,11 @@ def compute_metrics(eval_pred):
     return calculate_metric_with_sklearn(predictions, labels)
 
 def get_model_and_tokenizer(model_type: str):
-    """Load base model and tokenizer for the specified model type."""
+    """Load base model and tokenizer. Uses appropriate loader per model (trainers add their own heads)."""
+    from transformers import AutoModelForCausalLM
+
     local_model_base = f"./root/models/{model_type}"
 
-    # Model path resolution
     if model_type == 'omni_dna_116m':
         model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-116M"
     elif model_type == 'nt':
@@ -119,11 +126,14 @@ def get_model_and_tokenizer(model_type: str):
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Load model
-    if model_type == 'gpn-star':
+    # Use appropriate model class based on what each model supports
+    if model_type in ['gpn-star', 'nt']:
         model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True)
+    elif model_type == 'omni_dna_116m':
+        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
     else:
-        model = AutoModelForSequenceClassification.from_pretrained(model_path, trust_remote_code=True)
+        # dnabert2, hyenadna, caduceus, gena-lm support AutoModel
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     print(f"Using model from {model_path}")
@@ -242,17 +252,14 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
-    # Load base model - use appropriate model class based on model type
-    if model_type == 'gpn-star':
-        base_model = AutoModelForMaskedLM.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
+    # Load base model (trainers/wrappers add their own heads)
+    from transformers import AutoModelForCausalLM
+    if model_type in ['gpn-star', 'nt']:
+        base_model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True)
+    elif model_type == 'omni_dna_116m':
+        base_model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
     else:
-        base_model = AutoModelForSequenceClassification.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
     
     # Load checkpoint weights if provided
     if checkpoint_weights_path and os.path.exists(checkpoint_weights_path):
@@ -382,11 +389,11 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     print(f"Test metrics appended to {results_file}")
 
 
-def run_multitask_finetune(seed, model_type='nt', learning_rate=0.000005, batch_size=8,
+def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0.000005, batch_size=8,
                            num_epochs=10, max_grad_norm=1.0, num_workers=8, threshold=65.0,
                            include_clndn=True, include_clnsig=True, include_maves=False,
                            data_source='smart'):
-    """Run multi-task training with any combination of CLNDN, CLNSIG, MAVES."""
+    """Run multi-task training with any combination of CLNDN, CLNSIG, MAVES (task-routing style)."""
     set_seed(seed)
 
     path_prefix = "./root/models"
@@ -399,12 +406,14 @@ def run_multitask_finetune(seed, model_type='nt', learning_rate=0.000005, batch_
 
     tasks = list(task_num_classes.keys())
     print(f"Multi-task training with: {tasks}")
+    print(f"Decoder mode: {decoder}")
 
     # Pick first available validation set
     eval_ds = next((datasets.get(f"{t}_val") for t in tasks if datasets.get(f"{t}_val")), None)
 
     trainer = MultitaskTrainer(
         task_num_classes=task_num_classes,
+        decoder=decoder,
         model=model,
         args=TrainingArguments(
             output_dir=f"{path_prefix}/smart_multitask_{model_type}_{'_'.join(tasks)}",
@@ -431,6 +440,89 @@ def run_multitask_finetune(seed, model_type='nt', learning_rate=0.000005, batch_
             print(f"Test Metrics for {task}: {trainer.evaluate(eval_dataset=test_ds)}")
 
 
+def run_allheads_multitask_finetune(
+    seed,
+    model_type='nt',
+    decoder=False,
+    learning_rate=0.000005,
+    batch_size=8,
+    num_epochs=10,
+    max_grad_norm=1.0,
+    num_workers=8,
+    threshold=65.0,
+    csv_path='root/data/unfiltered_variants.csv',
+    data_source='smart',
+):
+    """
+    AlphaGenome-style multitask training: ALL heads evaluated for EVERY sample.
+
+    Uses paired CLNDN + CLNSIG labels from SMART data.
+    Both classification heads get gradients from every variant.
+    """
+    set_seed(seed)
+
+    path_prefix = "./root/models"
+    model, tokenizer = get_model_and_tokenizer(model_type)
+
+    # Load multi-label dataset (paired CLNDN + CLNSIG)
+    datasets, task_num_classes, task_configs, seq_length = return_multilabel_dataset(
+        tokenizer,
+        csv_path=csv_path,
+        threshold=threshold,
+        seed=seed,
+    )
+
+    task_names = list(task_num_classes.keys())
+    print(f"\n{'='*60}")
+    print(f"AlphaGenome-style Multi-Task Training")
+    print(f"{'='*60}")
+    print(f"Tasks: {task_names}")
+    print(f"Task classes: {task_num_classes}")
+    print(f"Model: {model_type}")
+    print(f"Decoder mode: {decoder}")
+    print(f"{'='*60}\n")
+
+    # Create trainer (custom evaluate handles per-task metrics)
+    trainer = AllHeadsMultitaskTrainer(
+        task_num_classes=task_num_classes,
+        decoder=decoder,
+        label_smoothing=0.1,
+        model=model,
+        args=TrainingArguments(
+            output_dir=f"{path_prefix}/allheads_multitask_{model_type}_CLNDN_CLNSIG",
+            learning_rate=learning_rate,
+            max_grad_norm=max_grad_norm,
+            per_device_train_batch_size=batch_size,
+            per_device_eval_batch_size=batch_size,
+            num_train_epochs=num_epochs,
+            save_total_limit=5,
+            eval_strategy="epoch",
+            save_strategy="epoch",
+            metric_for_best_model="matthews_correlation",
+            greater_is_better=True,
+            load_best_model_at_end=True,
+            save_safetensors=False,
+            remove_unused_columns=False,
+            dataloader_num_workers=num_workers,
+        ),
+        train_dataset=datasets['train'],
+        eval_dataset=datasets['val'],
+        data_collator=MultiLabelDataCollator(tokenizer, task_names),
+    )
+
+    # Train
+    trainer.train()
+
+    # Evaluate on test set
+    print(f"\n{'='*60}")
+    print("Test Set Evaluation")
+    print(f"{'='*60}")
+    test_metrics = trainer.evaluate(eval_dataset=datasets['test'])
+    print(f"Test Metrics: {test_metrics}")
+
+    return trainer, test_metrics
+
+
 def main():
     parser = argparse.ArgumentParser(description="SMART model fine-tuning (single or multi-task)")
     parser.add_argument("--model", type=str, default='nt', help="Model type")
@@ -442,6 +534,7 @@ def main():
     parser.add_argument("--task", type=str, default="CLNDN", choices=["CLNDN", "CLNSIG"],
                         help="Single task mode")
     parser.add_argument("--multitask", action="store_true", help="Enable multi-task mode")
+    parser.add_argument("--allheads", action="store_true", help="AlphaGenome-style: all heads per sample")
     parser.add_argument("--data_source", type=str, default='smart', choices=['smart', 'clinvar'],
                         help="Data source for classification tasks")
     parser.add_argument("--clndn", action="store_true", help="Include CLNDN (disease) in multi-task")
@@ -462,15 +555,38 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
 
-    if args.multitask:
-        # Default to all tasks if none specified
+    if args.allheads:
+        # AlphaGenome-style: all heads evaluated for every sample
+        run_allheads_multitask_finetune(
+            seed=args.seed,
+            model_type=args.model,
+            decoder=args.decoder,
+            learning_rate=args.learning_rate,
+            batch_size=args.batch_size,
+            num_epochs=args.num_epochs,
+            max_grad_norm=args.max_grad_norm,
+            num_workers=args.num_workers,
+            threshold=args.threshold,
+            data_source=args.data_source
+        )
+    elif args.multitask:
+        # Task-routing: each sample goes to one head
         clndn = args.clndn or (not args.clndn and not args.clnsig and not args.maves)
         clnsig = args.clnsig or (not args.clndn and not args.clnsig and not args.maves)
         maves = args.maves
         run_multitask_finetune(
-            args.seed, args.model, args.learning_rate, args.batch_size,
-            args.num_epochs, args.max_grad_norm, args.num_workers, args.threshold,
-            include_clndn=clndn, include_clnsig=clnsig, include_maves=maves,
+            seed=args.seed,
+            model_type=args.model,
+            decoder=args.decoder,
+            learning_rate=args.learning_rate,
+            batch_size=args.batch_size,
+            num_epochs=args.num_epochs,
+            max_grad_norm=args.max_grad_norm,
+            num_workers=args.num_workers,
+            threshold=args.threshold,
+            include_clndn=clndn,
+            include_clnsig=clnsig,
+            include_maves=maves,
             data_source=args.data_source
         )
     else:

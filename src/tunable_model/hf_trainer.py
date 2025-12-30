@@ -17,7 +17,6 @@ from transformers import (
 )
 current_dir = os.path.dirname(os.path.abspath(__file__))
 test_only = False
-decoder = False
 # Navigate to the parent of the parent directory
 # olmo_repo_path = os.path.abspath(os.path.join(current_dir, "..", "..", "OLmo-GFM"))
 # sys.path.append(olmo_repo_path)
@@ -62,16 +61,256 @@ def compute_metrics(eval_pred):
     predictions, labels = eval_pred
     return calculate_metric_with_sklearn(predictions, labels)
 
+class AllHeadsMultitaskTrainer(transformers.Trainer):
+    """AlphaGenome-style trainer: all heads evaluated for every sample."""
+
+    IGNORE_INDEX = -100
+
+    def __init__(
+        self,
+        task_num_classes: Dict[str, int],
+        decoder: bool = False,
+        label_smoothing: float = 0.1,
+        *args,
+        **kwargs
+    ):
+        """
+        Args:
+            task_num_classes: Dict mapping task names to number of classes
+                              e.g., {'CLNDN': 4, 'CLNSIG': 2}
+            decoder: Whether to use decoder-style (last token) pooling
+            label_smoothing: Label smoothing factor for classification
+        """
+        self.task_num_classes = task_num_classes
+        self.task_names = list(task_num_classes.keys())
+        self.decoder = decoder
+        self.label_smoothing = label_smoothing
+        super().__init__(*args, **kwargs)
+
+        # Initialize task heads after model is set
+        self._initialize_task_heads()
+
+    def _initialize_task_heads(self):
+        """Initialize all task-specific classification heads upfront."""
+        model = self.model
+
+        if not hasattr(model, 'task_heads'):
+            model.task_heads = torch.nn.ModuleDict()
+
+        hidden_size = model.config.hidden_size
+
+        for task, num_classes in self.task_num_classes.items():
+            if task not in model.task_heads:
+                # MLP head (similar to wrap_model.py)
+                model.task_heads[task] = torch.nn.Sequential(
+                    torch.nn.Linear(hidden_size, 128),
+                    torch.nn.ReLU(),
+                    torch.nn.Dropout(0.1),
+                    torch.nn.Linear(128, num_classes)
+                ).to(model.device)
+                print(f"Initialized head for {task}: {num_classes} classes")
+
+    def _get_shared_embeddings(self, model, inputs):
+        """Get shared embeddings from ref/alt sequences."""
+        outputs_ref = model(
+            input_ids=inputs['ref_input_ids'],
+            attention_mask=inputs['ref_attention_mask'],
+            output_hidden_states=True
+        )
+        outputs_alt = model(
+            input_ids=inputs['alt_input_ids'],
+            attention_mask=inputs['alt_attention_mask'],
+            output_hidden_states=True
+        )
+
+        if not self.decoder:
+            # Encoder models: use [CLS] token (first token)
+            hidden_ref = outputs_ref.hidden_states[-1][:, 0, :]
+            hidden_alt = outputs_alt.hidden_states[-1][:, 0, :]
+        else:
+            # Decoder models: use last token
+            ref_attention_mask = inputs['ref_attention_mask']
+            alt_attention_mask = inputs['alt_attention_mask']
+
+            hidden_ref_full = outputs_ref.hidden_states[-1]
+            hidden_alt_full = outputs_alt.hidden_states[-1]
+
+            ref_seq_lens = ref_attention_mask.sum(dim=-1)
+            alt_seq_lens = alt_attention_mask.sum(dim=-1)
+            batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_ref_full.device)
+
+            hidden_ref = hidden_ref_full[batch_index, ref_seq_lens - 1, :]
+            hidden_alt = hidden_alt_full[batch_index, alt_seq_lens - 1, :]
+
+        # Compute difference (variant effect representation)
+        embeddings = hidden_alt - hidden_ref
+
+        return embeddings, outputs_ref, outputs_alt
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """
+        Compute loss by evaluating ALL heads and summing losses.
+
+        AlphaGenome-style: L_total = Σ L_h (sum over all heads)
+        """
+        # Ensure task heads exist
+        if not hasattr(model, 'task_heads') or len(model.task_heads) == 0:
+            self._initialize_task_heads()
+
+        # Get shared embeddings
+        embeddings, outputs_ref, outputs_alt = self._get_shared_embeddings(model, inputs)
+
+        # Evaluate ALL heads and compute losses
+        head_losses = []
+        all_logits = {}
+
+        for task in self.task_names:
+            # Get labels for this task
+            labels = inputs.get(f"label_{task}")
+            if labels is None:
+                continue
+
+            # Forward through task head
+            logits = model.task_heads[task](embeddings)
+            all_logits[task] = logits
+
+            # Create mask for valid labels (not IGNORE_INDEX)
+            valid_mask = labels != self.IGNORE_INDEX
+
+            if valid_mask.sum() > 0:
+                # Compute loss only on valid samples
+                valid_logits = logits[valid_mask]
+                valid_labels = labels[valid_mask]
+
+                # Classification loss with label smoothing
+                task_loss = torch.nn.functional.cross_entropy(
+                    valid_logits,
+                    valid_labels,
+                    label_smoothing=self.label_smoothing
+                )
+                head_losses.append(task_loss)
+
+        # Sum losses across heads (AlphaGenome-style)
+        if head_losses:
+            total_loss = torch.stack(head_losses).sum()
+        else:
+            total_loss = torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+
+        if return_outputs:
+            # Return logits for primary task (first task) for metrics
+            primary_task = self.task_names[0]
+            primary_logits = all_logits.get(primary_task, embeddings)
+            return (total_loss, (primary_logits, outputs_ref))
+
+        return total_loss
+
+    def prediction_step(
+        self,
+        model: torch.nn.Module,
+        inputs: Dict[str, Union[torch.Tensor, Any]],
+        prediction_loss_only: bool,
+        ignore_keys: Optional[List[str]] = None,
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Prediction step with all-heads evaluation."""
+
+        with torch.no_grad():
+            # Ensure task heads exist
+            if not hasattr(model, 'task_heads') or len(model.task_heads) == 0:
+                self._initialize_task_heads()
+
+            # Get shared embeddings
+            embeddings, _, _ = self._get_shared_embeddings(model, inputs)
+
+            # Compute all head outputs and losses
+            head_losses = []
+            all_logits = {}
+
+            for task in self.task_names:
+                labels = inputs.get(f"label_{task}")
+                if labels is None:
+                    continue
+
+                logits = model.task_heads[task](embeddings)
+                all_logits[task] = logits
+
+                valid_mask = labels != self.IGNORE_INDEX
+                if valid_mask.sum() > 0:
+                    valid_logits = logits[valid_mask]
+                    valid_labels = labels[valid_mask]
+                    task_loss = torch.nn.functional.cross_entropy(
+                        valid_logits, valid_labels, label_smoothing=self.label_smoothing
+                    )
+                    head_losses.append(task_loss)
+
+            loss = torch.stack(head_losses).sum() if head_losses else None
+
+            # Return logits and labels for primary task
+            primary_task = self.task_names[0]
+            primary_logits = all_logits.get(primary_task)
+            primary_labels = inputs.get(f"label_{primary_task}")
+
+            return loss, primary_logits, primary_labels
+
+    def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
+        """Evaluate all tasks and return per-task metrics."""
+        if eval_dataset is None:
+            eval_dataset = self.eval_dataset
+
+        model = self.model
+        model.eval()
+        dataloader = self.get_eval_dataloader(eval_dataset)
+
+        # Collect predictions per task
+        task_preds = {task: [] for task in self.task_names}
+        task_labels = {task: [] for task in self.task_names}
+        total_loss = 0.0
+        num_batches = 0
+
+        for inputs in dataloader:
+            inputs = self._prepare_inputs(inputs)
+            with torch.no_grad():
+                embeddings, _, _ = self._get_shared_embeddings(model, inputs)
+                for task in self.task_names:
+                    labels = inputs.get(f"label_{task}")
+                    if labels is None:
+                        continue
+                    logits = model.task_heads[task](embeddings)
+                    preds = torch.argmax(logits, dim=-1)
+
+                    valid_mask = labels != self.IGNORE_INDEX
+                    task_preds[task].extend(preds[valid_mask].cpu().numpy())
+                    task_labels[task].extend(labels[valid_mask].cpu().numpy())
+
+        # Compute per-task metrics
+        metrics = {}
+        for task in self.task_names:
+            if len(task_preds[task]) > 0:
+                preds = np.array(task_preds[task])
+                labels = np.array(task_labels[task])
+                metrics[f"{metric_key_prefix}_{task}_accuracy"] = sklearn.metrics.accuracy_score(labels, preds)
+                metrics[f"{metric_key_prefix}_{task}_f1"] = sklearn.metrics.f1_score(labels, preds, average="macro", zero_division=0)
+                metrics[f"{metric_key_prefix}_{task}_mcc"] = sklearn.metrics.matthews_corrcoef(labels, preds)
+
+        # Average MCC across tasks for model selection
+        mccs = [v for k, v in metrics.items() if k.endswith("_mcc")]
+        metrics[f"{metric_key_prefix}_matthews_correlation"] = np.mean(mccs) if mccs else 0.0
+
+        return metrics
+
+
 class MultitaskTrainer(transformers.Trainer):
-    def __init__(self, task_num_classes, *args, **kwargs):
+    """Task-routing trainer: each sample goes to one head based on task_name."""
+
+    def __init__(self, task_num_classes, decoder=False, *args, **kwargs):
         """
         Initialize MultitaskTrainer with task-specific number of classes and datasets.
 
         Args:
             task_num_classes (dict): Dictionary mapping task names to number of classes
-            multitask_datasets (dict): Dictionary of datasets for different tasks
+            decoder (bool): Whether to use decoder-style (last token) or encoder-style ([CLS] token) pooling
         """
         self.task_num_classes = task_num_classes
+        self.decoder = decoder
         super().__init__(*args, **kwargs)
 
     def _save_state_dict(self):
@@ -116,25 +355,24 @@ class MultitaskTrainer(transformers.Trainer):
                 output_hidden_states=True
             )
             logits = None
-            if not decoder:
+            if not self.decoder:
                 last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
                 last_hidden_state_alt = outputs_alt.hidden_states[-1][:,0,:]
                 last_hidden_state = last_hidden_state_alt - last_hidden_state_ref
-                logits = torch.zeros(
-                    (len(task_names), self.task_num_classes[task_names[0]]),
-                    device=last_hidden_state.device
-                )
+                # Use list to handle different output sizes per task
+                logits_list = []
                 for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
-                    logits[i] = model.task_classification_heads[task](hidden_state)
+                    logits_list.append(model.task_classification_heads[task](hidden_state))
+                logits = torch.stack(logits_list, dim=0)
             else:
-                ref_input_ids = inputs['ref_input_ids']
+                # Decoder-only models (HyenaDNA, OmniDNA): use last token
                 ref_attention_mask = inputs['ref_attention_mask']
-                alt_input_ids = inputs['alt_input_ids']
                 alt_attention_mask = inputs['alt_attention_mask']
 
                 # shape: (batch_size, seq_len, hidden_dim)
-                hidden_ref = outputs_ref.decoder_hidden_states[-1]
-                hidden_alt = outputs_alt.decoder_hidden_states[-1]
+                # Use hidden_states for decoder-only models (HyenaDNA, OmniDNA)
+                hidden_ref = outputs_ref.hidden_states[-1]
+                hidden_alt = outputs_alt.hidden_states[-1]
 
                 # compute true sequence lengths so we know where the "last" token is
                 ref_seq_lens = ref_attention_mask.sum(dim=-1)  # (batch_size,)
@@ -143,30 +381,43 @@ class MultitaskTrainer(transformers.Trainer):
                 # build an index for batch dimension
                 batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_ref.device)
 
-                # select the last‐token vector for each example
+                # select the last-token vector for each example
                 last_ref = hidden_ref[batch_index, ref_seq_lens - 1, :]  # (batch_size, hidden_dim)
                 last_alt = hidden_alt[batch_index, alt_seq_lens - 1, :]  # (batch_size, hidden_dim)
 
                 # take the difference
                 last_hidden_state = last_alt - last_ref   # (batch_size, hidden_dim)
-                # run each sample’s difference vector through its task head
-                # (task_names is a list of length batch_size, one task per example)
-                logits = torch.stack([
-                    model.task_classification_heads[task](last_hidden_state[i])
-                    for i, task in enumerate(task_names)
-                ], dim=0)  # (batch_size, num_classes)
+                # run each sample's difference vector through its task head
+                logits_list = []
+                for i, task in enumerate(task_names):
+                    logits_list.append(model.task_classification_heads[task](last_hidden_state[i]))
+                logits = torch.stack(logits_list, dim=0)
 
+            # Compute per-sample loss based on task type (handles mixed batches)
+            losses = []
+            for i, task in enumerate(task_names):
+                sample_logits = logits[i:i+1]
+                sample_label = labels[i:i+1]
 
-            # Check if any task is regression (MAVES)
-            is_regression = any("MAVES" in t for t in unique_tasks)
-            if is_regression:
-                loss_fct = torch.nn.MSELoss()
-                loss = loss_fct(logits.squeeze(-1), labels.float())
-            else:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                loss = loss_fct(logits, labels)
+                if "MAVES" in task:
+                    # Regression task - use Huber loss (robust to outliers)
+                    sample_loss = torch.nn.functional.huber_loss(
+                        sample_logits.squeeze(-1),
+                        sample_label.float(),
+                        delta=1.0
+                    )
+                else:
+                    # Classification task - use CrossEntropy with label smoothing
+                    sample_loss = torch.nn.functional.cross_entropy(
+                        sample_logits,
+                        sample_label,
+                        label_smoothing=0.1
+                    )
+                losses.append(sample_loss)
 
-            return (loss, (logits, outputs)) if return_outputs else loss
+            loss = torch.stack(losses).mean()
+
+            return (loss, (logits, outputs_ref)) if return_outputs else loss
 
         # Default to standard trainer loss computation
         return super().compute_loss(model, inputs, return_outputs)
@@ -235,29 +486,25 @@ class MultitaskTrainer(transformers.Trainer):
             if not hasattr(model, 'task_classification_heads'):
                 raise ValueError("Task-specific classification heads not found. They should be created during training.")
 
-            if not decoder:
-                # Get last hidden state
+            if not self.decoder:
+                # Encoder models: use [CLS] token (first token)
                 last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
                 last_hidden_state_alt = outputs_alt.hidden_states[-1][:,0,:]
                 last_hidden_state = last_hidden_state_alt - last_hidden_state_ref
 
-                # Prepare logits using task-specific heads
-                logits = torch.zeros(
-                    (len(task_names), self.task_num_classes[task_names[0]]),
-                    device=last_hidden_state.device
-                )
                 # Apply task-specific heads
+                logits_list = []
                 for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
-                    logits[i] = model.task_classification_heads[task](hidden_state)
+                    logits_list.append(model.task_classification_heads[task](hidden_state))
+                logits = torch.stack(logits_list, dim=0)
             else:
-                ref_input_ids = inputs['ref_input_ids']
+                # Decoder-only models: use last token
                 ref_attention_mask = inputs['ref_attention_mask']
-                alt_input_ids = inputs['alt_input_ids']
                 alt_attention_mask = inputs['alt_attention_mask']
 
                 # shape: (batch_size, seq_len, hidden_dim)
-                hidden_ref = outputs_ref.decoder_hidden_states[-1]
-                hidden_alt = outputs_alt.decoder_hidden_states[-1]
+                hidden_ref = outputs_ref.hidden_states[-1]
+                hidden_alt = outputs_alt.hidden_states[-1]
 
                 # compute true sequence lengths so we know where the "last" token is
                 ref_seq_lens = ref_attention_mask.sum(dim=-1)  # (batch_size,)
@@ -266,24 +513,43 @@ class MultitaskTrainer(transformers.Trainer):
                 # build an index for batch dimension
                 batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_ref.device)
 
-                # select the last‐token vector for each example
+                # select the last-token vector for each example
                 last_ref = hidden_ref[batch_index, ref_seq_lens - 1, :]  # (batch_size, hidden_dim)
                 last_alt = hidden_alt[batch_index, alt_seq_lens - 1, :]  # (batch_size, hidden_dim)
 
                 # take the difference
                 last_hidden_state = last_alt - last_ref   # (batch_size, hidden_dim)
-                # run each sample’s difference vector through its task head
-                # (task_names is a list of length batch_size, one task per example)
-                logits = torch.stack([
-                    model.task_classification_heads[task](last_hidden_state[i])
-                    for i, task in enumerate(task_names)
-                ], dim=0)  # (batch_size, num_classes)
+                # run each sample's difference vector through its task head
+                logits_list = []
+                for i, task in enumerate(task_names):
+                    logits_list.append(model.task_classification_heads[task](last_hidden_state[i]))
+                logits = torch.stack(logits_list, dim=0)
 
-            # Compute loss if needed
+            # Compute loss if needed (per-sample to handle mixed batches)
             loss = None
             if not prediction_loss_only:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                loss = loss_fct(logits, labels)
+                losses = []
+                for i, task in enumerate(task_names):
+                    sample_logits = logits[i:i+1]
+                    sample_label = labels[i:i+1]
+
+                    if "MAVES" in task:
+                        # Regression task
+                        sample_loss = torch.nn.functional.huber_loss(
+                            sample_logits.squeeze(-1),
+                            sample_label.float(),
+                            delta=1.0
+                        )
+                    else:
+                        # Classification task
+                        sample_loss = torch.nn.functional.cross_entropy(
+                            sample_logits,
+                            sample_label,
+                            label_smoothing=0.1
+                        )
+                    losses.append(sample_loss)
+
+                loss = torch.stack(losses).mean()
 
             # Restore task_names to inputs for potential future use
             if task_names is not None:
