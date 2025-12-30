@@ -116,7 +116,7 @@ def return_smart_dataset(
     csv_path: str,
     target: str = 'score',  # 'disease' for disease classification, 'score' for pathogenicity
     task_name: str = 'CLNDN',  # For dataset naming only
-    threshold: float = 50.0,  # For pathogenicity: binarization cutoff; For disease: minimum pathogenicity score
+    threshold: float = 65.0,  # For pathogenicity: binarization cutoff; For disease: minimum pathogenicity score
     seq_length: int = 1024,
     val_split: float = 0.1,
     test_split: float = 0.1,
@@ -232,6 +232,117 @@ def return_smart_dataset(
     print(f"Max sequence length: {max_seq_len}")
 
     return multitask_datasets, task_num_classes, max_seq_len
+
+
+def return_multitask_dataset(
+    tokenizer: PreTrainedTokenizer,
+    data_source: str = 'smart',  # 'smart' or 'clinvar'
+    csv_path: str = 'root/data/unfiltered_variants.csv',
+    threshold: float = 65.0,
+    seq_length: int = 1024,
+    val_split: float = 0.1,
+    test_split: float = 0.1,
+    seed: int = 42,
+    all_records: bool = True,
+    num_records: int | None = None,
+    include_clndn: bool = True,
+    include_clnsig: bool = True,
+    include_maves: bool = False,
+    maves_max_samples: int | None = None,
+):
+    """
+    Load dataset for multi-task learning with any combination of CLNDN, CLNSIG, and MAVES.
+
+    Args:
+        data_source: 'smart' or 'clinvar' for classification tasks
+        include_clndn: Include disease classification task
+        include_clnsig: Include pathogenicity classification task
+        include_maves: Include MAVES regression task (DMS data)
+
+    Returns:
+        tuple: (datasets_dict, task_num_classes, max_seq_len)
+    """
+    from sklearn.model_selection import train_test_split
+
+    tokenizer.model_max_length = seq_length
+    train_datasets = []
+    datasets = {}
+    task_num_classes = {}
+
+    pathogenicity_to_id = {0: 0, 1: 1}
+
+    # Load classification data from chosen source
+    if include_clndn or include_clnsig:
+        if data_source == 'clinvar':
+            # Use ClinVar data
+            clinvar_ds, clinvar_info, _ = return_clinvar_multitask_dataset(
+                tokenizer, target='CLNDN' if include_clndn else 'CLNSIG',
+                seq_length=seq_length, val_split=val_split, test_split=test_split, seed=seed
+            )
+            if include_clndn and 'train' in clinvar_ds:
+                train_datasets.append(clinvar_ds['train'])
+                datasets['CLNDN_val'] = clinvar_ds.get('CLNDN_val')
+                datasets['CLNDN_test'] = clinvar_ds.get('CLNDN_test')
+                task_num_classes['CLNDN'] = clinvar_info.get('CLNDN', 2)
+            if include_clnsig:
+                clnsig_ds, clnsig_info, _ = return_clinvar_multitask_dataset(
+                    tokenizer, target='CLNSIG', seq_length=seq_length, seed=seed
+                )
+                if 'train' in clnsig_ds:
+                    train_datasets.append(clnsig_ds['train'])
+                datasets['CLNSIG_val'] = clnsig_ds.get('CLNSIG_val')
+                datasets['CLNSIG_test'] = clnsig_ds.get('CLNSIG_test')
+                task_num_classes['CLNSIG'] = 2
+        else:
+            # Use SMART data
+            disease_labels = sorted(['Aortopathy', 'Arrhythmia', 'Cardiomyopathy', 'Structural defect'])
+            disease_to_id = {label: idx for idx, label in enumerate(disease_labels)}
+
+            wrapper = SmartVariantDataWrapper(csv_path=csv_path, num_records=num_records or 0, all_records=all_records)
+            raw_data = wrapper.get_multitask_data(Seq_length=seq_length, threshold=threshold)
+
+            if include_clndn:
+                clndn_data = [(([r, a, None],), d) for r, a, d, s in raw_data if d in disease_to_id]
+                labels = [x[1] for x in clndn_data]
+                train, temp = train_test_split(clndn_data, test_size=test_split + val_split, stratify=labels, random_state=seed)
+                val, test = train_test_split(temp, test_size=test_split/(val_split+test_split), stratify=[x[1] for x in temp], random_state=seed)
+                train_datasets.append(ClinVarDataset(train, tokenizer, 'CLNDN', disease_to_id))
+                datasets['CLNDN_val'] = ClinVarDataset(val, tokenizer, 'CLNDN', disease_to_id)
+                datasets['CLNDN_test'] = ClinVarDataset(test, tokenizer, 'CLNDN', disease_to_id)
+                task_num_classes['CLNDN'] = len(disease_labels)
+                print(f"CLNDN → Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
+
+            if include_clnsig:
+                clnsig_data = [(([r, a, None],), 1 if s >= threshold else 0) for r, a, d, s in raw_data]
+                labels = [x[1] for x in clnsig_data]
+                train, temp = train_test_split(clnsig_data, test_size=test_split + val_split, stratify=labels, random_state=seed)
+                val, test = train_test_split(temp, test_size=test_split/(val_split+test_split), stratify=[x[1] for x in temp], random_state=seed)
+                train_datasets.append(ClinVarDataset(train, tokenizer, 'CLNSIG', pathogenicity_to_id))
+                datasets['CLNSIG_val'] = ClinVarDataset(val, tokenizer, 'CLNSIG', pathogenicity_to_id)
+                datasets['CLNSIG_test'] = ClinVarDataset(test, tokenizer, 'CLNSIG', pathogenicity_to_id)
+                task_num_classes['CLNSIG'] = 2
+                print(f"CLNSIG → Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
+
+    # Load MAVES if enabled
+    if include_maves:
+        maves_ds, maves_info, _ = return_maves_dataset(
+            tokenizer, target="score", seq_length=seq_length, seed=seed,
+            max_samples_per_experiment=maves_max_samples,
+        )
+        if 'train' in maves_ds:
+            train_datasets.append(maves_ds['train'])
+        for k, v in maves_ds.items():
+            if k != 'train':
+                datasets[k] = v
+        task_num_classes.update(maves_info)
+        print(f"MAVES added: {maves_info}")
+
+    if not train_datasets:
+        raise ValueError("At least one task must be enabled")
+
+    datasets['train'] = ConcatDataset(train_datasets) if len(train_datasets) > 1 else train_datasets[0]
+    return datasets, task_num_classes, seq_length
+
 
 class ClinVarDataset(Dataset):
     """Dataset for ClinVar variant data with separate tokenization for reference and alternative sequences."""

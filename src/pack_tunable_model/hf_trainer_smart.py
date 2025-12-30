@@ -20,10 +20,9 @@ from transformers import (
 )
 from accelerate import Accelerator
 # Import from local modules
-from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator, return_smart_dataset
-# from .hf_dataloader import return_smart_dataset, MultiTaskDataCollator
-# Import our custom wrapper model
+from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollator, return_smart_dataset, return_multitask_dataset
 from .wrap_model import WrappedModelWithClassificationHead
+from ..tunable_model.hf_trainer import MultitaskTrainer
 # from .seq_pack import FramePackCausalLM
 
 class SafeDistributedTrainer(Trainer):
@@ -92,9 +91,48 @@ def compute_metrics(eval_pred):
     predictions, labels = eval_pred
     return calculate_metric_with_sklearn(predictions, labels)
 
+def get_model_and_tokenizer(model_type: str):
+    """Load base model and tokenizer for the specified model type."""
+    local_model_base = f"./root/models/{model_type}"
+
+    # Model path resolution
+    if model_type == 'omni_dna_116m':
+        model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-116M"
+    elif model_type == 'nt':
+        model_path = local_model_base if os.path.exists(local_model_base) else "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+    elif model_type == 'dnabert2':
+        model_path = local_model_base if os.path.exists(local_model_base) else "zhihan1996/DNABERT-2-117M"
+    elif model_type == 'hyenadna':
+        model_path = "LongSafari/hyenadna-medium-160k-seqlen-hf"
+    elif model_type == 'caduceus':
+        model_path = "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
+    elif model_type == 'gena-lm':
+        model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
+    elif model_type == 'gpn-star':
+        local_gpn = "./root/models/gpn-star-hg38-v100-200m"
+        model_path = local_gpn if os.path.exists(local_gpn) else "songlab/gpn-star-hg38-v100-200m"
+    elif model_type == 'luca':
+        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
+        model = LucaGPLMModel.from_pretrained("LucaGroup/LucaOne-default-step36M")
+        tokenizer = LucaGPLMTokenizer.from_pretrained("LucaGroup/LucaOne-default-step36M")
+        return model, tokenizer
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+    # Load model
+    if model_type == 'gpn-star':
+        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True)
+    else:
+        model = AutoModelForSequenceClassification.from_pretrained(model_path, trust_remote_code=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    print(f"Using model from {model_path}")
+    return model, tokenizer
+
+
 def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
-                            max_grad_norm=1.0, num_workers=8, threshold=50.0, checkpoint_path=None, checkpoint_step=None,
+                            max_grad_norm=1.0, num_workers=8, threshold=65.0, checkpoint_path=None, checkpoint_step=None,
                             min_samples_per_class=2):
     set_seed(seed)
     accelerator = Accelerator()
@@ -343,56 +381,107 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     print(f"Test metrics appended to {results_file}")
 
+
+def run_multitask_finetune(seed, model_type='nt', learning_rate=0.000005, batch_size=8,
+                           num_epochs=10, max_grad_norm=1.0, num_workers=8, threshold=65.0,
+                           include_clndn=True, include_clnsig=True, include_maves=False,
+                           data_source='smart'):
+    """Run multi-task training with any combination of CLNDN, CLNSIG, MAVES."""
+    set_seed(seed)
+
+    path_prefix = "./root/models"
+    model, tokenizer = get_model_and_tokenizer(model_type)
+
+    datasets, task_num_classes, _ = return_multitask_dataset(
+        tokenizer, data_source=data_source, threshold=threshold, seed=seed,
+        include_clndn=include_clndn, include_clnsig=include_clnsig, include_maves=include_maves,
+    )
+
+    tasks = list(task_num_classes.keys())
+    print(f"Multi-task training with: {tasks}")
+
+    # Pick first available validation set
+    eval_ds = next((datasets.get(f"{t}_val") for t in tasks if datasets.get(f"{t}_val")), None)
+
+    trainer = MultitaskTrainer(
+        task_num_classes=task_num_classes,
+        model=model,
+        args=TrainingArguments(
+            output_dir=f"{path_prefix}/smart_multitask_{model_type}_{'_'.join(tasks)}",
+            learning_rate=learning_rate, max_grad_norm=max_grad_norm,
+            per_device_train_batch_size=batch_size, per_device_eval_batch_size=batch_size,
+            num_train_epochs=num_epochs, save_total_limit=5,
+            eval_strategy="epoch", save_strategy="epoch",
+            metric_for_best_model="matthews_correlation", greater_is_better=True,
+            load_best_model_at_end=True, save_safetensors=False,
+            remove_unused_columns=False, dataloader_num_workers=num_workers,
+        ),
+        train_dataset=datasets['train'],
+        eval_dataset=eval_ds,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+        compute_metrics=compute_metrics,
+        data_collator=MultiTaskDataCollator(tokenizer),
+    )
+
+    trainer.train()
+
+    for task in tasks:
+        test_ds = datasets.get(f"{task}_test") or datasets.get(f"MAVES_score_test")
+        if test_ds:
+            print(f"Test Metrics for {task}: {trainer.evaluate(eval_dataset=test_ds)}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Single-task fine-tune and evaluate model.")
-    parser.add_argument("--model", type=str, default='nt',
-                        help="Model type (e.g., omni_dna_116m, nt, dnabert2)")
-    parser.add_argument("--seed", type=int, default=127,
-                        help="Random seed value for training")
-    parser.add_argument("--decoder", action="store_true",
-                        help="Whether the model has a decoder architecture")
-    parser.add_argument("--test_only", action="store_true",
-                        help="Only run evaluation on the test set")
-    parser.add_argument("--task", type=str, default="CLNDN",
-                        choices=["CLNDN", "CLNSIG"],
-                        help="Prediction task: CLNDN (disease classification) or CLNSIG (pathogenicity)")
-    
+    parser = argparse.ArgumentParser(description="SMART model fine-tuning (single or multi-task)")
+    parser.add_argument("--model", type=str, default='nt', help="Model type")
+    parser.add_argument("--seed", type=int, default=127, help="Random seed")
+    parser.add_argument("--decoder", action="store_true", help="Decoder architecture")
+    parser.add_argument("--test_only", action="store_true", help="Only evaluate")
+
+    # Task selection
+    parser.add_argument("--task", type=str, default="CLNDN", choices=["CLNDN", "CLNSIG"],
+                        help="Single task mode")
+    parser.add_argument("--multitask", action="store_true", help="Enable multi-task mode")
+    parser.add_argument("--data_source", type=str, default='smart', choices=['smart', 'clinvar'],
+                        help="Data source for classification tasks")
+    parser.add_argument("--clndn", action="store_true", help="Include CLNDN (disease) in multi-task")
+    parser.add_argument("--clnsig", action="store_true", help="Include CLNSIG (pathogenicity) in multi-task")
+    parser.add_argument("--maves", action="store_true", help="Include MAVES (fitness) in multi-task")
+
     # Training hyperparameters
-    parser.add_argument("--learning_rate", type=float, default=0.000005,
-                        help="Learning rate for training")
-    parser.add_argument("--batch_size", type=int, default=8,
-                        help="Batch size per device for training and evaluation")
-    parser.add_argument("--num_epochs", type=int, default=10,
-                        help="Number of training epochs")
-    parser.add_argument("--max_grad_norm", type=float, default=1.0,
-                        help="Maximum gradient norm for clipping")
-    parser.add_argument("--num_workers", type=int, default=8,
-                        help="Number of dataloader workers")
-    parser.add_argument("--threshold", type=float, default=50.0,
-                        help="Threshold for binarizing smart scores (pathogenicity) or filtering disease variants")
-    parser.add_argument("--min_samples_per_class", type=int, default=2,
-                        help="Minimum samples per disease class")
-    parser.add_argument("--checkpoint_path", type=str, default=None,
-                        help="Path to pre-trained ClinVar checkpoint to load from")
-    parser.add_argument("--checkpoint_step", type=int, default=None,
-                        help="Specific checkpoint step to use (e.g., 369140). If not specified, uses the latest checkpoint.")
+    parser.add_argument("--learning_rate", type=float, default=0.000005)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--num_epochs", type=int, default=10)
+    parser.add_argument("--max_grad_norm", type=float, default=1.0)
+    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--threshold", type=float, default=65.0)
+    parser.add_argument("--min_samples_per_class", type=int, default=2)
+    parser.add_argument("--checkpoint_path", type=str, default=None)
+    parser.add_argument("--checkpoint_step", type=int, default=None)
 
     args = parser.parse_args()
-
-    # Configure logging
     logging.basicConfig(level=logging.INFO)
 
-    # Run with specified task
-    run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only,
-                            learning_rate=args.learning_rate,
-                            batch_size=args.batch_size,
-                            num_epochs=args.num_epochs,
-                            max_grad_norm=args.max_grad_norm,
-                            num_workers=args.num_workers,
-                            threshold=args.threshold,
-                            checkpoint_path=args.checkpoint_path,
-                            checkpoint_step=args.checkpoint_step,
-                            min_samples_per_class=args.min_samples_per_class)
+    if args.multitask:
+        # Default to all tasks if none specified
+        clndn = args.clndn or (not args.clndn and not args.clnsig and not args.maves)
+        clnsig = args.clnsig or (not args.clndn and not args.clnsig and not args.maves)
+        maves = args.maves
+        run_multitask_finetune(
+            args.seed, args.model, args.learning_rate, args.batch_size,
+            args.num_epochs, args.max_grad_norm, args.num_workers, args.threshold,
+            include_clndn=clndn, include_clnsig=clnsig, include_maves=maves,
+            data_source=args.data_source
+        )
+    else:
+        run_single_task_finetune(
+            args.task, args.seed, args.model, args.decoder, args.test_only,
+            learning_rate=args.learning_rate, batch_size=args.batch_size,
+            num_epochs=args.num_epochs, max_grad_norm=args.max_grad_norm,
+            num_workers=args.num_workers, threshold=args.threshold,
+            checkpoint_path=args.checkpoint_path, checkpoint_step=args.checkpoint_step,
+            min_samples_per_class=args.min_samples_per_class
+        )
 
 if __name__ == "__main__":
     main()

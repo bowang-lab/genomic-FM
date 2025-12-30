@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 from pathlib import Path
 import glob
 import os
@@ -754,7 +754,7 @@ class SmartVariantDataWrapper:
         insert_Ns: bool = True,
         progress_bar: bool = True,
         target: str = 'score',
-        threshold: float = 50.0,
+        threshold: float = 65.0,
         min_samples_per_class: int = 2,
     ) -> List[Tuple[Tuple[str, str], Union[float, str]]]:
         data: list[tuple[tuple[str, str], Union[float, str]]] = []
@@ -853,6 +853,61 @@ class SmartVariantDataWrapper:
             # Return the disease class as-is (already normalized from linking script)
             if disease_class in ['Aortopathy', 'Cardiomyopathy', 'Arrhythmia', 'Structural defect']:
                 return disease_class
-        
+
         # No disease class found
         return None
+
+    def get_multitask_data(
+        self,
+        Seq_length: int = 1024,
+        threshold: float = 65.0,
+        min_samples_per_class: int = 2,
+        progress_bar: bool = True,
+    ) -> List[Tuple[str, str, Optional[str], float]]:
+        """
+        Get data for multi-task learning with both disease class and smart score.
+
+        Returns:
+            List of (ref_seq, alt_seq, disease_class, smart_score) tuples.
+            disease_class may be None if not available.
+        """
+        data = []
+
+        iterator = range(self.num_records)
+        if progress_bar:
+            iterator = tqdm(iterator, desc="extracting multi-task variant contexts")
+
+        for idx in iterator:
+            row = self.variants.iloc[idx]
+
+            # Extract sequences
+            record = create_variant_record(
+                chrom=row["CHROM"],
+                pos=int(row["start"]),
+                ref=row["ref_allele"],
+                alt=row["alt_allele"],
+                variant_id=idx,
+            )
+            ref_seq, alt_seq = self.genome_extractor.extract_sequence_from_record(
+                record, sequence_length=Seq_length
+            )
+
+            if ref_seq is None or alt_seq is None:
+                continue
+
+            # Get smart score
+            smart_score = float(row["smart_score"])
+
+            # Get disease class (may be None)
+            disease_class = self._extract_disease_class(row)
+
+            data.append((ref_seq, alt_seq, disease_class, smart_score))
+
+        print(f"Loaded {len(data)} samples with multi-task labels")
+
+        # Count samples with disease labels
+        with_disease = sum(1 for d in data if d[2] is not None)
+        print(f"  Samples with disease class: {with_disease}")
+        print(f"  Samples without disease class: {len(data) - with_disease}")
+
+        return data

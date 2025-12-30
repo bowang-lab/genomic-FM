@@ -157,8 +157,14 @@ class MultitaskTrainer(transformers.Trainer):
                 ], dim=0)  # (batch_size, num_classes)
 
 
-            loss_fct = torch.nn.CrossEntropyLoss()
-            loss = loss_fct(logits, labels)
+            # Check if any task is regression (MAVES)
+            is_regression = any("MAVES" in t for t in unique_tasks)
+            if is_regression:
+                loss_fct = torch.nn.MSELoss()
+                loss = loss_fct(logits.squeeze(-1), labels.float())
+            else:
+                loss_fct = torch.nn.CrossEntropyLoss()
+                loss = loss_fct(logits, labels)
 
             return (loss, (logits, outputs)) if return_outputs else loss
 
