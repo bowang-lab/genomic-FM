@@ -54,7 +54,7 @@ TASKS="CLNDN CLNSIG"  # Options: CLNDN, CLNSIG, MAVES (or any combination)
 TRAINING_MODE="clinvar"  # Options: clinvar, smart
 
 # Thresholds for SMART mode (only used when TRAINING_MODE=smart)
-THRESHOLDS="50.0 55.0 60.0 65.0 70.0"
+THRESHOLDS="50.0 60.0 70.0 80.0"
 
 # Batch size
 BATCH_SIZE=32

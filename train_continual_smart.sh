@@ -40,18 +40,22 @@ fi
 # Checkpoint paths
 CLNDN_CHECKPOINT="root/models/pretrain_model_${MODEL}_CLNDN"
 CLNSIG_CHECKPOINT="root/models/pretrain_model_${MODEL}_CLNSIG"
+MAVES_DMS_CHECKPOINT="root/models/pretrain_model_${MODEL}_MAVES_score_DMS"
+MAVES_REGULATORY_CHECKPOINT="root/models/pretrain_model_${MODEL}_MAVES_score_REGULATORY"
 
 # Tasks to train on
 TASKS="CLNDN CLNSIG"
 
 # Thresholds to train
-THRESHOLDS="50.0 55.0 60.0 65.0 70.0"
+THRESHOLDS="50.0 60.0 70.0 80.0"
 
 echo "============================================"
 echo "Starting SMART Multi-Threshold Training from Checkpoints"
 echo "Model: $MODEL"
 echo "CLNDN Checkpoint: $CLNDN_CHECKPOINT"
 echo "CLNSIG Checkpoint: $CLNSIG_CHECKPOINT"
+echo "MAVES DMS Checkpoint: $MAVES_DMS_CHECKPOINT"
+echo "MAVES REGULATORY Checkpoint: $MAVES_REGULATORY_CHECKPOINT"
 echo "Tasks: $TASKS"
 echo "Thresholds: $THRESHOLDS"
 echo "============================================"
@@ -60,11 +64,15 @@ echo "============================================"
 PORT_COUNTER=0
 
 # Loop through each checkpoint
-for CHECKPOINT_NAME in "CLNDN" "CLNSIG"; do
+for CHECKPOINT_NAME in "CLNDN" "CLNSIG" "MAVES_DMS" "MAVES_REGULATORY"; do
     if [ "$CHECKPOINT_NAME" == "CLNDN" ]; then
         CHECKPOINT="$CLNDN_CHECKPOINT"
-    else
+    elif [ "$CHECKPOINT_NAME" == "CLNSIG" ]; then
         CHECKPOINT="$CLNSIG_CHECKPOINT"
+    elif [ "$CHECKPOINT_NAME" == "MAVES_DMS" ]; then
+        CHECKPOINT="$MAVES_DMS_CHECKPOINT"
+    else
+        CHECKPOINT="$MAVES_REGULATORY_CHECKPOINT"
     fi
 
     echo ""

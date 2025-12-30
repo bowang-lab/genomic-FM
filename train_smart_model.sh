@@ -42,15 +42,39 @@ echo "Starting SMART Multi-Threshold Training"
 echo "Model: $MODEL"
 echo "============================================"
 
+# MAVES filtering options
+MAVES_FILTER_FLAGS="--experimental_methods DMS"
+MAVES_LENGTH_FILTER="--seq_len_min 1 --seq_len_max 1024"
+
+# Run MAVES regression training first
+echo "=================================="
+echo "Starting MAVES score regression training (DMS)..."
+echo "=================================="
+accelerate launch --config_file configs/ddp.yaml --main_process_port 29498 \
+    -m src.pack_tunable_model.hf_trainer \
+    --model "$MODEL" \
+    --task MAVES \
+    --seed 127 \
+    --learning_rate 0.000005 \
+    --batch_size 64 \
+    --num_epochs 10 \
+    --max_grad_norm 1.0 \
+    --num_workers 8 \
+    $DECODER_FLAG \
+    $MAVES_FILTER_FLAGS \
+    $MAVES_LENGTH_FILTER \
+    2>&1 | tee logs/smart_MAVES_DMS_${SLURM_JOB_ID}.log
+
+echo "MAVES DMS training completed!"
+
 # Run multi-threshold training for CLNDN (disease classification)
 echo "=================================="
 echo "Starting multi-threshold CLNDN task training (disease classification)..."
 echo "=================================="
-accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart_finetune_multi_smart.py \
+accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 heart_finetune_smart.py \
     --model "$MODEL" \
     --seed 127 \
     --task CLNDN \
-    --continue_on_error \
     $DECODER_FLAG \
     2>&1 | tee logs/smart_multi_CLNDN_${SLURM_JOB_ID}.log
 
@@ -60,11 +84,10 @@ echo "Multi-threshold CLNDN training completed!"
 echo "=================================="
 echo "Starting multi-threshold CLNSIG task training (pathogenicity classification)..."
 echo "=================================="
-accelerate launch --config_file configs/ddp.yaml --main_process_port 29501 heart_finetune_multi_smart.py \
+accelerate launch --config_file configs/ddp.yaml --main_process_port 29501 heart_finetune_smart.py \
     --model "$MODEL" \
     --seed 127 \
     --task CLNSIG \
-    --continue_on_error \
     $DECODER_FLAG \
     2>&1 | tee logs/smart_multi_CLNSIG_${SLURM_JOB_ID}.log
 
