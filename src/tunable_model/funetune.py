@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--config", type=str, default="configs/finetune.yaml", help="Path to configuration file")
     parser.add_argument("--split_ratio", type=list, default=[0.8, 0.1, 0.1], help="Train, validation, test split ratio")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--num_workers", type=int, default=3, help="Number of workers for data loading")
     parser.add_argument("--logger", type=str, default="wandb", help="Logger to use (e.g. wandb, tensorboard)")
     parser.add_argument("--disk_chunk", type=int, default=2500, help="Number of chunks to split the data into for saving to disk")

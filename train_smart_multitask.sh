@@ -61,7 +61,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --maves \
     --threshold 65 \
     --learning_rate 0.000005 \
-    --batch_size 64 \
+    --batch_size 32 \
     --num_epochs 10 \
     $DECODER_FLAG \
     2>&1 | tee logs/smart_multitask_${SLURM_JOB_ID}.log
