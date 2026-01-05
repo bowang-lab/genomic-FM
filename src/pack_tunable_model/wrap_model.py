@@ -98,8 +98,11 @@ class WrappedModelWithClassificationHead(nn.Module):
             raise ValueError("Both ref_input_ids and alt_input_ids must be provided")
 
         # Process reference sequence
-        # Check if model is HyenaDNA (doesn't support attention_mask)
-        if hasattr(self.base_model, '__class__') and 'HyenaDNA' in str(self.base_model.__class__):
+        # Check if model doesn't support attention_mask (HyenaDNA, Caduceus/Mamba)
+        model_class_name = str(self.base_model.__class__)
+        skip_attention_mask = any(name in model_class_name for name in ['HyenaDNA', 'Caduceus', 'Mamba'])
+
+        if skip_attention_mask:
             outputs_ref = self.base_model(
                 input_ids=ref_input_ids,
                 output_hidden_states=True,
@@ -114,8 +117,7 @@ class WrappedModelWithClassificationHead(nn.Module):
             )
 
         # Process alternate sequence
-        # Check if model is HyenaDNA (doesn't support attention_mask)
-        if hasattr(self.base_model, '__class__') and 'HyenaDNA' in str(self.base_model.__class__):
+        if skip_attention_mask:
             outputs_alt = self.base_model(
                 input_ids=alt_input_ids,
                 output_hidden_states=True,
