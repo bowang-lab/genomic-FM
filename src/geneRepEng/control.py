@@ -26,9 +26,18 @@ def model_layer_list(model: PreTrainedModel):
     elif hasattr(model, 'model') and hasattr(model.model, 'layers'):
         # LLaMA-style models
         return model.model.layers
+    elif hasattr(model, 'esm') and hasattr(model.esm, 'encoder') and hasattr(model.esm.encoder, 'layer'):
+        # ESM models (Nucleotide Transformer) - EsmForMaskedLM structure
+        return model.esm.encoder.layer
     elif hasattr(model, 'encoder') and hasattr(model.encoder, 'layer'):
         # BERT-style models
         return model.encoder.layer
+    elif hasattr(model, 'bert') and hasattr(model.bert, 'encoder') and hasattr(model.bert.encoder, 'layer'):
+        # BERT models with bert attribute (BertForMaskedLM, etc.)
+        return model.bert.encoder.layer
+    elif hasattr(model, 'roberta') and hasattr(model.roberta, 'encoder') and hasattr(model.roberta.encoder, 'layer'):
+        # RoBERTa models
+        return model.roberta.encoder.layer
     else:
         raise ValueError(f"Unknown model architecture: {type(model)}")
 

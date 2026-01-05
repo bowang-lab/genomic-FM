@@ -30,21 +30,27 @@ wandb offline
 # ============================================
 # CONFIGURATION
 # ============================================
-# Model options: omni_dna_116m, dnabert2, nt, gena-lm, gpn-msa-sapiens
-MODEL="omni_dna_116m"
+# Model path: can be a model name in root/models/ or full path
+# Examples:
+#   - "omni_dna_116m" (default base model)
+#   - "pretrain_model_omni_dna_116m_CLNDN" (finetuned model)
+#   - "pretrain_model_dnabert2_CLNDN"
+#   - "root/models/pretrain_model_nt_CLNDN" (full path)
+MODEL_PATH="${1:-omni_dna_116m}"  # Default to omni_dna_116m, or use first argument
 DATASET="cgc_primary_findings"  # CGC pediatric cardiac patient variants
 
 echo "============================================"
 echo "Gene Representation Engineering"
-echo "Model: $MODEL"
+echo "Model Path: $MODEL_PATH"
 echo "Dataset: $DATASET (CGC Cardiac)"
 echo "============================================"
 
-# Run example usage script
+# Run example usage script with model path
 python -m src.geneRepEng.example_usage \
-    2>&1 | tee logs/repeng_${MODEL}_${SLURM_JOB_ID}.log
+    --model_path "$MODEL_PATH" \
+    2>&1 | tee logs/repeng_${MODEL_PATH//\//_}_${SLURM_JOB_ID}.log
 
 echo "============================================"
 echo "Gene Representation Engineering Completed!"
-echo "Control vector saved: cgc_cardiac_pathogenicity_control.npz"
+echo "Control vector saved: cgc_cardiac_pathogenicity_control_${MODEL_PATH//\//_}.npz"
 echo "============================================"
