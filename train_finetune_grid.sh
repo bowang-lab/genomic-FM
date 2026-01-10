@@ -29,6 +29,7 @@ wandb offline
 
 # Training parameters
 MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
+BATCH_SIZE=32
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
@@ -106,6 +107,7 @@ for CHECKPOINT_NAME in "CLNDN" "CLNSIG" "MAVES_DMS" "MAVES_REGULATORY"; do
                 --seed 127 \
                 --task "$TASK" \
                 --checkpoint_path "$CHECKPOINT" \
+                --batch_size "$BATCH_SIZE" \
                 $DECODER_FLAG \
                 2>&1 | tee logs/smart_from_${CHECKPOINT_NAME}_to_${TASK}_threshold_${THRESHOLD}_${SLURM_JOB_ID}.log
 

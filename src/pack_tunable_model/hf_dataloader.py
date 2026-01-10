@@ -888,6 +888,78 @@ class EqtlDataset(Dataset):
         return item
 
 
+class OligogenicPairedDataset(Dataset):
+    """Dataset for oligogenic prediction with paired variant processing."""
+
+    def __init__(self, data, tokenizer, task_name="OLIDA", max_length=1024):
+        """
+        Args:
+            data: Output from OligogenicDataWrapper.get_data(paired=True)
+            tokenizer: Any HuggingFace-compatible tokenizer
+            task_name: Task identifier
+            max_length: Maximum sequence length
+        """
+        super().__init__()
+        self.task_name = task_name
+        self.num_labels = 2
+
+        # Extract sequences from paired data format
+        v1_ref_seqs, v1_alt_seqs = [], []
+        v2_ref_seqs, v2_alt_seqs = [], []
+        labels = []
+
+        for item in data:
+            variants, label = item[0], item[1]
+            v1_ref_seqs.append(variants['variant1_ref'])
+            v1_alt_seqs.append(variants['variant1_alt'])
+            v2_ref_seqs.append(variants['variant2_ref'])
+            v2_alt_seqs.append(variants['variant2_alt'])
+            labels.append(label)
+
+        # Tokenize all 4 sequence types
+        v1_ref_out = tokenizer(v1_ref_seqs, return_tensors="pt", padding="longest",
+                               max_length=max_length, truncation=True)
+        v1_alt_out = tokenizer(v1_alt_seqs, return_tensors="pt", padding="longest",
+                               max_length=max_length, truncation=True)
+        v2_ref_out = tokenizer(v2_ref_seqs, return_tensors="pt", padding="longest",
+                               max_length=max_length, truncation=True)
+        v2_alt_out = tokenizer(v2_alt_seqs, return_tensors="pt", padding="longest",
+                               max_length=max_length, truncation=True)
+
+        # Store tokenized data
+        self.v1_ref_input_ids = v1_ref_out["input_ids"]
+        self.v1_ref_attention_mask = v1_ref_out.get("attention_mask")
+        self.v1_alt_input_ids = v1_alt_out["input_ids"]
+        self.v1_alt_attention_mask = v1_alt_out.get("attention_mask")
+
+        self.v2_ref_input_ids = v2_ref_out["input_ids"]
+        self.v2_ref_attention_mask = v2_ref_out.get("attention_mask")
+        self.v2_alt_input_ids = v2_alt_out["input_ids"]
+        self.v2_alt_attention_mask = v2_alt_out.get("attention_mask")
+
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, i):
+        item = {
+            "variant1_ref_input_ids": self.v1_ref_input_ids[i],
+            "variant1_alt_input_ids": self.v1_alt_input_ids[i],
+            "variant2_ref_input_ids": self.v2_ref_input_ids[i],
+            "variant2_alt_input_ids": self.v2_alt_input_ids[i],
+            "labels": self.labels[i],
+            "task_name": self.task_name
+        }
+
+        if self.v1_ref_attention_mask is not None:
+            item["variant1_ref_attention_mask"] = self.v1_ref_attention_mask[i]
+            item["variant1_alt_attention_mask"] = self.v1_alt_attention_mask[i]
+            item["variant2_ref_attention_mask"] = self.v2_ref_attention_mask[i]
+            item["variant2_alt_attention_mask"] = self.v2_alt_attention_mask[i]
+
+        return item
+
 
 def return_maves_dataset(
     tokenizer,

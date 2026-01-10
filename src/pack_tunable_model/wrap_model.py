@@ -238,3 +238,161 @@ class WrappedModelWithClassificationHead(nn.Module):
             print("No classification head found, using initialized weights.")
 
         return model
+
+
+class WrappedModelWithPairedVariantHead(nn.Module):
+    """
+    Model wrapper for oligogenic prediction with paired variant processing.
+
+    Processes each variant in a pair separately, then combines their embeddings
+    for classification. This allows the model to learn variant-variant interactions.
+    """
+
+    def __init__(self, base_model, num_classes=2, decoder=False, hidden_states_pooler=False,
+                 combine_mode="concat"):
+        """
+        Args:
+            combine_mode: How to combine variant embeddings:
+                - "concat": [emb1; emb2] -> 2x hidden_size
+                - "diff": emb1 - emb2 -> hidden_size
+                - "hadamard": [emb1; emb2; emb1 * emb2] -> 3x hidden_size
+        """
+        super().__init__()
+        self.base_model = base_model
+        self.decoder = decoder
+        self.combine_mode = combine_mode
+
+        # Get the hidden size from the base model configuration
+        if hasattr(base_model, "config"):
+            if hasattr(self.base_model.config, "hidden_size"):
+                hidden_size = base_model.config.hidden_size
+            else:
+                hidden_size = base_model.config.d_model
+        else:
+            hidden_size = 768
+
+        self.hidden_size = hidden_size
+
+        if hidden_states_pooler:
+            self.pooler = BertPooler(base_model.config)
+        else:
+            self.pooler = None
+
+        # Determine input size based on combine mode
+        if combine_mode == "concat":
+            head_input_size = hidden_size * 2
+        elif combine_mode == "diff":
+            head_input_size = hidden_size
+        elif combine_mode == "hadamard":
+            head_input_size = hidden_size * 3
+        else:
+            raise ValueError(f"Unknown combine_mode: {combine_mode}")
+
+        # Classification head
+        self.classification_head = nn.Sequential(
+            nn.Linear(head_input_size, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, num_classes)
+        )
+
+        # Initialize final layer
+        final_layer = self.classification_head[-1]
+        nn.init.xavier_uniform_(final_layer.weight)
+        nn.init.constant_(final_layer.bias, 0.0)
+
+    def get_variant_embedding(self, ref_input_ids, ref_attention_mask, alt_input_ids, alt_attention_mask):
+        """Get differential embedding (alt - ref) for a single variant."""
+        model_class_name = str(self.base_model.__class__)
+        skip_attention_mask = any(name in model_class_name for name in ['HyenaDNA', 'Caduceus', 'Mamba'])
+
+        if skip_attention_mask:
+            outputs_ref = self.base_model(input_ids=ref_input_ids, output_hidden_states=True, return_dict=True)
+            outputs_alt = self.base_model(input_ids=alt_input_ids, output_hidden_states=True, return_dict=True)
+        else:
+            outputs_ref = self.base_model(input_ids=ref_input_ids, attention_mask=ref_attention_mask,
+                                          output_hidden_states=True, return_dict=True)
+            outputs_alt = self.base_model(input_ids=alt_input_ids, attention_mask=alt_attention_mask,
+                                          output_hidden_states=True, return_dict=True)
+
+        # Handle hidden states format
+        if not isinstance(outputs_ref.hidden_states, tuple):
+            outputs_ref.hidden_states = (outputs_ref.hidden_states,)
+        if not isinstance(outputs_alt.hidden_states, tuple):
+            outputs_alt.hidden_states = (outputs_alt.hidden_states,)
+
+        if not self.decoder:
+            ref_embed = outputs_ref.hidden_states[-1][:, 0, :]
+            alt_embed = outputs_alt.hidden_states[-1][:, 0, :]
+        else:
+            ref_seq_lens = ref_attention_mask.sum(dim=-1)
+            alt_seq_lens = alt_attention_mask.sum(dim=-1)
+            batch_index = torch.arange(ref_seq_lens.size(0), device=ref_input_ids.device)
+            ref_embed = outputs_ref.hidden_states[-1][batch_index, ref_seq_lens - 1, :]
+            alt_embed = outputs_alt.hidden_states[-1][batch_index, alt_seq_lens - 1, :]
+
+        if self.pooler is not None:
+            ref_embed = self.pooler(ref_embed)
+            alt_embed = self.pooler(alt_embed)
+
+        return alt_embed - ref_embed
+
+    def forward(
+        self,
+        variant1_ref_input_ids=None,
+        variant1_ref_attention_mask=None,
+        variant1_alt_input_ids=None,
+        variant1_alt_attention_mask=None,
+        variant2_ref_input_ids=None,
+        variant2_ref_attention_mask=None,
+        variant2_alt_input_ids=None,
+        variant2_alt_attention_mask=None,
+        labels=None,
+        **kwargs
+    ):
+        """
+        Forward pass processing each variant separately then combining.
+        """
+        # Get embedding for variant 1
+        emb1 = self.get_variant_embedding(
+            variant1_ref_input_ids, variant1_ref_attention_mask,
+            variant1_alt_input_ids, variant1_alt_attention_mask
+        )
+
+        # Get embedding for variant 2
+        emb2 = self.get_variant_embedding(
+            variant2_ref_input_ids, variant2_ref_attention_mask,
+            variant2_alt_input_ids, variant2_alt_attention_mask
+        )
+
+        # Combine embeddings
+        if self.combine_mode == "concat":
+            combined = torch.cat([emb1, emb2], dim=1)
+        elif self.combine_mode == "diff":
+            combined = emb1 - emb2
+        elif self.combine_mode == "hadamard":
+            combined = torch.cat([emb1, emb2, emb1 * emb2], dim=1)
+
+        # Classification
+        logits = self.classification_head(combined)
+
+        # Calculate loss if labels provided
+        loss = None
+        if labels is not None:
+            if logits.size(-1) == 1:
+                loss = nn.MSELoss()(logits.squeeze(-1), labels.float())
+            else:
+                loss = nn.CrossEntropyLoss()(logits.view(-1, logits.size(-1)), labels.view(-1))
+
+        return {
+            "loss": loss,
+            "logits": logits,
+            "variant1_embedding": emb1,
+            "variant2_embedding": emb2,
+        }
+
+    def get_input_embeddings(self):
+        return self.base_model.get_input_embeddings()
+
+    def set_input_embeddings(self, value):
+        self.base_model.set_input_embeddings(value)

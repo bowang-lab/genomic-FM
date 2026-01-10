@@ -82,6 +82,8 @@ class RealClinVar:
 
 
 class OligogenicDataWrapper:
+    """Wrapper for OLIDA oligogenic disease data."""
+
     def __init__(self, num_records=2000, all_records=False):
         self.num_records = num_records
         self.variant_combinations = get_variant_combinations()
@@ -91,45 +93,87 @@ class OligogenicDataWrapper:
     def __call__(self, *args: Any) -> Any:
         return self.get_data(*args)
 
-    def get_data(self, Seq_length=20):
-        # return (x, y) pairs
+    def get_data(self, Seq_length=20, paired=False):
+        """
+        Returns variant data with binary labels (1=oligogenic, 0=not).
+
+        Args:
+            Seq_length: Sequence context length for each variant
+            paired: If True (default), return variants separately for two-head processing.
+                   If False, concatenate variants with 'N' separator.
+
+        Returns:
+            If paired=True:
+                List of [x, y] where x = {
+                    'variant1_ref': str, 'variant1_alt': str,
+                    'variant2_ref': str, 'variant2_alt': str,
+                    'disease': str
+                }
+            If paired=False:
+                List of [x, y] where x = [ref_concat, alt_concat, disease]
+        """
         data = []
 
         for variant_combo in tqdm(self.variant_combinations):
-            variant_combo_reference = []
-            variant_combo_alternate = []
             if variant_combo['FINALmeta'] >= 1:
                 try:
-                    for variant in ['Variant_1', 'Variant_2']:
-                        # Check if key elements are present in the variant data
-                        if all(key in variant_combo[variant] for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']) and \
-                            all(variant_combo[variant][key] != "N.A." and not (isinstance(variant_combo[variant][key], float)) for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']):
+                    if paired:
+                        variants = {}
+                        for i, variant_key in enumerate(['Variant_1', 'Variant_2'], 1):
+                            var_data = variant_combo[variant_key]
+                            required = ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']
+                            if not all(key in var_data for key in required):
+                                raise ValueError(f"Missing keys in {variant_key}")
+                            if any(var_data[key] == "N.A." or (isinstance(var_data[key], float) and pd.isna(var_data[key]))
+                                   for key in required):
+                                raise ValueError(f"Invalid values in {variant_key}")
+
                             record = {
+                                'Chromosome': var_data['Chromosome'],
+                                'Position': int(var_data['Genomic_Position_Hg38']),
+                                'Reference Base': var_data['Ref_Allele'],
+                                'Alternate Base': var_data['Alt_Allele'],
+                                'ID': variant_combo['OLIDA_ID']
+                            }
+                            ref, alt = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
+                            variants[f'variant{i}_ref'] = ref
+                            variants[f'variant{i}_alt'] = alt
+
+                        variants['disease'] = variant_combo['Disease']
+                        data.append([variants, 1])
+                    else:
+                        variant_combo_reference = []
+                        variant_combo_alternate = []
+                        for variant in ['Variant_1', 'Variant_2']:
+                            if all(key in variant_combo[variant] for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']) and \
+                                all(variant_combo[variant][key] != "N.A." and not (isinstance(variant_combo[variant][key], float)) for key in ['Chromosome', 'Genomic_Position_Hg38', 'Ref_Allele', 'Alt_Allele']):
+                                record = {
                                     'Chromosome': variant_combo[variant]['Chromosome'],
                                     'Position': int(variant_combo[variant]['Genomic_Position_Hg38']),
                                     'Reference Base': variant_combo[variant]['Ref_Allele'],
                                     'Alternate Base': variant_combo[variant]['Alt_Allele'],
                                     'ID': variant_combo['OLIDA_ID']
                                 }
-                            reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
-                            variant_combo_reference.append(reference)
-                            variant_combo_alternate.append(alternate)
-                        else:
-                            raise ValueError("Missing required variant information")
+                                reference, alternate = self.genome_extractor.extract_sequence_from_record(record, Seq_length)
+                                variant_combo_reference.append(reference)
+                                variant_combo_alternate.append(alternate)
+                            else:
+                                raise ValueError("Missing required variant information")
 
-                    variant_combo_reference = 'N'.join(variant_combo_reference)
-                    variant_combo_alternate = 'N'.join(variant_combo_alternate)
-                    x, y = [variant_combo_reference, variant_combo_alternate, variant_combo['Disease']], 1
-                    data.append([x, y])
+                        variant_combo_reference = 'N'.join(variant_combo_reference)
+                        variant_combo_alternate = 'N'.join(variant_combo_alternate)
+                        x = [variant_combo_reference, variant_combo_alternate, variant_combo['Disease']]
+                        data.append([x, 1])
 
                 except Exception as e:
                     print(f"Skipping variant combination due to error: {e}")
                     continue
 
-        negative_examples = load_and_process_negative_pairs(Seq_length=Seq_length)
+        negative_examples = load_and_process_negative_pairs(Seq_length=Seq_length, paired=paired)
         data += negative_examples
         random.shuffle(data)
         return data
+
 
 class MAVEDataWrapper:
     def __init__(self, num_records=2000, all_records=False,

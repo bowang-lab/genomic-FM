@@ -162,66 +162,89 @@ def extract_negative_pairs(extractor, num_pairs, length_range=(200, 1000), min_s
             negative_pairs.append((seq1, seq2))
     return negative_pairs
 
-def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38_v2_combs.txt', Seq_length=20, num_records=None, genome='hg38'):
-    # Load the data
+def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38_v2_combs.txt', Seq_length=20, num_records=None, genome='hg38', paired=False):
+    """
+    Load negative pairs from 1000 Genome Project.
+
+    Args:
+        paired: If True (default), return variants separately. If False, concatenate with 'N'.
+    """
     data = []
     data_1kgp = pd.read_csv(file_path, delimiter='\t', index_col=False)
 
-    # Initialize the LiftOver object for hg19 to hg38
     if genome == "hg19":
         lo = LiftOver('hg19', 'hg38')
     genome_extractor = GenomeSequenceExtractor()
 
-    # Iterate through each row in the DataFrame
     for _, row in data_1kgp.iterrows():
         try:
-            variant_combo_alternate = []
-            variant_combo_reference = []
-            for gene_variant in ['GeneA_variant', 'GeneB_variant']:
-                # Check if the gene_variant data is not NaN and is a string
-                if pd.isna(row[gene_variant]) or not isinstance(row[gene_variant], str):
-                    raise ValueError(f"Invalid or missing variant data in row: {row}")
+            if paired:
+                variants = {}
+                for i, gene_variant in enumerate(['GeneA_variant', 'GeneB_variant'], 1):
+                    if pd.isna(row[gene_variant]) or not isinstance(row[gene_variant], str):
+                        raise ValueError(f"Invalid or missing variant data")
 
-                # Extracting chromosome and position data
+                    chrom, pos, ref, alt, zygosity = row[gene_variant].split('/')[0].split(':')
 
-                chrom, pos, ref, alt, zygosity = row[gene_variant].split('/')[0].split(':')
+                    if genome == "hg19":
+                        pos = int(pos) - 1
+                        converted = lo.convert_coordinate('chr' + chrom, pos)
+                        if not converted:
+                            raise ValueError(f"Conversion failed for {chrom}:{pos+1}")
+                        new_chrom, new_pos, _, _ = converted[0]
+                        new_pos += 1
+                    else:
+                        new_chrom = chrom
+                        new_pos = pos
 
-                if genome == "hg19":                
-                    pos = int(pos) - 1  # Convert to 0-based for pyliftover
+                    record = {
+                        'Chromosome': new_chrom.replace('chr', ''),
+                        'Position': new_pos,
+                        'Reference Base': ref,
+                        'Alternate Base': alt,
+                        'ID': row['Combination_ID']
+                    }
+                    reference, alternate = genome_extractor.extract_sequence_from_record(record, Seq_length)
+                    variants[f'variant{i}_ref'] = reference
+                    variants[f'variant{i}_alt'] = alternate
 
-                    # Convert hg19 to hg38
-                    converted = lo.convert_coordinate('chr' + chrom, pos)
-                    if not converted:
-                        raise ValueError(f"Conversion failed for {chrom}:{pos+1}")
+                variants['disease'] = "1000 Genome Project"
+                data.append([variants, 0])
+            else:
+                variant_combo_alternate = []
+                variant_combo_reference = []
+                for gene_variant in ['GeneA_variant', 'GeneB_variant']:
+                    if pd.isna(row[gene_variant]) or not isinstance(row[gene_variant], str):
+                        raise ValueError(f"Invalid or missing variant data in row: {row}")
 
-                    # Get the new chromosome and position
-                    new_chrom, new_pos, _, _ = converted[0]
-                    new_pos += 1  # Convert back to 1-based
-                else:
-                    new_chrom = chrom ; new_pos = pos                
+                    chrom, pos, ref, alt, zygosity = row[gene_variant].split('/')[0].split(':')
 
+                    if genome == "hg19":
+                        pos = int(pos) - 1
+                        converted = lo.convert_coordinate('chr' + chrom, pos)
+                        if not converted:
+                            raise ValueError(f"Conversion failed for {chrom}:{pos+1}")
+                        new_chrom, new_pos, _, _ = converted[0]
+                        new_pos += 1
+                    else:
+                        new_chrom = chrom
+                        new_pos = pos
 
-                # Create record for sequence extraction
-                record = {
-                    'Chromosome': new_chrom.replace('chr', ''),  # Remove 'chr' if not needed
-                    'Position': new_pos,
-                    'Reference Base': ref,
-                    'Alternate Base': alt,
-                    'ID': row['Combination_ID']
-                }
-                # Extract sequences
-                reference, alternate = genome_extractor.extract_sequence_from_record(record, Seq_length)
+                    record = {
+                        'Chromosome': new_chrom.replace('chr', ''),
+                        'Position': new_pos,
+                        'Reference Base': ref,
+                        'Alternate Base': alt,
+                        'ID': row['Combination_ID']
+                    }
+                    reference, alternate = genome_extractor.extract_sequence_from_record(record, Seq_length)
+                    variant_combo_reference.append(reference)
+                    variant_combo_alternate.append(alternate)
 
-                variant_combo_reference.append(reference)
-                variant_combo_alternate.append(alternate)
-
-            variant_combo_reference = 'N'.join(variant_combo_reference)
-            variant_combo_alternate = 'N'.join(variant_combo_alternate)
-
-            # Append processed data (assuming negative examples have a label '0')
-            x = [variant_combo_reference, variant_combo_alternate, "1000 Genome Project"]
-            y = 0
-            data.append([x, y])
+                variant_combo_reference = 'N'.join(variant_combo_reference)
+                variant_combo_alternate = 'N'.join(variant_combo_alternate)
+                x = [variant_combo_reference, variant_combo_alternate, "1000 Genome Project"]
+                data.append([x, 0])
 
         except Exception as e:
             print(f"Skipping due to error: {e}")
@@ -231,6 +254,7 @@ def load_and_process_negative_pairs(file_path='./root/data/1kgp_trainingset_hg38
         return data[:num_records]
 
     return data
+
 
 def get_olida(Seq_length, limit=None):
     variant_combinations = get_variant_combinations()
