@@ -796,11 +796,11 @@ def return_eqtl_dataset(tokenizer: PreTrainedTokenizer, target='Adipose_Subcutan
 
     # Store datasets
     multitask_datasets['train'] = train_dataset
-    multitask_datasets[f"{task_name}_val"] = val_dataset
-    multitask_datasets[f"{task_name}_test"] = test_dataset
+    multitask_datasets[f"{target}_val"] = val_dataset
+    multitask_datasets[f"{target}_test"] = test_dataset
 
     # Track task info
-    task_num_classes = {task_name: num_labels}
+    task_num_classes = {target: train_dataset.num_labels}
 
     # Determine max sequence length (considering both ref and alt sequences)
     max_ref_len = max(

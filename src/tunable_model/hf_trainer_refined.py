@@ -114,7 +114,7 @@ class CLNDNTrainer(transformers.Trainer):
         loss_fct = torch.nn.CrossEntropyLoss()
         loss = loss_fct(logits, labels)
 
-        return (loss, (logits, outputs)) if return_outputs else loss
+        return (loss, (logits, outputs_alt)) if return_outputs else loss
 
     def prediction_step(
         self,

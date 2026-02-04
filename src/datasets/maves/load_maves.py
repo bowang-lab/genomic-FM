@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 # API Configuration
 MAVE_DB_BASE_URL = "https://api.mavedb.org/api/v1"
-REQUEST_TIMEOUT = None  # No timeout
+REQUEST_TIMEOUT = 30  # seconds
 RETRY_DELAY = 2  # seconds
+MAX_RETRIES = 10
 
 # Pattern Compilation for HGVS Validation
 # Using combine_patterns for efficient matching
@@ -70,37 +71,38 @@ def _get_api_session() -> requests.Session:
 
 
 def _make_api_request(url: str) -> Optional[requests.Response]:
-    """Make API request with infinite retry logic.
+    """Make API request with retry logic.
 
     Args:
         url: The URL to request
 
     Returns:
-        Response object if successful, None for permanent failures
+        Response object if successful, None for permanent failures or after MAX_RETRIES
     """
     session = _get_api_session()
 
     # Retryable status codes
     RETRYABLE_CODES = {429, 502, 503, 504}
 
-    attempt = 0
-    while True:
-        attempt += 1
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = session.get(url, timeout=REQUEST_TIMEOUT)
             if response.status_code == 200:
                 return response
             elif response.status_code in RETRYABLE_CODES:
                 error_type = "Rate limited" if response.status_code == 429 else f"Server error ({response.status_code})"
-                logger.warning(f"{error_type} on attempt {attempt}, retrying in {RETRY_DELAY}s...")
+                logger.warning(f"{error_type} on attempt {attempt}/{MAX_RETRIES}, retrying in {RETRY_DELAY}s...")
                 time.sleep(RETRY_DELAY)
                 continue
             else:
                 logger.error(f"API request failed with permanent error {response.status_code}: {url}")
                 return None
         except requests.RequestException as e:
-            logger.warning(f"Request exception on attempt {attempt}: {e}, retrying in {RETRY_DELAY}s...")
+            logger.warning(f"Request exception on attempt {attempt}/{MAX_RETRIES}: {e}, retrying in {RETRY_DELAY}s...")
             time.sleep(RETRY_DELAY)
+
+    logger.error(f"API request failed after {MAX_RETRIES} attempts: {url}")
+    return None
 
 def get_all_urn_ids() -> List[str]:
     """Fetch all URN IDs from MAVE-DB experiments API.

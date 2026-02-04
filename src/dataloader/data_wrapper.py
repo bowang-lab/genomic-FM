@@ -335,7 +335,7 @@ class GWASDataWrapper:
                             x = [reference, alternate, trait]
                             y = summary_stats[target]
                             data.append([x,y])
-                            save_as_jsonl(data,'./root/data/gwas.jsonl')
+            save_as_jsonl(data,'./root/data/gwas.jsonl')
         if self.all_records:
             return data
         return data[:self.num_records]
@@ -500,6 +500,7 @@ class ClinVarDataWrapperPrintPercent:
     def get_data(self, Seq_length=20, target='CLNSIG', disease_subset=False):
         # return (x, y) pairs
         data = []
+        benign_percentage = None
         for record in tqdm(self.records):
             ref,alt = self.genome_extractor.extract_sequence_from_record(record, sequence_length=Seq_length)
             if ref is None:

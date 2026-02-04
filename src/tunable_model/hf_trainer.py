@@ -592,7 +592,7 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
         # requiring transformer 4.29.0
         # tiktoken gdown tiktoken datasets wandb
         # pip uninstall triton
-        model = AutoModelForSequenceClassification.from_pretrained(f"zhihan1996/DNABERT-2-117M",num_labels=class_num,trust_remote_code=True)
+        model = AutoModelForSequenceClassification.from_pretrained("zhihan1996/DNABERT-2-117M", trust_remote_code=True)
         tokenizer = AutoTokenizer.from_pretrained("zhihan1996/DNABERT-2-117M", trust_remote_code=True)
     elif model_type=='luca':
         from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
