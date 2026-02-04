@@ -17,7 +17,7 @@ from ...dataloader.data_wrapper import GenomeSequenceExtractor, create_variant_r
 def load_cgc_primary_findings(
     csv_path: str = "root/data/primary_findings_analysis/primary_findings_analysis_results.csv",
     genome_fa: str = "root/data/hg19.fa",
-    seq_length: int = 512,
+    seq_length: int = 1024,
     min_smart_score: Optional[float] = None,
     max_variants: Optional[int] = None
 ) -> GenomicDataset:

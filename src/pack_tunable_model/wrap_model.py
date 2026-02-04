@@ -25,15 +25,20 @@ class BertPooler(nn.Module):
 
 class WrappedModelWithClassificationHead(nn.Module):
     def __init__(self, base_model, num_classes, decoder=False, hidden_states_pooler=False,
-                 comparison_mode="delta"):
+                 comparison_mode="delta", pooling="cls"):
         """
         Args:
             comparison_mode: "delta" (subtraction) or "concat" (concatenation like DYNA)
+            pooling: "cls" (first token), "mean" (mean pooling), or "last" (last non-padding token)
         """
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
         self.comparison_mode = comparison_mode
+        self.pooling = pooling
+
+        if pooling not in ["cls", "mean", "last"]:
+            raise ValueError(f"Unknown pooling: {pooling}. Use 'cls', 'mean', or 'last'.")
 
         # Get the hidden size from the base model configuration
         if hasattr(base_model, "config"):
@@ -78,6 +83,36 @@ class WrappedModelWithClassificationHead(nn.Module):
             nn.init.xavier_uniform_(final_layer.weight)
             nn.init.constant_(final_layer.bias, 0.0)
 
+    def _apply_pooling(self, hidden_states, attention_mask):
+        """
+        Apply pooling strategy to hidden states.
+
+        Args:
+            hidden_states: Tensor of shape (batch_size, seq_len, hidden_size)
+            attention_mask: Tensor of shape (batch_size, seq_len)
+
+        Returns:
+            Pooled tensor of shape (batch_size, hidden_size)
+        """
+        if self.pooling == "cls":
+            return hidden_states[:, 0, :]
+        elif self.pooling == "mean":
+            if attention_mask is not None:
+                mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+                sum_hidden = torch.sum(hidden_states * mask_expanded, dim=1)
+                sum_mask = torch.clamp(mask_expanded.sum(dim=1), min=1e-9)
+                return sum_hidden / sum_mask
+            else:
+                return hidden_states.mean(dim=1)
+        elif self.pooling == "last":
+            if attention_mask is not None:
+                # Get the last non-padding token for each sequence
+                seq_lengths = attention_mask.sum(dim=1)
+                batch_size = hidden_states.size(0)
+                batch_indices = torch.arange(batch_size, device=hidden_states.device)
+                return hidden_states[batch_indices, seq_lengths - 1, :]
+            else:
+                return hidden_states[:, -1, :]
 
     def forward(self,
                 input_ids=None,
@@ -141,9 +176,9 @@ class WrappedModelWithClassificationHead(nn.Module):
             if hasattr(self.base_model.config,"hidden_size"):
                 outputs_alt.hidden_states = (outputs_alt.hidden_states,)
         if not self.decoder:
-            # For encoder models, take the [CLS] token (first token) from the last hidden state
-            last_hidden_state_ref = outputs_ref.hidden_states[-1][:, 0, :]
-            last_hidden_state_alt = outputs_alt.hidden_states[-1][:, 0, :]
+            # For encoder models, apply pooling strategy (cls or mean)
+            last_hidden_state_ref = self._apply_pooling(outputs_ref.hidden_states[-1], ref_attention_mask)
+            last_hidden_state_alt = self._apply_pooling(outputs_alt.hidden_states[-1], alt_attention_mask)
             if self.pooler is not None:
                 last_hidden_state_ref = self.pooler(last_hidden_state_ref)
                 last_hidden_state_alt = self.pooler(last_hidden_state_alt)
@@ -249,18 +284,23 @@ class WrappedModelWithPairedVariantHead(nn.Module):
     """
 
     def __init__(self, base_model, num_classes=2, decoder=False, hidden_states_pooler=False,
-                 combine_mode="concat"):
+                 combine_mode="concat", pooling="cls"):
         """
         Args:
             combine_mode: How to combine variant embeddings:
                 - "concat": [emb1; emb2] -> 2x hidden_size
                 - "diff": emb1 - emb2 -> hidden_size
                 - "hadamard": [emb1; emb2; emb1 * emb2] -> 3x hidden_size
+            pooling: "cls" (first token), "mean" (mean pooling), or "last" (last non-padding token)
         """
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
         self.combine_mode = combine_mode
+        self.pooling = pooling
+
+        if pooling not in ["cls", "mean", "last"]:
+            raise ValueError(f"Unknown pooling: {pooling}. Use 'cls', 'mean', or 'last'.")
 
         # Get the hidden size from the base model configuration
         if hasattr(base_model, "config"):
@@ -301,6 +341,37 @@ class WrappedModelWithPairedVariantHead(nn.Module):
         nn.init.xavier_uniform_(final_layer.weight)
         nn.init.constant_(final_layer.bias, 0.0)
 
+    def _apply_pooling(self, hidden_states, attention_mask):
+        """
+        Apply pooling strategy to hidden states.
+
+        Args:
+            hidden_states: Tensor of shape (batch_size, seq_len, hidden_size)
+            attention_mask: Tensor of shape (batch_size, seq_len)
+
+        Returns:
+            Pooled tensor of shape (batch_size, hidden_size)
+        """
+        if self.pooling == "cls":
+            return hidden_states[:, 0, :]
+        elif self.pooling == "mean":
+            if attention_mask is not None:
+                mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+                sum_hidden = torch.sum(hidden_states * mask_expanded, dim=1)
+                sum_mask = torch.clamp(mask_expanded.sum(dim=1), min=1e-9)
+                return sum_hidden / sum_mask
+            else:
+                return hidden_states.mean(dim=1)
+        elif self.pooling == "last":
+            if attention_mask is not None:
+                # Get the last non-padding token for each sequence
+                seq_lengths = attention_mask.sum(dim=1)
+                batch_size = hidden_states.size(0)
+                batch_indices = torch.arange(batch_size, device=hidden_states.device)
+                return hidden_states[batch_indices, seq_lengths - 1, :]
+            else:
+                return hidden_states[:, -1, :]
+
     def get_variant_embedding(self, ref_input_ids, ref_attention_mask, alt_input_ids, alt_attention_mask):
         """Get differential embedding (alt - ref) for a single variant."""
         model_class_name = str(self.base_model.__class__)
@@ -322,8 +393,9 @@ class WrappedModelWithPairedVariantHead(nn.Module):
             outputs_alt.hidden_states = (outputs_alt.hidden_states,)
 
         if not self.decoder:
-            ref_embed = outputs_ref.hidden_states[-1][:, 0, :]
-            alt_embed = outputs_alt.hidden_states[-1][:, 0, :]
+            # For encoder models, apply pooling strategy (cls or mean)
+            ref_embed = self._apply_pooling(outputs_ref.hidden_states[-1], ref_attention_mask)
+            alt_embed = self._apply_pooling(outputs_alt.hidden_states[-1], alt_attention_mask)
         else:
             ref_seq_lens = ref_attention_mask.sum(dim=-1)
             alt_seq_lens = alt_attention_mask.sum(dim=-1)

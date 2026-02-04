@@ -479,7 +479,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
     cgc_pathogenic = load_cgc_primary_findings(
         csv_path="root/data/primary_findings_analysis/primary_findings_analysis_results.csv",
         genome_fa="root/data/hg19.fa",
-        seq_length=512
+        seq_length=1024
     )
     print(f"Loaded {len(cgc_pathogenic)} CGC pathogenic variants")
 
@@ -487,7 +487,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
     print("\nLoading ClinVar benign cardiac variants (controls)...")
     clinvar_benign = load_cardiac_benign_variants(
         n_samples=500,  # Use 500 benign variants
-        seq_length=512,
+        seq_length=1024,
         seed=42
     )
     print(f"Loaded {len(clinvar_benign)} ClinVar benign variants")

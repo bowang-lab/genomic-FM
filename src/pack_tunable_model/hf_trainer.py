@@ -209,12 +209,14 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     if model_type == 'gena-lm':
         base_model = AutoModel.from_pretrained(
             model_path,
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=True,
         )
     elif model_type == 'gpn-star':
         base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=True,
         )
     elif model_type == 'luca':
         from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
@@ -223,13 +225,15 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     else:
         base_model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=True,
         )
 
     if model_type != 'luca':
         tokenizer = AutoTokenizer.from_pretrained(
             tokenizer_path,
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=True,
         )
 
     # Load checkpoint weights if provided

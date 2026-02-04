@@ -128,14 +128,14 @@ def get_model_and_tokenizer(model_type: str):
 
     # Use appropriate model class based on what each model supports
     if model_type in ['gpn-star', 'nt']:
-        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True)
+        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     elif model_type == 'omni_dna_116m':
-        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     else:
         # dnabert2, hyenadna, caduceus, gena-lm support AutoModel
-        model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     print(f"Using model from {model_path}")
     return model, tokenizer
 
@@ -255,11 +255,11 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     # Load base model (trainers/wrappers add their own heads)
     from transformers import AutoModelForCausalLM
     if model_type in ['gpn-star', 'nt']:
-        base_model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True)
+        base_model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     elif model_type == 'omni_dna_116m':
-        base_model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
+        base_model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     else:
-        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     
     # Load checkpoint weights if provided
     if checkpoint_weights_path and os.path.exists(checkpoint_weights_path):
@@ -289,7 +289,8 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_path,
-        trust_remote_code=True
+        trust_remote_code=True,
+        local_files_only=True,
     )
 
     ########### Load Dataset old ##################
@@ -346,7 +347,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         metric_for_best_model="matthews_correlation",
         greater_is_better=True,
         load_best_model_at_end=True,
-        save_safetensors=False,
+        save_safetensors=True,
         remove_unused_columns=False,
         dataloader_num_workers=num_workers,
         # ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
@@ -422,7 +423,7 @@ def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0
             num_train_epochs=num_epochs, save_total_limit=5,
             eval_strategy="epoch", save_strategy="epoch",
             metric_for_best_model="matthews_correlation", greater_is_better=True,
-            load_best_model_at_end=True, save_safetensors=False,
+            load_best_model_at_end=True, save_safetensors=True,
             remove_unused_columns=False, dataloader_num_workers=num_workers,
         ),
         train_dataset=datasets['train'],
@@ -501,7 +502,7 @@ def run_allheads_multitask_finetune(
             metric_for_best_model="matthews_correlation",
             greater_is_better=True,
             load_best_model_at_end=True,
-            save_safetensors=False,
+            save_safetensors=True,
             remove_unused_columns=False,
             dataloader_num_workers=num_workers,
         ),

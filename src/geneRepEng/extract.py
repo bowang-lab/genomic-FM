@@ -34,7 +34,7 @@ class CustomFunctions:
             # Validate signature
             sig = inspect.signature(self.F_batched_get_hiddens)
             actual = list(sig.parameters)
-            expected = ["model", "processors", "inputs", "hidden_layers", "batch_size", "custom_functions"]
+            expected = ["model", "processors", "inputs", "hidden_layers", "batch_size", "custom_functions", "pooling"]
             if actual != expected:
                 raise ValueError(f"F_batched_get_hiddens signature must be {expected!r}, got {actual!r}")
 
@@ -55,10 +55,14 @@ def batched_get_hiddens(
     hidden_layers: list[int],
     batch_size: int,
     custom_functions: CustomFunctions,
+    pooling: str = "last",
 ) -> dict[int, np.ndarray]:
     """
     Using the given model and processors, pass the genomic inputs through the model and get the hidden
     states for each layer in `hidden_layers`.
+
+    Args:
+        pooling: Pooling strategy - "last" (last token), "mean" (mean pooling), "cls" (first token)
 
     Returns a dictionary from `hidden_layers` layer id to an numpy array of shape `(n_inputs, hidden_dim)`
     """
@@ -94,12 +98,31 @@ def batched_get_hiddens(
             # Extract hidden states for each requested layer
             for layer in hidden_layers:
                 hidden_idx = layer + 1 if layer >= 0 else layer
-                # Assuming we want the hidden state for the last token
                 layer_output = out.hidden_states[hidden_idx]
+
+                # Apply pooling strategy
                 if layer_output.ndim == 2:      # shape: (seq_len, hidden_dim)
-                    hidden_state = layer_output[-1].cpu().float().numpy()
+                    if pooling == "cls":
+                        hidden_state = layer_output[0].cpu().float().numpy()
+                    elif pooling == "mean":
+                        hidden_state = layer_output.mean(dim=0).cpu().float().numpy()
+                    else:  # "last"
+                        hidden_state = layer_output[-1].cpu().float().numpy()
                 else:                           # shape: (batch_size, seq_len, hidden_dim)
-                    hidden_state = layer_output[0, -1].cpu().float().numpy()
+                    if pooling == "cls":
+                        hidden_state = layer_output[0, 0].cpu().float().numpy()
+                    elif pooling == "mean":
+                        # Mean pooling with attention mask if available
+                        attention_mask = processed.get('attention_mask')
+                        if attention_mask is not None:
+                            mask = attention_mask[0].unsqueeze(-1).expand(layer_output[0].size()).float()
+                            sum_hidden = torch.sum(layer_output[0] * mask, dim=0)
+                            sum_mask = torch.clamp(mask.sum(dim=0), min=1e-9)
+                            hidden_state = (sum_hidden / sum_mask).cpu().float().numpy()
+                        else:
+                            hidden_state = layer_output[0].mean(dim=0).cpu().float().numpy()
+                    else:  # "last"
+                        hidden_state = layer_output[0, -1].cpu().float().numpy()
                 hidden_states[layer].append(hidden_state)
 
             del out
@@ -176,6 +199,8 @@ class ControlVector:
                     Defaults to 32. Try reducing this if you're running out of memory.
                 method (str, optional): The training method to use. Can be either
                     "pca_diff" or "pca_center". Defaults to "pca_diff".
+                pooling (str, optional): Pooling strategy - "last" (last token),
+                    "mean" (mean pooling), "cls" (first token). Defaults to "last".
 
         Returns:
             ControlVector: The trained vector for genomic control.
@@ -214,6 +239,7 @@ def read_representations(
     custom_functions: typing.Optional[CustomFunctions] = None,
     method: str = "pca_diff",
     max_batch_size: int = 32,
+    pooling: str = "last",
     **kwargs,
 ) -> dict[int, np.ndarray]:
     """
@@ -221,6 +247,9 @@ def read_representations(
 
     For genomic data, we extract representations from both reference and alternative
     sequences and compute the difference vector.
+
+    Args:
+        pooling: Pooling strategy - "last" (last token), "mean" (mean pooling), "cls" (first token)
     """
     if custom_functions is None:
         custom_functions = CustomFunctions()
@@ -233,13 +262,13 @@ def read_representations(
     # Prepare reference sequences
     ref_inputs = [{'sequence': entry.ref_sequence} for entry in dataset]
     ref_hiddens = custom_functions.F_batched_get_hiddens(
-        model, processors, ref_inputs, hidden_layers, max_batch_size, custom_functions
+        model, processors, ref_inputs, hidden_layers, max_batch_size, custom_functions, pooling
     )
 
     # Prepare alternative sequences
     alt_inputs = [{'sequence': entry.alt_sequence} for entry in dataset]
     alt_hiddens = custom_functions.F_batched_get_hiddens(
-        model, processors, alt_inputs, hidden_layers, max_batch_size, custom_functions
+        model, processors, alt_inputs, hidden_layers, max_batch_size, custom_functions, pooling
     )
 
     # Compute control directions

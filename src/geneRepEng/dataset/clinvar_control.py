@@ -16,7 +16,7 @@ from ...dataloader.data_wrapper import ClinVarDataWrapper, set_disease_subset_fr
 
 def load_clinvar_benign_variants(
     disease_subset_file: Optional[str] = None,
-    seq_length: int = 512,
+    seq_length: int = 1024,
     n_samples: int = 1000,
     seed: int = 42
 ) -> GenomicDataset:
@@ -84,7 +84,7 @@ def load_clinvar_benign_variants(
 
 def load_cardiac_benign_variants(
     n_samples: int = 1000,
-    seq_length: int = 512,
+    seq_length: int = 1024,
     seed: int = 42
 ) -> GenomicDataset:
     """
