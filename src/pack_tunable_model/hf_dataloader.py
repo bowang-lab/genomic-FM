@@ -730,8 +730,9 @@ class MultiTaskDataCollator:
             alt_input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
         )
 
-        # Convert labels to tensor - use float for regression, long for classification
-        # Check if any task name contains "MAVES" to determine if this is regression
+        # Convert labels to tensor
+        # Use float always to support mixed batches (regression + classification).
+        # Classification loss functions must cast to .long() before use.
         is_regression = any("MAVES" in task_name for task_name in task_names)
         if is_regression:
             labels = torch.tensor(labels, dtype=torch.float)

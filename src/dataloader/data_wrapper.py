@@ -378,8 +378,7 @@ class ClinVarDataWrapper:
             y[0] = 'Likely_pathogenic'
         if y[0] == 'Benign/Likely_benign':
             y[0] = 'Likely_benign'
-        # if y[0] not in ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']:
-        if y[0] not in ['Benign', 'Pathogenic']:
+        if y[0] not in ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']:
             return None
         # map 'Benign', 'Likely_benign' to Benign, 'Likely_pathogenic', 'Pathogenic' to Pathogenic
         if y[0] == 'Benign' or y[0] == 'Likely_benign':
@@ -443,7 +442,7 @@ class ClinVarDataWrapper:
                 if data[i][1] not in DISEASE_SUBSET:
                     data[i][1] = 'Other_disease'
                     data_subset.append(data[i])
-                num_record_with_dis_subset -= 1
+                    num_record_with_dis_subset -= 1
             return data_subset
         return data
 
@@ -487,8 +486,7 @@ class ClinVarDataWrapperPrintPercent:
             y[0] = 'Likely_pathogenic'
         if y[0] == 'Benign/Likely_benign':
             y[0] = 'Likely_benign'
-        # if y[0] not in ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']:
-        if y[0] not in ['Benign', 'Pathogenic']:
+        if y[0] not in ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']:
             return None
         # map 'Benign', 'Likely_benign' to Benign, 'Likely_pathogenic', 'Pathogenic' to Pathogenic
         if y[0] == 'Benign' or y[0] == 'Likely_benign':
@@ -569,9 +567,9 @@ class ClinVarDataWrapperPrintPercent:
                 if data[i][1] not in DISEASE_SUBSET:
                     data[i][1] = 'Other_disease'
                     data_subset.append(data[i])
-                num_record_with_dis_subset -= 1
-            return data_subset
-        return data,benign_percentage
+                    num_record_with_dis_subset -= 1
+            return data_subset, benign_percentage
+        return data, benign_percentage
 
 
 class GeneKoDataWrapper:
@@ -652,6 +650,7 @@ class eQTLDataWrapper:
             records = process_eqtl_data(organism=organism)
             if records is None:
                 print(f"No records found for {organism}")
+                continue
             if self.all_records:
                 self.num_records = len(records)
             num_pos = 0
@@ -676,6 +675,8 @@ class eQTLDataWrapper:
                         y = "significant"
                     else:
                         y = "not_significant"
+                else:
+                    continue
                 data.append([x, y])
             print(f"Number of positive examples: {num_pos} out of {self.num_records} total")
         return data
@@ -694,6 +695,9 @@ class sQTLDataWrapper:
 
         for organism in tqdm(ORGANISM):
             records = process_sqtl_data(organism=organism)
+            if records is None:
+                print(f"No records found for {organism}")
+                continue
             if self.all_records:
                 self.num_records = len(records)
             num_pos = 0
@@ -728,6 +732,8 @@ class sQTLDataWrapper:
                     else:
                         y = "positive"
                     # y = splice_position_distance_change
+                else:
+                    continue
                 data.append([x, y])
             print(f"Number of positive examples: {num_pos} out of {self.num_records} total")
         return data

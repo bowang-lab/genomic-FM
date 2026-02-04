@@ -76,11 +76,11 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
         label_to_id = {label: idx for idx, label in enumerate(all_labels)}
         num_labels = len(all_labels)
         print(f"Found {num_labels} unique disease labels")
-    elif target == 'CLNSIG' or 'DISEASE_PATHOGENICITY':
-        task_name = 'CLNSIG'
-        all_labels = ['Benign', 'Likely_benign', 'Likely_pathogenic', 'Pathogenic']
-        label_to_id = {label: idx for idx, label in enumerate(all_labels)}
-        num_labels = len(all_labels)
+    elif target in ['CLNSIG', 'DISEASE_PATHOGENICITY']:
+        task_name = target
+        all_labels = ['Benign', 'Pathogenic']
+        label_to_id = {'Benign': 0, 'Pathogenic': 1, 'Likely_benign': 0, 'Likely_pathogenic': 1}
+        num_labels = len(set(label_to_id.values()))
         print(f"Using {num_labels} pathogenicity classes")
     else:
         raise ValueError(f"Unsupported target: {target}")
@@ -121,7 +121,7 @@ class ClinVarDataset(Dataset):
     def __init__(self, data, tokenizer, task_name, label_to_id):
         super(ClinVarDataset, self).__init__()
         self.task_name = task_name
-        self.num_labels = len(label_to_id)
+        self.num_labels = len(set(label_to_id.values()))
 
         # Process data
         ref_sequences = []

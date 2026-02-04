@@ -263,6 +263,8 @@ class AllHeadsMultitaskTrainer(transformers.Trainer):
             primary_logits = all_logits.get(primary_task)
             primary_labels = inputs.get(f"label_{primary_task}")
 
+            if prediction_loss_only:
+                return loss, None, None
             return loss, primary_logits, primary_labels
 
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
@@ -435,9 +437,10 @@ class MultitaskTrainer(transformers.Trainer):
                     )
                 else:
                     # Classification task - use CrossEntropy with label smoothing
+                    # Cast to long to handle mixed batches where collator used float dtype
                     sample_loss = torch.nn.functional.cross_entropy(
                         sample_logits,
-                        sample_label,
+                        sample_label.long(),
                         label_smoothing=0.1
                     )
                 losses.append(sample_loss)
@@ -565,35 +568,39 @@ class MultitaskTrainer(transformers.Trainer):
                     logits_list.append(model.task_classification_heads[task](last_hidden_state[i]))
                 logits = torch.stack(logits_list, dim=0)
 
-            # Compute loss if needed (per-sample to handle mixed batches)
+            # Always compute loss (per-sample to handle mixed batches)
             loss = None
-            if not prediction_loss_only:
-                losses = []
-                for i, task in enumerate(task_names):
-                    sample_logits = logits[i:i+1]
-                    sample_label = labels[i:i+1]
+            losses = []
+            for i, task in enumerate(task_names):
+                sample_logits = logits[i:i+1]
+                sample_label = labels[i:i+1]
 
-                    if "MAVES" in task:
-                        # Regression task
-                        sample_loss = torch.nn.functional.huber_loss(
-                            sample_logits.squeeze(-1),
-                            sample_label.float(),
-                            delta=1.0
-                        )
-                    else:
-                        # Classification task
-                        sample_loss = torch.nn.functional.cross_entropy(
-                            sample_logits,
-                            sample_label,
-                            label_smoothing=0.1
-                        )
-                    losses.append(sample_loss)
+                if "MAVES" in task:
+                    # Regression task
+                    sample_loss = torch.nn.functional.huber_loss(
+                        sample_logits.squeeze(-1),
+                        sample_label.float(),
+                        delta=1.0
+                    )
+                else:
+                    # Classification task
+                    # Cast to long to handle mixed batches where collator used float dtype
+                    sample_loss = torch.nn.functional.cross_entropy(
+                        sample_logits,
+                        sample_label.long(),
+                        label_smoothing=0.1
+                    )
+                losses.append(sample_loss)
 
+            if losses:
                 loss = torch.stack(losses).mean()
 
             # Restore task_names to inputs for potential future use
             if task_names is not None:
                 inputs["task_names"] = task_names
+
+            if prediction_loss_only:
+                return loss, None, None
 
             return loss, logits, labels
 

@@ -253,13 +253,17 @@ class WrappedModelWithClassificationHead(nn.Module):
             # Try to infer from the saved classification head
             try:
                 head_state_dict = torch.load(f"{model_path}/classification_head.bin")
-                # Get output dimension from the weight matrix
-                weight_shape = head_state_dict.get("weight").shape
-                if weight_shape:
-                    num_classes = weight_shape[0]
+                # The head is nn.Sequential; the final Linear layer's weight
+                # has keys like "3.weight" (index within Sequential)
+                final_weight_key = None
+                for key in head_state_dict:
+                    if key.endswith(".weight"):
+                        final_weight_key = key  # last .weight key is the output layer
+                if final_weight_key is not None:
+                    num_classes = head_state_dict[final_weight_key].shape[0]
                 else:
                     raise ValueError("Could not determine num_classes from saved state")
-            except (FileNotFoundError, KeyError):
+            except (FileNotFoundError, KeyError, AttributeError):
                 raise ValueError("num_classes must be provided when loading model")
 
         # Create instance
