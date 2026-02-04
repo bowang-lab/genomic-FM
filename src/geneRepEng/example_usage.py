@@ -45,7 +45,7 @@ MODEL_REGISTRY = {
         "model_class": AutoModel,
     },
     "hyenadna": {
-        "identifier": "LongSafari/hyenadna-medium-450k-seqlen",
+        "identifier": "LongSafari/hyenadna-medium-160k-seqlen-hf",
         "local_path": "root/models/hyenadna",
         "patterns": ["hyenadna", "hyena-dna", "hyena"],
         "model_class": AutoModel,
@@ -55,6 +55,18 @@ MODEL_REGISTRY = {
         "local_path": "root/models/caduceus",
         "patterns": ["caduceus"],
         "model_class": AutoModel,
+    },
+    "gena-lm": {
+        "identifier": "AIRI-Institute/gena-lm-bert-base-t2t",
+        "local_path": "root/models/gena-lm",
+        "patterns": ["gena-lm", "gena_lm", "genalm"],
+        "model_class": AutoModel,
+    },
+    "gpn-star": {
+        "identifier": "songlab/gpn-star-hg38-v100-200m",
+        "local_path": "root/models/gpn-star-hg38-v100-200m",
+        "patterns": ["gpn-star", "gpn_star", "gpnstar"],
+        "model_class": AutoModelForMaskedLM,
     },
 }
 

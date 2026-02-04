@@ -46,5 +46,8 @@ opencv-python-headless
 # caduceus: mamba-ssm, causal-conv1d
 # omni_dna_116m: ai2-olmo
 # dnabert2: numpy<2.0, opencv-python-headless==4.8.1.78
+# gena-lm: transformers (already included above)
+# hyenadna: einops, transformers (already included above)
+lucagplm
 
 # conda install -c pytorch faiss-cpu=1.8.0

@@ -11,7 +11,7 @@ from scipy.stats import spearmanr
 
 import transformers
 from transformers import (
-    AutoModelForSequenceClassification,
+    AutoModelForCausalLM,
     AutoModel,
     AutoModelForMaskedLM,
     TrainingArguments,
@@ -26,7 +26,7 @@ from .hf_dataloader import return_clinvar_multitask_dataset, MultiTaskDataCollat
 # Import our custom wrapper model
 from .wrap_model import WrappedModelWithClassificationHead
 from .checkpoint_utils import load_checkpoint_into_model
-# from .seq_pack import FramePackCausalLM
+
 
 class SafeDistributedTrainer(Trainer):
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
@@ -125,7 +125,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                             filter_genes=None, experimental_methods=None, region_type='all',
                             variant_types=None, seq_length_range=None, max_samples_per_experiment=None,
                             normalize_scores=False, disease_subset_file=None, pretrained_model=None,
-                            comparison_mode="diff"):
+                            comparison_mode="delta"):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -161,11 +161,6 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             print(f"Using HuggingFace model: {model_path}")
         # if test_only:
             # model_path = "./root/clinvar_disease_classification/checkpoint-55213"
-    elif model_type == 'seq_pack':
-        # model_path = "zehui127/Omni-DNA-116M"
-        model_path = 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'
-        # tokenizer_path = "zehui127/Omni-DNA-116M"
-        tokenizer_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
     elif model_type == 'dnabert2':
         # Check if local model exists
         if os.path.exists(local_model_base):
@@ -206,14 +201,14 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    if model_type == 'gena-lm':
-        base_model = AutoModel.from_pretrained(
+    if model_type in ['gpn-star', 'nt']:
+        base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
             trust_remote_code=True,
             local_files_only=True,
         )
-    elif model_type == 'gpn-star':
-        base_model = AutoModelForMaskedLM.from_pretrained(
+    elif model_type == 'omni_dna_116m':
+        base_model = AutoModelForCausalLM.from_pretrained(
             model_path,
             trust_remote_code=True,
             local_files_only=True,
@@ -223,7 +218,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         base_model = LucaGPLMModel.from_pretrained(model_path)
         tokenizer = LucaGPLMTokenizer.from_pretrained(tokenizer_path)
     else:
-        base_model = AutoModelForSequenceClassification.from_pretrained(
+        base_model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
             local_files_only=True,

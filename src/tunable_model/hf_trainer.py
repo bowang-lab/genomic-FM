@@ -112,16 +112,30 @@ class AllHeadsMultitaskTrainer(transformers.Trainer):
 
     def _get_shared_embeddings(self, model, inputs):
         """Get shared embeddings from ref/alt sequences."""
-        outputs_ref = model(
-            input_ids=inputs['ref_input_ids'],
-            attention_mask=inputs['ref_attention_mask'],
-            output_hidden_states=True
-        )
-        outputs_alt = model(
-            input_ids=inputs['alt_input_ids'],
-            attention_mask=inputs['alt_attention_mask'],
-            output_hidden_states=True
-        )
+        # Check if model doesn't support attention_mask (HyenaDNA, Caduceus/Mamba)
+        model_class_name = str(model.__class__)
+        skip_attention_mask = any(name in model_class_name for name in ['HyenaDNA', 'Caduceus', 'Mamba'])
+
+        if skip_attention_mask:
+            outputs_ref = model(
+                input_ids=inputs['ref_input_ids'],
+                output_hidden_states=True
+            )
+            outputs_alt = model(
+                input_ids=inputs['alt_input_ids'],
+                output_hidden_states=True
+            )
+        else:
+            outputs_ref = model(
+                input_ids=inputs['ref_input_ids'],
+                attention_mask=inputs['ref_attention_mask'],
+                output_hidden_states=True
+            )
+            outputs_alt = model(
+                input_ids=inputs['alt_input_ids'],
+                attention_mask=inputs['alt_attention_mask'],
+                output_hidden_states=True
+            )
 
         if not self.decoder:
             # Encoder models: use [CLS] token (first token)
@@ -343,17 +357,30 @@ class MultitaskTrainer(transformers.Trainer):
                     ).to(model.device)
 
             # Route inputs to task-specific heads
-            outputs_ref = model(
-                input_ids=inputs['ref_input_ids'],
-                attention_mask=inputs['ref_attention_mask'],
-                output_hidden_states=True
-            )
+            # Check if model doesn't support attention_mask (HyenaDNA, Caduceus/Mamba)
+            model_class_name = str(model.__class__)
+            skip_attention_mask = any(name in model_class_name for name in ['HyenaDNA', 'Caduceus', 'Mamba'])
 
-            outputs_alt = model(
-                input_ids=inputs['alt_input_ids'],
-                attention_mask=inputs['alt_attention_mask'],
-                output_hidden_states=True
-            )
+            if skip_attention_mask:
+                outputs_ref = model(
+                    input_ids=inputs['ref_input_ids'],
+                    output_hidden_states=True
+                )
+                outputs_alt = model(
+                    input_ids=inputs['alt_input_ids'],
+                    output_hidden_states=True
+                )
+            else:
+                outputs_ref = model(
+                    input_ids=inputs['ref_input_ids'],
+                    attention_mask=inputs['ref_attention_mask'],
+                    output_hidden_states=True
+                )
+                outputs_alt = model(
+                    input_ids=inputs['alt_input_ids'],
+                    attention_mask=inputs['alt_attention_mask'],
+                    output_hidden_states=True
+                )
             logits = None
             if not self.decoder:
                 last_hidden_state_ref = outputs_ref.hidden_states[-1][:,0,:]
@@ -465,17 +492,30 @@ class MultitaskTrainer(transformers.Trainer):
             task_names = inputs.pop("task_names", None)
 
             # Perform forward pass to get hidden states
-            outputs_ref = model(
-                input_ids=inputs['ref_input_ids'],
-                attention_mask=inputs['ref_attention_mask'],
-                output_hidden_states=True
-            )
+            # Check if model doesn't support attention_mask (HyenaDNA, Caduceus/Mamba)
+            model_class_name = str(model.__class__)
+            skip_attention_mask = any(name in model_class_name for name in ['HyenaDNA', 'Caduceus', 'Mamba'])
 
-            outputs_alt = model(
-                input_ids=inputs['alt_input_ids'],
-                attention_mask=inputs['alt_attention_mask'],
-                output_hidden_states=True
-            )
+            if skip_attention_mask:
+                outputs_ref = model(
+                    input_ids=inputs['ref_input_ids'],
+                    output_hidden_states=True
+                )
+                outputs_alt = model(
+                    input_ids=inputs['alt_input_ids'],
+                    output_hidden_states=True
+                )
+            else:
+                outputs_ref = model(
+                    input_ids=inputs['ref_input_ids'],
+                    attention_mask=inputs['ref_attention_mask'],
+                    output_hidden_states=True
+                )
+                outputs_alt = model(
+                    input_ids=inputs['alt_input_ids'],
+                    attention_mask=inputs['alt_attention_mask'],
+                    output_hidden_states=True
+                )
             labels = inputs.get("labels")
 
             # # If no task names provided, use default trainer prediction step

@@ -29,7 +29,7 @@ from .hf_dataloader import (
 )
 from .wrap_model import WrappedModelWithClassificationHead
 from ..tunable_model.hf_trainer import MultitaskTrainer, AllHeadsMultitaskTrainer
-# from .seq_pack import FramePackCausalLM
+
 
 class SafeDistributedTrainer(Trainer):
     def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"):
@@ -211,11 +211,6 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                 model_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
                 tokenizer_path = model_path
                 print(f"Using HuggingFace model: {model_path}")
-        elif model_type == 'seq_pack':
-            # model_path = "zehui127/Omni-DNA-116M"
-            model_path = 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'
-            # tokenizer_path = "zehui127/Omni-DNA-116M"
-            tokenizer_path = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
         elif model_type == 'dnabert2':
             # Check if local model exists
             if os.path.exists(local_model_base):
@@ -249,6 +244,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                 model_path = "songlab/gpn-star-hg38-v100-200m"
                 tokenizer_path = model_path
                 print(f"Using HuggingFace GPN-Star model: {model_path}")
+        elif model_type=='luca':
+            model_path = "LucaGroup/LucaOne-default-step36M"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace LucaOne model: {model_path}")
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -258,6 +257,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         base_model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     elif model_type == 'omni_dna_116m':
         base_model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+    elif model_type == 'luca':
+        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
+        base_model = LucaGPLMModel.from_pretrained(model_path)
+        tokenizer = LucaGPLMTokenizer.from_pretrained(tokenizer_path)
     else:
         base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     
@@ -287,11 +290,12 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             print(f"Warning: Could not load checkpoint weights: {e}")
             print(f"Continuing with base model weights only")
     
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path,
-        trust_remote_code=True,
-        local_files_only=True,
-    )
+    if model_type != 'luca':
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_path,
+            trust_remote_code=True,
+            local_files_only=True,
+        )
 
     ########### Load Dataset old ##################
         # dangerous zone: so we need to use main_process_first
