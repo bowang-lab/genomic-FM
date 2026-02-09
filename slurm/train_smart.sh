@@ -1,14 +1,14 @@
 #!/bin/bash
 #SBATCH -t 4-00:0:0
-#SBATCH -J train_smart_multi
+#SBATCH -J train_smart
 #SBATCH -p gpu_bwanggroup
-#SBATCH --mem=450G # at most 450G
-#SBATCH -c 8 # at most 60
-#SBATCH -N 1 # number of node
-#SBATCH --gres=gpu:4 # match ddp.yaml num_processes
-#SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
-#SBATCH --output=logs/smart_multi_output_%j.log
-#SBATCH --error=logs/smart_multi_error_%j.log  
+#SBATCH --mem=450G
+#SBATCH -c 8
+#SBATCH -N 1
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks=1
+#SBATCH --output=logs/smart_output_%j.log
+#SBATCH --error=logs/smart_error_%j.log
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=vallisubasri@gmail.com
 
@@ -27,8 +27,24 @@ conda activate genomic-fm
 # Disable wandb syncing for now
 wandb offline
 
-# Training parameters
+# ============================================
+# TRAINING PARAMETERS
+# ============================================
+
 MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, luca
+
+# Task to train on
+TASK="CLNDN"  # Options: CLNDN (disease), CLNSIG (pathogenicity)
+
+# Threshold for SMART score filtering
+THRESHOLD=65
+
+# Training hyperparameters
+LEARNING_RATE=0.000005
+BATCH_SIZE=8
+NUM_EPOCHS=10
+
+# ============================================
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
@@ -38,35 +54,26 @@ else
 fi
 
 echo "============================================"
-echo "Starting SMART Multi-Threshold Training"
+echo "Starting SMART Single-Task Training"
 echo "Model: $MODEL"
+echo "Task: $TASK"
+echo "Threshold: $THRESHOLD"
 echo "============================================"
 
-# Data source: 'smart' or 'clinvar'
-DATA_SOURCE="smart"
-
-# Run multi-task training with all three tasks: MAVES + CLNDN + CLNSIG
-echo "=================================="
-echo "Starting Multi-Task Training (MAVES + CLNDN + CLNSIG)..."
-echo "Data source: $DATA_SOURCE"
-echo "=================================="
 accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     -m src.pack_tunable_model.hf_trainer_smart \
     --model "$MODEL" \
+    --task "$TASK" \
     --seed 127 \
-    --multitask \
-    --data_source "$DATA_SOURCE" \
-    --clndn \
-    --clnsig \
-    --threshold 65 \
-    --learning_rate 0.000005 \
-    --batch_size 8 \
-    --num_epochs 10 \
+    --threshold "$THRESHOLD" \
+    --learning_rate $LEARNING_RATE \
+    --batch_size $BATCH_SIZE \
+    --num_epochs $NUM_EPOCHS \
     $DECODER_FLAG \
-    2>&1 | tee logs/smart_multitask_${SLURM_JOB_ID}.log
-
-echo "Multi-task training completed!"
+    2>&1 | tee logs/smart_${TASK}_threshold_${THRESHOLD}_${SLURM_JOB_ID}.log
 
 echo "============================================"
-echo "SMART Multi-Threshold Training Completed!"
+echo "SMART Training Completed!"
+echo "Task: $TASK"
+echo "Threshold: $THRESHOLD"
 echo "============================================"

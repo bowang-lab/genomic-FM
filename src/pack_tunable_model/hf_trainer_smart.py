@@ -12,12 +12,15 @@ import transformers
 from transformers import (
     AutoModel,
     AutoModelForMaskedLM,
+    AutoModelForCausalLM,
     TrainingArguments,
     AutoTokenizer,
     Trainer,
     set_seed
 )
 from accelerate import Accelerator
+from trl import SFTConfig, SFTTrainer, DataCollatorForCompletionOnlyLM
+from datasets import Dataset
 # Import from local modules
 from .hf_dataloader import (
     return_clinvar_multitask_dataset,
@@ -528,6 +531,163 @@ def run_allheads_multitask_finetune(
     return trainer, test_metrics
 
 
+def run_generative_multitask_finetune(
+    seed: int,
+    model_type: str = 'omni_dna_116m',
+    learning_rate: float = 1e-5,
+    batch_size: int = 4,
+    num_epochs: int = 10,
+    max_seq_length: int = 512,
+    threshold: float = 65.0,
+    include_clndn: bool = True,
+    include_clnsig: bool = True,
+    data_source: str = 'smart',
+    neftune_noise_alpha: float = 5.0,
+):
+    """
+    Generative multitask fine-tuning using SFTTrainer for variant classification.
+
+    Formats variant classification as a text generation task:
+    - Input: "Classify variant: [REF_SEQ][SEP][ALT_SEQ][MASK]"
+    - Output: Label text (e.g., "Pathogenic", "Benign", "Cardiomyopathy")
+
+    Only works with decoder-only models (OmniDNA).
+
+    Args:
+        seed: Random seed
+        model_type: Must be 'omni_dna_116m' or 'omni_dna_1b'
+        include_clndn: Include disease classification task
+        include_clnsig: Include pathogenicity classification task
+        neftune_noise_alpha: NEFTune noise for regularization (0 to disable)
+    """
+    set_seed(seed)
+
+    # Validate model type
+    supported_models = ['omni_dna_116m', 'omni_dna_1b']
+    if model_type not in supported_models:
+        raise ValueError(f"Generative training only supports {supported_models}, got: {model_type}")
+
+    path_prefix = "./root/models"
+    tasks_str = '_'.join([t for t, inc in [('CLNDN', include_clndn), ('CLNSIG', include_clnsig)] if inc])
+    output_path = f"{path_prefix}/generative_{model_type}_{tasks_str}"
+
+    # Load model and tokenizer
+    local_model_base = f"./root/models/{model_type}"
+    if model_type == 'omni_dna_116m':
+        model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-116M"
+    else:
+        model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-1B"
+
+    use_local = os.path.exists(model_path)
+
+    print(f"\n{'='*60}")
+    print(f"Generative Multitask Training (SFTTrainer)")
+    print(f"{'='*60}")
+    print(f"Model: {model_type}")
+    print(f"Model path: {model_path}")
+    print(f"Tasks: CLNDN={include_clndn}, CLNSIG={include_clnsig}")
+    print(f"NEFTune alpha: {neftune_noise_alpha}")
+    print(f"{'='*60}\n")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
+    model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
+
+    # Define label mappings
+    disease_labels = ['Aortopathy', 'Arrhythmia', 'Cardiomyopathy', 'Structural_defect']
+    pathogenicity_labels = ['Benign', 'Pathogenic']
+
+    # Load raw data
+    from ..dataloader.data_wrapper import SmartVariantDataWrapper
+    wrapper = SmartVariantDataWrapper(csv_path='root/data/unfiltered_variants.csv', all_records=True)
+    raw_data = wrapper.get_multitask_data(Seq_length=max_seq_length, threshold=threshold)
+
+    # Format data for generative training
+    formatted_data = []
+    max_seq = max_seq_length // 2 - 50  # Leave room for instruction + label
+
+    for ref, alt, disease, pathogenicity in raw_data:
+        ref_seq = ref[:max_seq] if len(ref) > max_seq else ref
+        alt_seq = alt[:max_seq] if len(alt) > max_seq else alt
+
+        if include_clndn and disease in disease_labels:
+            formatted_data.append({
+                'instruction': f"Classify disease for variant: {ref_seq}[SEP]{alt_seq}",
+                'output': disease.replace(' ', '_'),
+                'task': 'CLNDN'
+            })
+
+        if include_clnsig and pathogenicity in [0, 1]:
+            label = pathogenicity_labels[pathogenicity]
+            formatted_data.append({
+                'instruction': f"Classify pathogenicity for variant: {ref_seq}[SEP]{alt_seq}",
+                'output': label,
+                'task': 'CLNSIG'
+            })
+
+    # Task distribution
+    task_counts = {}
+    for item in formatted_data:
+        task_counts[item['task']] = task_counts.get(item['task'], 0) + 1
+    print(f"Total samples: {len(formatted_data)}")
+    print(f"Task distribution: {task_counts}")
+
+    # Create dataset and split
+    dataset = Dataset.from_list(formatted_data)
+    dataset = dataset.shuffle(seed=seed)
+    split = dataset.train_test_split(test_size=0.1, seed=seed)
+    train_dataset = split['train']
+    eval_dataset = split['test']
+
+    print(f"Train: {len(train_dataset)}, Eval: {len(eval_dataset)}")
+
+    # Formatting function
+    def formatting_prompts_func(example):
+        return f"{example['instruction']}[MASK]{example['output']}"
+
+    # Completion-only loss (only compute loss on output after [MASK])
+    response_template = "[MASK]"
+    data_collator = DataCollatorForCompletionOnlyLM(response_template, tokenizer=tokenizer)
+
+    # Training config
+    training_args = SFTConfig(
+        output_dir=output_path,
+        per_device_train_batch_size=batch_size,
+        per_device_eval_batch_size=batch_size * 2,
+        learning_rate=learning_rate,
+        num_train_epochs=num_epochs,
+        max_seq_length=max_seq_length,
+        save_total_limit=3,
+        save_strategy="epoch",
+        eval_strategy="epoch",
+        load_best_model_at_end=True,
+        save_safetensors=False,
+        neftune_noise_alpha=neftune_noise_alpha if neftune_noise_alpha > 0 else None,
+        logging_steps=50,
+        report_to="none",
+    )
+
+    # Create trainer
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        formatting_func=formatting_prompts_func,
+        data_collator=data_collator,
+    )
+
+    # Train
+    print("\nStarting generative training...")
+    trainer.train()
+
+    # Save
+    trainer.save_model(output_path)
+    tokenizer.save_pretrained(output_path)
+    print(f"\nModel saved to: {output_path}")
+
+    return trainer
+
+
 def main():
     parser = argparse.ArgumentParser(description="SMART model fine-tuning (single or multi-task)")
     parser.add_argument("--model", type=str, default='nt', help="Model type")
@@ -538,13 +698,17 @@ def main():
     # Task selection
     parser.add_argument("--task", type=str, default="CLNDN", choices=["CLNDN", "CLNSIG"],
                         help="Single task mode")
-    parser.add_argument("--multitask", action="store_true", help="Enable multi-task mode")
+    parser.add_argument("--multitask", action="store_true", help="Enable multi-task mode (discriminative)")
     parser.add_argument("--allheads", action="store_true", help="AlphaGenome-style: all heads per sample")
+    parser.add_argument("--generative", action="store_true",
+                        help="Generative multitask training (SFTTrainer, OmniDNA only)")
     parser.add_argument("--data_source", type=str, default='smart', choices=['smart', 'clinvar'],
                         help="Data source for classification tasks")
     parser.add_argument("--clndn", action="store_true", help="Include CLNDN (disease) in multi-task")
     parser.add_argument("--clnsig", action="store_true", help="Include CLNSIG (pathogenicity) in multi-task")
     parser.add_argument("--maves", action="store_true", help="Include MAVES (fitness) in multi-task")
+    parser.add_argument("--neftune_alpha", type=float, default=5.0,
+                        help="NEFTune noise alpha for generative training (0 to disable)")
 
     # Training hyperparameters
     parser.add_argument("--learning_rate", type=float, default=0.000005)
@@ -560,7 +724,23 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
 
-    if args.allheads:
+    if args.generative:
+        # Generative multitask training (SFTTrainer, OmniDNA only)
+        clndn = args.clndn or (not args.clndn and not args.clnsig)
+        clnsig = args.clnsig or (not args.clndn and not args.clnsig)
+        run_generative_multitask_finetune(
+            seed=args.seed,
+            model_type=args.model,
+            learning_rate=args.learning_rate,
+            batch_size=args.batch_size,
+            num_epochs=args.num_epochs,
+            threshold=args.threshold,
+            include_clndn=clndn,
+            include_clnsig=clnsig,
+            data_source=args.data_source,
+            neftune_noise_alpha=args.neftune_alpha,
+        )
+    elif args.allheads:
         # AlphaGenome-style: all heads evaluated for every sample
         run_allheads_multitask_finetune(
             seed=args.seed,
