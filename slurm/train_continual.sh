@@ -1,4 +1,17 @@
 #!/bin/bash
+#SBATCH -t 4-00:0:0
+#SBATCH -J train_continual
+#SBATCH -p gpu_bwanggroup
+#SBATCH --mem=450G
+#SBATCH -c 8
+#SBATCH -N 1
+#SBATCH --gres=gpu:4
+#SBATCH --ntasks=1
+#SBATCH --output=logs/continual_output_%j.log
+#SBATCH --error=logs/continual_error_%j.log
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=vallisubasri@gmail.com
+
 # =============================================================================
 # Continual Learning with LoRA + Replay + SLAO (2025 SOTA)
 # =============================================================================
@@ -25,6 +38,20 @@
 # - Surprise-based replay buffer
 #
 # =============================================================================
+
+set -e
+
+# Create logs directory if it doesn't exist
+mkdir -p logs
+
+cd /cluster/projects/bwanggroup/vsubasri/genomic-FM
+
+source ~/miniconda3/etc/profile.d/conda.sh
+
+conda activate genomic-fm
+
+# Disable wandb syncing for now
+wandb offline
 
 # Configuration
 MODEL="nt"  # nucleotide-transformer
@@ -79,7 +106,7 @@ accelerate launch \
     --use_replay \
     --replay_buffer_size ${REPLAY_BUFFER_SIZE}
 
-MAVES_LORA="./root/models/model_${MODEL}_MAVES_score_lora_replay/lora_adapter"
+MAVES_LORA="./root/models/continual_${MODEL}_MAVES_score_lora_replay/lora_adapter"
 MAVES_BUFFER="./root/models/replay_buffer_MAVES_score.pt"
 echo "MAVES checkpoint: ${MAVES_LORA}"
 echo "MAVES replay buffer: ${MAVES_BUFFER}"
@@ -119,7 +146,7 @@ accelerate launch \
     --slao_alpha_A ${SLAO_ALPHA_A} \
     --slao_merge_frequency ${SLAO_MERGE_FREQ}
 
-CLNSIG_LORA="./root/models/model_${MODEL}_CLNSIG_lora_replay/lora_adapter"
+CLNSIG_LORA="./root/models/continual_${MODEL}_CLNSIG_lora_replay/lora_adapter"
 CLNSIG_BUFFER="./root/models/replay_buffer_CLNSIG.pt"
 echo "CLNSIG checkpoint: ${CLNSIG_LORA}"
 echo "CLNSIG replay buffer: ${CLNSIG_BUFFER}"
@@ -159,7 +186,7 @@ accelerate launch \
     --slao_alpha_A ${SLAO_ALPHA_A} \
     --slao_merge_frequency ${SLAO_MERGE_FREQ}
 
-CLNDN_LORA="./root/models/model_${MODEL}_CLNDN_lora_replay/lora_adapter"
+CLNDN_LORA="./root/models/continual_${MODEL}_CLNDN_lora_replay/lora_adapter"
 CLNDN_BUFFER="./root/models/replay_buffer_CLNDN.pt"
 
 echo ""

@@ -424,7 +424,7 @@ def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0
         decoder=decoder,
         model=model,
         args=TrainingArguments(
-            output_dir=f"{path_prefix}/smart_multitask_{model_type}_{'_'.join(tasks)}",
+            output_dir=f"{path_prefix}/smart_discriminative_multitask_{model_type}_{'_'.join(tasks)}",
             learning_rate=learning_rate, max_grad_norm=max_grad_norm,
             per_device_train_batch_size=batch_size, per_device_eval_batch_size=batch_size,
             num_train_epochs=num_epochs, save_total_limit=5,
@@ -497,7 +497,7 @@ def run_allheads_multitask_finetune(
         label_smoothing=0.1,
         model=model,
         args=TrainingArguments(
-            output_dir=f"{path_prefix}/allheads_multitask_{model_type}_CLNDN_CLNSIG",
+            output_dir=f"{path_prefix}/smart_allheads_multitask_{model_type}_CLNDN_CLNSIG",
             learning_rate=learning_rate,
             max_grad_norm=max_grad_norm,
             per_device_train_batch_size=batch_size,
@@ -569,7 +569,7 @@ def run_generative_multitask_finetune(
 
     path_prefix = "./root/models"
     tasks_str = '_'.join([t for t, inc in [('CLNDN', include_clndn), ('CLNSIG', include_clnsig)] if inc])
-    output_path = f"{path_prefix}/generative_{model_type}_{tasks_str}"
+    output_path = f"{path_prefix}/smart_generative_multitask_{model_type}_{tasks_str}"
 
     # Load model and tokenizer
     local_model_base = f"./root/models/{model_type}"
@@ -640,19 +640,21 @@ def run_generative_multitask_finetune(
 
     print(f"Train: {len(train_dataset)}, Eval: {len(eval_dataset)}")
 
-    # Formatting function
+    # Formatting function - must return a list of strings for SFTTrainer
     def formatting_prompts_func(example):
-        return f"{example['instruction']}[MASK]{example['output']}"
+        return [f"{example['instruction']}[MASK]{example['output']}"]
 
     # Completion-only loss (only compute loss on output after [MASK])
     response_template = "[MASK]"
     data_collator = DataCollatorForCompletionOnlyLM(response_template, tokenizer=tokenizer)
 
     # Training config
+    # Note: save_safetensors=False to avoid DTensor bug in some transformers versions
     training_args = SFTConfig(
         output_dir=output_path,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size * 2,
+        gradient_accumulation_steps=4,  # Reduce memory usage
         learning_rate=learning_rate,
         num_train_epochs=num_epochs,
         max_seq_length=max_seq_length,
@@ -664,6 +666,7 @@ def run_generative_multitask_finetune(
         neftune_noise_alpha=neftune_noise_alpha if neftune_noise_alpha > 0 else None,
         logging_steps=50,
         report_to="none",
+        ddp_find_unused_parameters=False,  # Better DDP performance
     )
 
     # Create trainer

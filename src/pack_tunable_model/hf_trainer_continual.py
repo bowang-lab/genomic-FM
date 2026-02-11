@@ -778,7 +778,7 @@ def run_lora_finetune(
     # =========================================================================
     lora_suffix = "_lora" if use_lora else ""
     replay_suffix = "_replay" if use_replay else ""
-    output_path = f"{path_prefix}/model_{model_type}_{task}{lora_suffix}{replay_suffix}"
+    output_path = f"{path_prefix}/continual_{model_type}_{task}{lora_suffix}{replay_suffix}"
 
     task_type = "regression" if task.startswith("MAVES") else "classification"
 
