@@ -176,11 +176,29 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                     available_steps = [int(d.split('-')[1]) for d in checkpoint_dirs]
                     raise ValueError(f"Checkpoint step {checkpoint_step} not found. Available steps: {sorted(available_steps)}")
             else:
-                # Sort by checkpoint number and select the latest one
-                checkpoint_dirs.sort(key=lambda x: int(x.split('-')[1]))
-                latest_checkpoint = checkpoint_dirs[-1]
-                checkpoint_weights_path = os.path.join(checkpoint_path, latest_checkpoint, "pytorch_model.bin")
-                print(f"Will load ClinVar-trained weights from {checkpoint_weights_path} (latest from {len(checkpoint_dirs)} checkpoints)")
+                # Try to find the best checkpoint from trainer_state.json
+                trainer_state_path = os.path.join(checkpoint_path, "trainer_state.json")
+                best_checkpoint = None
+
+                if os.path.exists(trainer_state_path):
+                    import json
+                    with open(trainer_state_path, 'r') as f:
+                        trainer_state = json.load(f)
+                    best_checkpoint_path = trainer_state.get('best_model_checkpoint')
+                    if best_checkpoint_path:
+                        # Extract just the checkpoint directory name
+                        best_checkpoint = os.path.basename(best_checkpoint_path)
+                        if best_checkpoint in checkpoint_dirs:
+                            checkpoint_weights_path = os.path.join(checkpoint_path, best_checkpoint, "pytorch_model.bin")
+                            best_metric = trainer_state.get('best_metric', 'N/A')
+                            print(f"Will load ClinVar-trained weights from {checkpoint_weights_path} (best checkpoint, metric={best_metric})")
+
+                if not checkpoint_weights_path:
+                    # Fall back to latest checkpoint if no best found
+                    checkpoint_dirs.sort(key=lambda x: int(x.split('-')[1]))
+                    latest_checkpoint = checkpoint_dirs[-1]
+                    checkpoint_weights_path = os.path.join(checkpoint_path, latest_checkpoint, "pytorch_model.bin")
+                    print(f"Will load ClinVar-trained weights from {checkpoint_weights_path} (latest from {len(checkpoint_dirs)} checkpoints, no best checkpoint found)")
         else:
             # Check if it's a direct path to a checkpoint directory
             if os.path.exists(os.path.join(checkpoint_path, "pytorch_model.bin")):
@@ -590,7 +608,15 @@ def run_generative_multitask_finetune(
     print(f"{'='*60}\n")
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
+
+    # Add [MASK] as a special token if not present (needed for completion-only training)
+    if "[MASK]" not in tokenizer.get_vocab():
+        tokenizer.add_special_tokens({"additional_special_tokens": ["[MASK]"]})
+
     model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
+
+    # Resize embeddings if we added new tokens
+    model.resize_token_embeddings(len(tokenizer))
 
     # Define label mappings
     disease_labels = ['Aortopathy', 'Arrhythmia', 'Cardiomyopathy', 'Structural_defect']

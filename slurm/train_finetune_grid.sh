@@ -65,7 +65,7 @@ echo "============================================"
 PORT_COUNTER=0
 
 # Loop through each checkpoint
-for CHECKPOINT_NAME in "CLNDN"; do  # "CLNSIG" "MAVES_DMS" "MAVES_REGULATORY"
+for CHECKPOINT_NAME in "CLNDN" "CLNSIG" "MAVES_DMS" "MAVES_REGULATORY"; do
     if [ "$CHECKPOINT_NAME" == "CLNDN" ]; then
         CHECKPOINT="$CLNDN_CHECKPOINT"
     elif [ "$CHECKPOINT_NAME" == "CLNSIG" ]; then
