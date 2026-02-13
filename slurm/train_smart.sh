@@ -5,7 +5,7 @@
 #SBATCH --mem=450G
 #SBATCH -c 8
 #SBATCH -N 1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 #SBATCH --ntasks=1
 #SBATCH --output=logs/smart_output_%j.log
 #SBATCH --error=logs/smart_error_%j.log
