@@ -204,7 +204,7 @@ class AllHeadsMultitaskTrainer(transformers.Trainer):
                 )
                 head_losses.append(task_loss)
 
-        # Sum losses across heads (AlphaGenome-style)
+        # Sum losses across heads: each head provides independent supervision
         if head_losses:
             total_loss = torch.stack(head_losses).sum()
         else:
@@ -448,6 +448,7 @@ class MultitaskTrainer(transformers.Trainer):
                     )
                 losses.append(sample_loss)
 
+            # Simple mean: each sample contributes equally, tasks contribute proportionally to sample count
             loss = torch.stack(losses).mean()
 
             return (loss, (logits, outputs_ref)) if return_outputs else loss
@@ -595,6 +596,7 @@ class MultitaskTrainer(transformers.Trainer):
                     )
                 losses.append(sample_loss)
 
+            # Simple mean: each sample contributes equally
             if losses:
                 loss = torch.stack(losses).mean()
 
