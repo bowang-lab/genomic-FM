@@ -353,9 +353,12 @@ class MultitaskTrainer(transformers.Trainer):
             for task in unique_tasks:
                 if task not in model.task_classification_heads:
                     num_classes = self.task_num_classes.get(task, 2)  # Default to binary if not specified
-                    model.task_classification_heads[task] = torch.nn.Linear(
-                        model.config.hidden_size,
-                        num_classes
+                    # MLP head (matches Single-Task and AllHeads for consistency)
+                    model.task_classification_heads[task] = torch.nn.Sequential(
+                        torch.nn.Linear(model.config.hidden_size, 128),
+                        torch.nn.ReLU(),
+                        torch.nn.Dropout(0.1),
+                        torch.nn.Linear(128, num_classes)
                     ).to(model.device)
 
             # Route inputs to task-specific heads
@@ -664,9 +667,12 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
             for task in tasks:
                 if task not in model.task_classification_heads:
                     num_classes = task_num_classes.get(task, 2)
-                    model.task_classification_heads[task] = torch.nn.Linear(
-                        model.config.hidden_size,
-                        num_classes
+                    # MLP head (matches Single-Task and AllHeads for consistency)
+                    model.task_classification_heads[task] = torch.nn.Sequential(
+                        torch.nn.Linear(model.config.hidden_size, 128),
+                        torch.nn.ReLU(),
+                        torch.nn.Dropout(0.1),
+                        torch.nn.Linear(128, num_classes)
                     ).to(model.device)
             # Filter and load only task-specific head parameters
             task_head_state = {k.replace('task_classification_heads.', ''): v for k, v in state_dict.items() if k.startswith('task_classification_heads.')}
