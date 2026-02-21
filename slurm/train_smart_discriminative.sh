@@ -4,9 +4,9 @@
 #SBATCH -p gpu_bwanggroup
 #SBATCH --mem=450G
 #SBATCH -c 8
-#SBATCH -N 1
-#SBATCH --gres=gpu:4
-#SBATCH --ntasks=1
+#SBATCH -N 2
+#SBATCH --gres=gpu:2
+#SBATCH --ntasks-per-node=1
 #SBATCH --output=logs/smart_disc_output_%j.log
 #SBATCH --error=logs/smart_disc_error_%j.log
 #SBATCH --mail-type=BEGIN,END,FAIL
@@ -55,7 +55,13 @@ echo "============================================"
 # Data source: 'smart' or 'clinvar'
 DATA_SOURCE="smart"
 
-accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
+# Multi-node setup
+export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+
+srun --export=ALL accelerate launch \
+    --config_file configs/ddp_2node.yaml \
+    --machine_rank \$SLURM_PROCID \
+    --main_process_ip $MASTER_ADDR \
     -m src.pack_tunable_model.hf_trainer_smart \
     --model "$MODEL" \
     --seed 127 \
