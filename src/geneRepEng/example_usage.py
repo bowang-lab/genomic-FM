@@ -573,7 +573,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
         model_name = Path(model_path).name.replace('/', '_')
     else:
         model_name = "omni_dna_116m"
-    output_path = f"cgc_cardiac_pathogenicity_control_{model_name}.npz"
+    output_path = f"root/output/cgc_cardiac_pathogenicity_control_{model_name}.npz"
     control_vector.save(output_path)
     print(f"\nControl vector saved to: {output_path}")
 

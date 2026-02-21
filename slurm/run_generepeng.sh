@@ -15,10 +15,10 @@
 # Exit on any error
 set -e
 
-# Create logs directory if it doesn't exist
-mkdir -p logs
-
 cd /cluster/projects/bwanggroup/vsubasri/genomic-FM
+
+# Create output directories if they don't exist
+mkdir -p logs root/output
 
 source ~/miniconda3/etc/profile.d/conda.sh
 
@@ -52,5 +52,5 @@ python -m src.geneRepEng.example_usage \
 
 echo "============================================"
 echo "Gene Representation Engineering Completed!"
-echo "Control vector saved: cgc_cardiac_pathogenicity_control_${MODEL_PATH//\//_}.npz"
+echo "Control vector saved: root/output/cgc_cardiac_pathogenicity_control_${MODEL_PATH//\//_}.npz"
 echo "============================================"
