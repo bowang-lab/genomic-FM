@@ -609,14 +609,7 @@ def run_generative_multitask_finetune(
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
 
-    # Add [MASK] as a special token if not present (needed for completion-only training)
-    if "[MASK]" not in tokenizer.get_vocab():
-        tokenizer.add_special_tokens({"additional_special_tokens": ["[MASK]"]})
-
     model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
-
-    # Resize embeddings if we added new tokens
-    model.resize_token_embeddings(len(tokenizer))
 
     # Define label mappings
     disease_labels = ['Aortopathy', 'Arrhythmia', 'Cardiomyopathy', 'Structural_defect']
@@ -637,7 +630,7 @@ def run_generative_multitask_finetune(
 
         if include_clndn and disease in disease_labels:
             formatted_data.append({
-                'instruction': f"Classify disease for variant: {ref_seq}[SEP]{alt_seq}",
+                'instruction': f"{ref_seq}[SEP]{alt_seq}",
                 'output': disease.replace(' ', '_'),
                 'task': 'CLNDN'
             })
@@ -645,7 +638,7 @@ def run_generative_multitask_finetune(
         if include_clnsig and pathogenicity in [0, 1]:
             label = pathogenicity_labels[pathogenicity]
             formatted_data.append({
-                'instruction': f"Classify pathogenicity for variant: {ref_seq}[SEP]{alt_seq}",
+                'instruction': f"{ref_seq}[SEP]{alt_seq}",
                 'output': label,
                 'task': 'CLNSIG'
             })
@@ -666,9 +659,9 @@ def run_generative_multitask_finetune(
 
     print(f"Train: {len(train_dataset)}, Eval: {len(eval_dataset)}")
 
-    # Formatting function - must return a list of strings for SFTTrainer
+    # Formatting function for SFTTrainer (Omni-DNA style)
     def formatting_prompts_func(example):
-        return [f"{example['instruction']}[MASK]{example['output']}"]
+        return f"{example['instruction']}[MASK]{example['output']}"
 
     # Completion-only loss (only compute loss on output after [MASK])
     response_template = "[MASK]"
