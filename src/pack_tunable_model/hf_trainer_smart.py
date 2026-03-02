@@ -176,8 +176,12 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                     available_steps = [int(d.split('-')[1]) for d in checkpoint_dirs]
                     raise ValueError(f"Checkpoint step {checkpoint_step} not found. Available steps: {sorted(available_steps)}")
             else:
-                # Try to find the best checkpoint from trainer_state.json
-                trainer_state_path = os.path.join(checkpoint_path, "trainer_state.json")
+                # Sort checkpoint dirs to find the latest one
+                checkpoint_dirs.sort(key=lambda x: int(x.split('-')[1]))
+                latest_checkpoint = checkpoint_dirs[-1]
+
+                # Try to find the best checkpoint from trainer_state.json inside the latest checkpoint
+                trainer_state_path = os.path.join(checkpoint_path, latest_checkpoint, "trainer_state.json")
                 best_checkpoint = None
 
                 if os.path.exists(trainer_state_path):
@@ -195,8 +199,6 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
                 if not checkpoint_weights_path:
                     # Fall back to latest checkpoint if no best found
-                    checkpoint_dirs.sort(key=lambda x: int(x.split('-')[1]))
-                    latest_checkpoint = checkpoint_dirs[-1]
                     checkpoint_weights_path = os.path.join(checkpoint_path, latest_checkpoint, "pytorch_model.bin")
                     print(f"Will load ClinVar-trained weights from {checkpoint_weights_path} (latest from {len(checkpoint_dirs)} checkpoints, no best checkpoint found)")
         else:
@@ -372,7 +374,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         metric_for_best_model="matthews_correlation",
         greater_is_better=True,
         load_best_model_at_end=True,
-        save_safetensors=True,
+        save_safetensors=False,  # OmniDNA has weight tying (wte/word_embeddings share memory)
         remove_unused_columns=False,
         dataloader_num_workers=num_workers,
         # ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
@@ -448,7 +450,7 @@ def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0
             num_train_epochs=num_epochs, save_total_limit=5,
             eval_strategy="epoch", save_strategy="epoch",
             metric_for_best_model="matthews_correlation", greater_is_better=True,
-            load_best_model_at_end=True, save_safetensors=True,
+            load_best_model_at_end=True, save_safetensors=False,  # Weight tying issue
             remove_unused_columns=False, dataloader_num_workers=num_workers,
         ),
         train_dataset=datasets['train'],
@@ -527,7 +529,7 @@ def run_allheads_multitask_finetune(
             metric_for_best_model="matthews_correlation",
             greater_is_better=True,
             load_best_model_at_end=True,
-            save_safetensors=True,
+            save_safetensors=False,  # Weight tying issue with OmniDNA
             remove_unused_columns=False,
             dataloader_num_workers=num_workers,
         ),

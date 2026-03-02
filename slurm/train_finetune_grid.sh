@@ -5,7 +5,7 @@
 #SBATCH --mem=400G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
-#SBATCH --gres=gpu:2 # match ddp.yaml num_processes
+#SBATCH --gres=gpu:4 # match ddp.yaml num_processes
 #SBATCH --ntasks=1 # Keep as 1 since we'll use accelerate launch
 #SBATCH --output=logs/smart_fromckpt_output_%j.log
 #SBATCH --error=logs/smart_fromckpt_error_%j.log  
