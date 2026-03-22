@@ -377,7 +377,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         save_safetensors=False,  # OmniDNA has weight tying (wte/word_embeddings share memory)
         remove_unused_columns=False,
         dataloader_num_workers=num_workers,
-        # ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
+        ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
     )
     print(f"Training arguments prediction loss only: {training_args.prediction_loss_only}")
     # Data Collator

@@ -25,8 +25,9 @@ import os
 # Import using proper module paths (run with: python -m src.geneRepEng.sweep.sweep from project root)
 from src.geneRepEng import ControlModel, ControlVector, GenomicDatasetEntry
 from src.geneRepEng.dataset import create_smart_variant_control_dataset, create_synthetic_control_dataset
-from src.geneRepEng.util.omni_dna import create_omni_dna_control_model, get_omni_dna_layer_list
-from src.geneRepEng.extractor import create_control_vector_from_sequences
+from src.geneRepEng.util.omni_dna import create_omni_dna_control_model
+from src.geneRepEng.cv_loader import model_layer_list
+from src.geneRepEng.extract import create_control_vector_from_sequences
 
 # Import from sibling package
 from src.pack_tunable_model.hf_dataloader import return_smart_dataset, MultiTaskDataCollator
@@ -357,7 +358,7 @@ def precompute_shared_data(args):
 
     try:
         # Use the layer list from the model
-        layers = get_omni_dna_layer_list(model)
+        layers = model_layer_list(model)
         layer_ids = list(range(len(layers)))
 
         control_directions = create_control_vector_from_sequences(
@@ -380,7 +381,7 @@ def precompute_shared_data(args):
         print("Creating dummy control vector for testing...")
         # Create a dummy control vector for testing
         try:
-            layers = get_omni_dna_layer_list(model)
+            layers = model_layer_list(model)
         except Exception as e2:
             print(f"Warning: Could not get layer list: {e2}")
             # Create a fake layer list for testing

@@ -2,6 +2,7 @@
 #SBATCH -t 2-00:0:0
 #SBATCH -J gene_repeng
 #SBATCH -p gpu_bwanggroup
+#SBATCH --account=bwanggroup_gpu
 #SBATCH --mem=200G
 #SBATCH -c 8
 #SBATCH -N 1

@@ -19,7 +19,11 @@ from src.geneRepEng.dataset import (
     create_clinvar_control_dataset,
     load_cgc_primary_findings,
     load_cardiac_benign_variants,
-    create_balanced_control_dataset
+    create_balanced_control_dataset,
+    load_cgc_by_disease_class,
+    get_disease_specific_genes,
+    load_benign_by_genes,
+    DISEASE_CLASSES
 )
 from src.geneRepEng.util.omni_dna import create_omni_dna_control_model
 
@@ -447,7 +451,7 @@ def compare_ref_alt_representations():
         print(f"    Alt: {alt}")
 
     # Get representations
-    from src.geneRepEng.extractor import extract_layer_representations
+    from src.geneRepEng.extract import extract_layer_representations
 
     ref_reps = extract_layer_representations(
         model, tokenizer, ref_sequences, layer_ids=[6, 12, 18], batch_size=3
@@ -588,6 +592,138 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
     print("=" * 60)
 
     return controlled_model, control_vector
+
+
+def train_disease_specific_control_vectors(
+    model_path: str = None,
+    disease_classes: List[str] = None,
+    output_dir: str = "root/output/disease_vectors"
+) -> Dict[str, ControlVector]:
+    """
+    Train disease-specific control vectors for cardiac disease classes.
+
+    Creates separate control vectors for each disease class (Aortopathy,
+    Cardiomyopathy, Arrhythmia, Structural defect) using disease-specific
+    pathogenic variants and gene-matched benign controls.
+
+    Args:
+        model_path: Path to the model. Can be:
+                   - Full path: "root/models/pretrain_model_omni_dna_116m_CLNDN"
+                   - Model name: "pretrain_model_omni_dna_116m_CLNDN"
+                   - None: Uses default omni_dna_116m
+        disease_classes: List of disease classes to train. Default: all 4 classes
+        output_dir: Directory to save control vectors
+
+    Returns:
+        Dict mapping disease class name to trained ControlVector
+    """
+    print("\n=== Disease-Specific Control Vector Training ===\n")
+
+    # Default to all disease classes
+    if disease_classes is None:
+        disease_classes = DISEASE_CLASSES
+
+    # Validate disease classes
+    for dc in disease_classes:
+        if dc not in DISEASE_CLASSES:
+            raise ValueError(f"Invalid disease class '{dc}'. Must be one of {DISEASE_CLASSES}")
+
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Load model once
+    model, tokenizer = load_omni_dna_model(model_path)
+
+    # Get model name for output files
+    if model_path:
+        model_name = Path(model_path).name.replace('/', '_')
+    else:
+        model_name = "omni_dna_116m"
+
+    control_vectors = {}
+
+    for disease_class in disease_classes:
+        print(f"\n{'='*60}")
+        print(f"Training control vector for: {disease_class}")
+        print(f"{'='*60}\n")
+
+        try:
+            # Step 1: Load disease-specific pathogenic variants
+            print(f"Loading pathogenic variants for {disease_class}...")
+            pathogenic_dataset = load_cgc_by_disease_class(disease_class)
+
+            if len(pathogenic_dataset) == 0:
+                print(f"Warning: No pathogenic variants found for {disease_class}. Skipping.")
+                continue
+
+            print(f"Loaded {len(pathogenic_dataset)} pathogenic variants")
+
+            # Step 2: Get disease-specific genes
+            print(f"\nGetting gene list for {disease_class}...")
+            gene_list = get_disease_specific_genes(disease_class)
+            print(f"Found {len(gene_list)} genes: {gene_list[:10]}{'...' if len(gene_list) > 10 else ''}")
+
+            # Step 3: Load gene-matched benign variants
+            print(f"\nLoading gene-matched benign variants...")
+            benign_dataset = load_benign_by_genes(
+                gene_list=gene_list,
+                n_samples=500,
+                seq_length=1024,
+                seed=42
+            )
+            print(f"Loaded {len(benign_dataset)} benign variants")
+
+            # If no gene-matched benign variants, fall back to cardiac benign
+            if len(benign_dataset) == 0:
+                print("No gene-matched benign variants found. Using general cardiac benign variants.")
+                benign_dataset = load_cardiac_benign_variants(n_samples=500, seq_length=1024, seed=42)
+
+            # Step 4: Create balanced dataset
+            print(f"\nCreating balanced control dataset...")
+            balanced_dataset = create_balanced_control_dataset(
+                pathogenic_dataset=pathogenic_dataset,
+                benign_dataset=benign_dataset,
+                balance_method="upsample",
+                seed=42
+            )
+
+            # Step 5: Train control vector
+            print(f"\nTraining control vector for {disease_class}...")
+            control_vector = ControlVector.train(
+                model=model,
+                processors=[tokenizer],
+                dataset=balanced_dataset.entries,
+                max_batch_size=4,
+                method="pca_diff"
+            )
+
+            print(f"Control vector trained for {len(control_vector.directions)} layers")
+
+            # Step 6: Save control vector
+            save_path = output_path / f"{disease_class.replace(' ', '_')}_control_vector_{model_name}.npz"
+            control_vector.save(str(save_path))
+            print(f"Saved to: {save_path}")
+
+            control_vectors[disease_class] = control_vector
+
+        except Exception as e:
+            print(f"Error training control vector for {disease_class}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+    # Print summary
+    print(f"\n{'='*60}")
+    print("Summary:")
+    print(f"{'='*60}")
+    print(f"Trained {len(control_vectors)} disease-specific control vectors:")
+    for disease_class, cv in control_vectors.items():
+        print(f"  - {disease_class}: {len(cv.directions)} layers")
+    print(f"Output directory: {output_dir}")
+    print(f"{'='*60}")
+
+    return control_vectors
 
 
 if __name__ == "__main__":

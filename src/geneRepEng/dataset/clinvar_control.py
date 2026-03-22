@@ -11,7 +11,8 @@ from typing import List, Optional
 from pathlib import Path
 from ..extract import GenomicDatasetEntry
 from .genomic_bench import GenomicDataset
-from ...dataloader.data_wrapper import ClinVarDataWrapper, set_disease_subset_from_file
+from ...dataloader.data_wrapper import ClinVarDataWrapper, set_disease_subset_from_file, GenomeSequenceExtractor, create_variant_record
+from ... import load_clinvar
 
 
 def load_clinvar_benign_variants(
@@ -110,26 +111,49 @@ def load_cardiac_benign_variants(
 
 def create_balanced_control_dataset(
     pathogenic_dataset: GenomicDataset,
-    benign_dataset: GenomicDataset,
+    benign_dataset: GenomicDataset = None,
     balance_method: str = "upsample",
-    seed: int = 42
+    seed: int = 42,
+    control_source: str = "cgc",
+    max_smart_score: float = 0.5,
+    n_controls: int = 500,
+    seq_length: int = 1024
 ) -> GenomicDataset:
     """
-    Create a balanced dataset with equal numbers of pathogenic and benign variants.
+    Create a balanced dataset with pathogenic and control variants.
 
     Args:
         pathogenic_dataset: Dataset with pathogenic variants
-        benign_dataset: Dataset with benign variants
+        benign_dataset: Dataset with control variants. If None, loads automatically
+                       based on control_source
         balance_method: How to balance ("upsample", "downsample", or "none")
         seed: Random seed
+        control_source: Source for controls if benign_dataset is None:
+            - "cgc" (default): CGC variants below SMART threshold (same cohort)
+            - "clinvar": ClinVar benign variants (external, confirmed benign)
+        max_smart_score: For CGC source, SMART score threshold
+        n_controls: Number of control variants to load if loading automatically
+        seq_length: Sequence length for automatic loading
 
     Returns:
         Combined balanced dataset
     """
+    # Load controls if not provided
+    if benign_dataset is None:
+        from .cgc_primary_findings import load_controls
+        print(f"Loading controls from source: {control_source}")
+        benign_dataset = load_controls(
+            source=control_source,
+            max_smart_score=max_smart_score,
+            n_samples=n_controls,
+            seq_length=seq_length,
+            seed=seed
+        )
+
     n_pathogenic = len(pathogenic_dataset)
     n_benign = len(benign_dataset)
 
-    print(f"Balancing datasets: {n_pathogenic} pathogenic, {n_benign} benign")
+    print(f"Balancing datasets: {n_pathogenic} pathogenic, {n_benign} control")
 
     random.seed(seed)
 
@@ -138,23 +162,23 @@ def create_balanced_control_dataset(
         if n_pathogenic < n_benign:
             # Upsample pathogenic
             target_size = n_benign
-            pathogenic_entries = pathogenic_dataset.entries
+            pathogenic_entries = list(pathogenic_dataset.entries)
             while len(pathogenic_entries) < target_size:
                 pathogenic_entries.extend(
                     random.sample(pathogenic_dataset.entries,
                                 min(len(pathogenic_dataset), target_size - len(pathogenic_entries)))
                 )
-            benign_entries = benign_dataset.entries
+            benign_entries = list(benign_dataset.entries)
         else:
             # Upsample benign
             target_size = n_pathogenic
-            benign_entries = benign_dataset.entries
+            benign_entries = list(benign_dataset.entries)
             while len(benign_entries) < target_size:
                 benign_entries.extend(
                     random.sample(benign_dataset.entries,
                                 min(len(benign_dataset), target_size - len(benign_entries)))
                 )
-            pathogenic_entries = pathogenic_dataset.entries
+            pathogenic_entries = list(pathogenic_dataset.entries)
 
     elif balance_method == "downsample":
         # Downsample the larger dataset
@@ -163,8 +187,8 @@ def create_balanced_control_dataset(
         benign_entries = random.sample(benign_dataset.entries, target_size)
 
     else:  # "none"
-        pathogenic_entries = pathogenic_dataset.entries
-        benign_entries = benign_dataset.entries
+        pathogenic_entries = list(pathogenic_dataset.entries)
+        benign_entries = list(benign_dataset.entries)
 
     # Combine entries
     combined_entries = pathogenic_entries + benign_entries
@@ -174,6 +198,99 @@ def create_balanced_control_dataset(
 
     print(f"Created balanced dataset with {len(combined_entries)} total entries")
     print(f"  Pathogenic: {len(pathogenic_entries)}")
-    print(f"  Benign: {len(benign_entries)}")
+    print(f"  Control: {len(benign_entries)}")
 
-    return GenomicDataset(combined_entries, "balanced_control_dataset")
+    return GenomicDataset(combined_entries, f"balanced_{control_source}_control_dataset")
+
+
+def load_benign_by_genes(
+    gene_list: List[str],
+    n_samples: int = 500,
+    seq_length: int = 1024,
+    seed: int = 42,
+    genome_fa: str = "root/data/hg19.fa",
+) -> GenomicDataset:
+    """
+    Load benign ClinVar variants filtered to specific genes.
+
+    This function loads benign variants from ClinVar and filters them to only
+    include variants in the specified gene list. Useful for creating gene-matched
+    control datasets.
+
+    Args:
+        gene_list: List of gene symbols to filter by (e.g., ["FLT4", "NOTCH1"])
+        n_samples: Maximum number of benign variants to sample
+        seq_length: Length of sequences to extract
+        seed: Random seed for reproducibility
+        genome_fa: Path to reference genome FASTA
+
+    Returns:
+        GenomicDataset with benign variants filtered by genes
+    """
+    print(f"Loading ClinVar benign variants for {len(gene_list)} genes...")
+
+    # Convert gene list to set for faster lookup
+    gene_set = set(g.upper() for g in gene_list)
+
+    # Load raw ClinVar records
+    clinvar_vcf_path = load_clinvar.download_file(vcf_file_path='./root/data/clinvar_20250409.vcf')
+    records = load_clinvar.read_vcf(clinvar_vcf_path, num_records=1000000, all_records=True)
+    print(f"Loaded {len(records)} total ClinVar records")
+
+    # Initialize genome extractor
+    genome_extractor = GenomeSequenceExtractor(genome_fa)
+
+    # Filter to benign variants in specified genes
+    random.seed(seed)
+    random.shuffle(records)
+
+    benign_entries = []
+    genes_found = set()
+
+    for record in records:
+        # Check if benign
+        clnsig = record.get('CLNSIG', [])
+        if not clnsig or clnsig[0] not in ['Benign', 'Likely_benign', 'Benign/Likely_benign']:
+            continue
+
+        # Check if in gene list
+        gene_info = record.get('GENEINFO', '')
+        if gene_info:
+            # GENEINFO format is typically "GENE:ID" or "GENE:ID|GENE2:ID2"
+            if isinstance(gene_info, list):
+                gene_info = gene_info[0] if gene_info else ''
+            gene_names = [g.split(':')[0].upper() for g in str(gene_info).split('|')]
+            matching_genes = gene_set.intersection(gene_names)
+            if not matching_genes:
+                continue
+            genes_found.update(matching_genes)
+        else:
+            continue
+
+        # Extract sequences
+        try:
+            ref_seq, alt_seq = genome_extractor.extract_sequence_from_record(
+                record,
+                sequence_length=seq_length
+            )
+
+            if ref_seq is None or alt_seq is None:
+                continue
+
+            entry = GenomicDatasetEntry(
+                ref_sequence=ref_seq,
+                alt_sequence=alt_seq,
+                label=0  # Benign
+            )
+            benign_entries.append(entry)
+
+            if len(benign_entries) >= n_samples:
+                break
+
+        except Exception as e:
+            continue
+
+    print(f"Extracted {len(benign_entries)} benign variants from {len(genes_found)} genes")
+    print(f"Genes with variants: {sorted(genes_found)}")
+
+    return GenomicDataset(benign_entries, f"clinvar_benign_gene_matched")

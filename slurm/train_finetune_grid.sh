@@ -2,6 +2,7 @@
 #SBATCH -t 4-00:0:0
 #SBATCH -J train_smart_fromckpt
 #SBATCH -p gpu_bwanggroup
+#SBATCH --account=bwanggroup_gpu
 #SBATCH --mem=400G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node

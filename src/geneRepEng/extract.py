@@ -12,7 +12,7 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 import tqdm
 
-from .control import ControlModel
+from .cv_loader import ControlModel
 
 @dataclasses.dataclass
 class GenomicDatasetEntry:
@@ -87,7 +87,7 @@ def batched_get_hiddens(
 
             # Ensure the layer indices matches that of the model layers
             if not shape_checked:
-                from .control import model_layer_list
+                from .cv_loader import model_layer_list
                 if len(out.hidden_states) != len(model_layer_list(model)) + 1:
                     warnings.warn(
                         f"Length of hidden_states should equal model_layers+1: {len(out.hidden_states)} != {len(model_layer_list(model))+1}"
@@ -232,6 +232,96 @@ class ControlVector:
         directions = {int(k): v for k, v in data.items() if k != 'model_type'}
         return cls(model_type=model_type, directions=directions)
 
+# =============================================================================
+# Simplified APIs (raw sequences, no GenomicDatasetEntry required)
+# =============================================================================
+
+def extract_layer_representations(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    sequences: typing.List[str],
+    layer_ids: typing.List[int],
+    batch_size: int = 8,
+    pooling: str = "last",
+) -> typing.Dict[int, np.ndarray]:
+    """
+    Extract hidden representations from specific layers for raw DNA sequences.
+
+    Args:
+        model: The genomic language model
+        tokenizer: Tokenizer for DNA sequences
+        sequences: List of DNA sequences (raw strings)
+        layer_ids: List of layer indices to extract from
+        batch_size: Batch size for processing
+        pooling: Pooling strategy ("last", "mean", "cls")
+
+    Returns:
+        Dict mapping layer_id to representations array (n_sequences, hidden_dim)
+    """
+    custom_functions = CustomFunctions()
+    inputs = [{'sequence': seq} for seq in sequences]
+    return custom_functions.F_batched_get_hiddens(
+        model, [tokenizer], inputs, layer_ids, batch_size, custom_functions, pooling
+    )
+
+
+def create_control_vector_from_sequences(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
+    ref_sequences: typing.List[str],
+    alt_sequences: typing.List[str],
+    layer_ids: typing.Optional[typing.List[int]] = None,
+    batch_size: int = 8,
+    method: str = "pca_diff",
+    pooling: str = "last",
+) -> typing.Dict[int, np.ndarray]:
+    """
+    Create control vectors from raw reference and alternative DNA sequences.
+
+    Args:
+        model: The genomic language model
+        tokenizer: Tokenizer for DNA sequences
+        ref_sequences: List of reference DNA sequences
+        alt_sequences: List of alternative DNA sequences
+        layer_ids: List of layer indices (default: all layers)
+        batch_size: Batch size for processing
+        method: "pca_diff" or "mean_diff"
+        pooling: Pooling strategy ("last", "mean", "cls")
+
+    Returns:
+        Dict mapping layer_id to control direction vector
+    """
+    from .cv_loader import model_layer_list
+
+    if layer_ids is None:
+        layers = model_layer_list(model)
+        layer_ids = list(range(len(layers)))
+
+    ref_reps = extract_layer_representations(model, tokenizer, ref_sequences, layer_ids, batch_size, pooling)
+    alt_reps = extract_layer_representations(model, tokenizer, alt_sequences, layer_ids, batch_size, pooling)
+
+    directions = {}
+    for layer_id in layer_ids:
+        diff = alt_reps[layer_id] - ref_reps[layer_id]
+
+        if method == "pca_diff":
+            if diff.shape[0] > 1:
+                pca = PCA(n_components=1)
+                pca.fit(diff)
+                direction = pca.components_[0]
+            else:
+                direction = diff[0] / (np.linalg.norm(diff[0]) + 1e-8)
+        elif method == "mean_diff":
+            direction = np.mean(diff, axis=0)
+            direction = direction / (np.linalg.norm(direction) + 1e-8)
+        else:
+            raise ValueError(f"Unknown method: {method}")
+
+        directions[layer_id] = direction
+
+    return directions
+
+
 def read_representations(
     model,
     processors,
@@ -255,7 +345,7 @@ def read_representations(
         custom_functions = CustomFunctions()
 
     # Determine which layers to extract from
-    from .control import model_layer_list
+    from .cv_loader import model_layer_list
     layers = model_layer_list(model)
     hidden_layers = list(range(len(layers)))
 

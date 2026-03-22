@@ -2,6 +2,7 @@
 #SBATCH -t 4-00:0:0
 #SBATCH -J train_continual
 #SBATCH -p gpu_bwanggroup
+#SBATCH --account=bwanggroup_gpu
 #SBATCH --mem=450G
 #SBATCH -c 8
 #SBATCH -N 1
@@ -13,35 +14,23 @@
 #SBATCH --mail-user=vallisubasri@gmail.com
 
 # =============================================================================
-# Continual Learning with LoRA + Replay + SLAO (2025 SOTA)
+# Continual Learning with LoRA + Replay + SLAO
 # =============================================================================
 #
-# Based on:
-# - SLAO (2025): Single LoRA via orthogonal init + asymmetric merging
-# - ACM Computing Surveys: Combine replay + regularization for best results
-#
-# Workflow (Biological Causality: Molecular → Clinical):
+# Task Order (Biological Causality: Molecular → Clinical):
 #   Task 1: MAVES - Molecular effect (DMS functional scores)
 #   Task 2: CLNSIG - Pathogenicity (Benign vs Pathogenic)
 #   Task 3: CLNDN - Disease type (which disease it causes)
 #
-# Rationale:
-#   - Molecular effects (MAVES) are the foundation of variant impact
-#   - Pathogenicity (CLNSIG) is determined by molecular dysfunction
-#   - Disease specificity (CLNDN) is the downstream clinical manifestation
-#
 # Key features:
-# - LoRA for ~1% trainable parameters
-# - SLAO: Orthogonal initialization (new B orthogonal to old directions)
-# - SLAO: Asymmetric A/B treatment (A preserved more, B more plastic)
-# - SLAO: Time-aware scaling λ(t) = 1/√t
-# - Surprise-based replay buffer
+# - LoRA for parameter-efficient fine-tuning (~1% trainable params)
+# - Replay buffer to prevent catastrophic forgetting
+# - SLAO: Orthogonal B initialization + asymmetric merging (tasks 2+3)
 #
 # =============================================================================
 
 set -e
 
-# Create logs directory if it doesn't exist
 mkdir -p logs
 
 cd /cluster/projects/bwanggroup/vsubasri/genomic-FM
@@ -50,42 +39,43 @@ source ~/miniconda3/etc/profile.d/conda.sh
 
 conda activate genomic-fm
 
-# Disable wandb syncing for now
 wandb offline
 
 # Configuration
-MODEL="nt"  # nucleotide-transformer
+MODEL="nt"  # Options: nt, omni_dna_116m, dnabert2, hyenadna, etc.
 SEED=127
 BATCH_SIZE=8
 NUM_EPOCHS=10
-LEARNING_RATE=1e-4  # Higher LR for LoRA
+LEARNING_RATE=1e-4
 LORA_R=8
 LORA_ALPHA=16
-REPLAY_BUFFER_SIZE=1000
-REPLAY_RATIO=0.2
 
-# SLAO Configuration
-SLAO_ALPHA_A=0.5        # A preservation factor (higher = more preserved)
-SLAO_MERGE_FREQ=100     # Merge frequency during training
+# Replay config (based on Kotha & Liang 2026: higher ratios improve target performance)
+REPLAY_BUFFER_SIZE=5000
+REPLAY_RATIO=0.5  # 0.5 = equal mix of current and replay samples
+
+# Set decoder flag for autoregressive models
+if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
+    DECODER_FLAG="--decoder"
+else
+    DECODER_FLAG=""
+fi
 
 echo "=============================================="
 echo "Continual Learning: LoRA + Replay + SLAO"
 echo "=============================================="
 echo "Model: ${MODEL}"
 echo "Task Order: MAVES → CLNSIG → CLNDN"
-echo "  (Molecular → Pathogenicity → Disease)"
 echo "LoRA rank: ${LORA_R}"
-echo "Replay buffer size: ${REPLAY_BUFFER_SIZE}"
-echo "SLAO α_A: ${SLAO_ALPHA_A}"
+echo "Replay: buffer=${REPLAY_BUFFER_SIZE}, ratio=${REPLAY_RATIO} (data-level mixing)"
+echo "SLAO: Enabled for tasks 2 and 3"
 echo "=============================================="
 
 # =============================================================================
 # STEP 1: Train on MAVES (molecular effect - DMS functional scores)
-#         Foundation: Learn how variants affect protein function
 # =============================================================================
 echo ""
 echo "[Step 1/3] Training on MAVES (molecular effect)..."
-echo "           Learning variant functional impact from DMS data"
 echo ""
 
 accelerate launch \
@@ -104,23 +94,18 @@ accelerate launch \
     --lora_r ${LORA_R} \
     --lora_alpha ${LORA_ALPHA} \
     --use_replay \
-    --replay_buffer_size ${REPLAY_BUFFER_SIZE}
+    --replay_buffer_size ${REPLAY_BUFFER_SIZE} \
+    $DECODER_FLAG
 
 MAVES_LORA="./root/models/continual_${MODEL}_MAVES_score_lora_replay/lora_adapter"
 MAVES_BUFFER="./root/models/replay_buffer_MAVES_score.pt"
 echo "MAVES checkpoint: ${MAVES_LORA}"
-echo "MAVES replay buffer: ${MAVES_BUFFER}"
 
 # =============================================================================
 # STEP 2: Train on CLNSIG (pathogenicity classification)
-#         Build on molecular understanding to classify pathogenicity
 # =============================================================================
 echo ""
 echo "[Step 2/3] Training on CLNSIG (pathogenicity) with SLAO..."
-echo "           Loading LoRA from: ${MAVES_LORA}"
-echo "           Loading replay from: ${MAVES_BUFFER}"
-echo "           SLAO: Orthogonal B init + asymmetric merge (task 2)"
-echo "           λ(2) = 1/√2 ≈ 0.71"
 echo ""
 
 accelerate launch \
@@ -141,26 +126,18 @@ accelerate launch \
     --replay_buffer ${MAVES_BUFFER} \
     --replay_buffer_size ${REPLAY_BUFFER_SIZE} \
     --replay_ratio ${REPLAY_RATIO} \
-    --use_slao \
-    --task_number 2 \
-    --slao_alpha_A ${SLAO_ALPHA_A} \
-    --slao_merge_frequency ${SLAO_MERGE_FREQ}
+    --slao --task_number 2 \
+    $DECODER_FLAG
 
 CLNSIG_LORA="./root/models/continual_${MODEL}_CLNSIG_lora_replay/lora_adapter"
 CLNSIG_BUFFER="./root/models/replay_buffer_CLNSIG.pt"
 echo "CLNSIG checkpoint: ${CLNSIG_LORA}"
-echo "CLNSIG replay buffer: ${CLNSIG_BUFFER}"
 
 # =============================================================================
 # STEP 3: Train on CLNDN (disease classification)
-#         Most specific: which disease does this pathogenic variant cause?
 # =============================================================================
 echo ""
 echo "[Step 3/3] Training on CLNDN (disease type) with SLAO..."
-echo "           Loading LoRA from: ${CLNSIG_LORA}"
-echo "           Loading replay from: ${CLNSIG_BUFFER}"
-echo "           SLAO: Orthogonal B init + asymmetric merge (task 3)"
-echo "           λ(3) = 1/√3 ≈ 0.58 (more conservative)"
 echo ""
 
 accelerate launch \
@@ -181,39 +158,21 @@ accelerate launch \
     --replay_buffer ${CLNSIG_BUFFER} \
     --replay_buffer_size ${REPLAY_BUFFER_SIZE} \
     --replay_ratio ${REPLAY_RATIO} \
-    --use_slao \
-    --task_number 3 \
-    --slao_alpha_A ${SLAO_ALPHA_A} \
-    --slao_merge_frequency ${SLAO_MERGE_FREQ}
+    --slao --task_number 3 \
+    $DECODER_FLAG
 
 CLNDN_LORA="./root/models/continual_${MODEL}_CLNDN_lora_replay/lora_adapter"
-CLNDN_BUFFER="./root/models/replay_buffer_CLNDN.pt"
 
 echo ""
 echo "=============================================="
-echo "SLAO Continual Learning Pipeline Complete!"
+echo "Continual Learning Complete!"
 echo "=============================================="
 echo ""
-echo "Task Order (Biological Causality):"
-echo "  1. MAVES  - Molecular effect (foundation)"
-echo "  2. CLNSIG - Pathogenicity (clinical significance)"
-echo "  3. CLNDN  - Disease type (specific diagnosis)"
+echo "Checkpoints:"
+echo "  1. ${MAVES_LORA}"
+echo "  2. ${CLNSIG_LORA}"
+echo "  3. ${CLNDN_LORA}"
 echo ""
-echo "SLAO applied:"
-echo "  - Orthogonal B initialization (avoids overwriting previous knowledge)"
-echo "  - Asymmetric A/B merging (A preserved, B plastic)"
-echo "  - Time-aware scaling: λ(2)=0.71, λ(3)=0.58"
-echo ""
-echo "Checkpoints created:"
-echo "  1. ${MAVES_LORA} (MAVES only)"
-echo "  2. ${CLNSIG_LORA} (MAVES + CLNSIG via SLAO)"
-echo "  3. ${CLNDN_LORA} (MAVES + CLNSIG + CLNDN via SLAO)"
-echo ""
-echo "Replay buffers (for future tasks):"
-echo "  - ${MAVES_BUFFER}"
-echo "  - ${CLNSIG_BUFFER}"
-echo "  - ${CLNDN_BUFFER}"
-echo ""
-echo "To evaluate on all tasks with final model:"
+echo "To evaluate:"
 echo "  python -m src.pack_tunable_model.hf_trainer_continual --model ${MODEL} --task MAVES --test_only --use_lora --lora_checkpoint ${CLNDN_LORA}"
 echo ""
