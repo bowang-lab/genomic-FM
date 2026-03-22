@@ -96,12 +96,21 @@ class ControlModule(torch.nn.Module):
 
     Supports both single control vectors (legacy) and multiple named control vectors
     that can be applied simultaneously.
+
+    Args:
+        wrapped_layer: The transformer layer to wrap
+        model_type: Model type string from config
+        pooling: Pooling strategy for control application:
+            - "last": Apply to last token (default, for decoder models)
+            - "cls": Apply to CLS/first token (for encoder models)
+            - "mean": Apply to all tokens (for mean pooling)
     """
 
-    def __init__(self, wrapped_layer, model_type: str):
+    def __init__(self, wrapped_layer, model_type: str, pooling: str = "last"):
         super().__init__()
         self.wrapped_layer = wrapped_layer
         self.model_type = model_type
+        self.pooling = pooling
         # Legacy single control vector (for backward compatibility)
         self.control_vector = None
         self.control_strength = 1.0
@@ -166,22 +175,35 @@ class ControlModule(torch.nn.Module):
 
             if total_control is not None:
                 if isinstance(output, tuple):
-                    # If output is a tuple (hidden_states, ...), modify the hidden states
                     hidden_states = output[0]
-                    if hidden_states.dim() == 3:  # (batch, seq_len, hidden_dim)
-                        # Apply control to the last token
-                        hidden_states[:, -1, :] += total_control
-                    elif hidden_states.dim() == 2:  # (seq_len, hidden_dim)
-                        hidden_states[-1, :] += total_control
+                    hidden_states = self._apply_control(hidden_states, total_control)
                     output = (hidden_states,) + output[1:]
                 else:
-                    # If output is just hidden states
-                    if output.dim() == 3:  # (batch, seq_len, hidden_dim)
-                        output[:, -1, :] += total_control
-                    elif output.dim() == 2:  # (seq_len, hidden_dim)
-                        output[-1, :] += total_control
+                    output = self._apply_control(output, total_control)
 
         return output
+
+    def _apply_control(self, hidden_states: torch.Tensor, control: torch.Tensor) -> torch.Tensor:
+        """Apply control vector based on pooling strategy."""
+        if self.pooling == "cls":
+            # Apply to CLS/first token (encoder models)
+            if hidden_states.dim() == 3:  # (batch, seq_len, hidden_dim)
+                hidden_states[:, 0, :] += control
+            elif hidden_states.dim() == 2:  # (seq_len, hidden_dim)
+                hidden_states[0, :] += control
+        elif self.pooling == "mean":
+            # Apply to all tokens (for mean pooling)
+            if hidden_states.dim() == 3:  # (batch, seq_len, hidden_dim)
+                hidden_states = hidden_states + control.unsqueeze(0).unsqueeze(0)
+            elif hidden_states.dim() == 2:  # (seq_len, hidden_dim)
+                hidden_states = hidden_states + control.unsqueeze(0)
+        else:
+            # Default "last": Apply to last token (decoder models)
+            if hidden_states.dim() == 3:  # (batch, seq_len, hidden_dim)
+                hidden_states[:, -1, :] += control
+            elif hidden_states.dim() == 2:  # (seq_len, hidden_dim)
+                hidden_states[-1, :] += control
+        return hidden_states
 
 
 class ControlModel(torch.nn.Module):
@@ -189,29 +211,44 @@ class ControlModel(torch.nn.Module):
     **This mutates the wrapped `model`! Be careful using `model` after passing it to this class.**
 
     A wrapped genomic language model that can have controls set on its layers with `self.set_control`.
+
+    Args:
+        model: The transformer model to wrap
+        layer_ids: Which layers to apply control to
+        splice_fn: Optional function to extract target module from layer
+        pooling: Pooling strategy for control application:
+            - "last": Apply to last token (default, for decoder models like Omni-DNA)
+            - "cls": Apply to CLS/first token (for encoder models like NT, DNABERT)
+            - "mean": Apply to all tokens (for mean pooling)
     """
 
-    def __init__(self, model: PreTrainedModel, layer_ids: typing.List[int], splice_fn=None):
+    def __init__(self, model: PreTrainedModel, layer_ids: typing.List[int], splice_fn=None, pooling: str = "last"):
         super().__init__()
         self.model = model
         self.dtype = model.dtype
         self.layer_ids = layer_ids
+        self.pooling = pooling
         self.splice_fn = splice_fn if splice_fn else get_splice_fn(model)
+        self._wrapped_layers: typing.Dict[int, ControlModule] = {}
 
         layers = model_layer_list(model)
         for idx in self.layer_ids:
             target = self.splice_fn(layers[idx])
 
             if not isinstance(target, ControlModule):
-                wrapped = ControlModule(target, model_type=model.config.model_type)
+                wrapped = ControlModule(target, model_type=model.config.model_type, pooling=pooling)
 
                 # Inplace overwrite on model tree to wrap sub-module
                 if target is layers[idx]:
                     layers[idx] = wrapped
                 else:
                     self._assign_back(layers[idx], target, wrapped)
+
+                # Track wrapped layers for per-layer access
+                self._wrapped_layers[idx] = wrapped
             else:
                 warnings.warn(f"Layer {idx} already wrapped! Skipping.")
+                self._wrapped_layers[idx] = target
 
     @staticmethod
     def _assign_back(layer, old_child, new_child):
