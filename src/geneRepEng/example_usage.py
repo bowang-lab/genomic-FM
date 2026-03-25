@@ -499,25 +499,20 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
     )
     print(f"Loaded {len(cgc_pathogenic)} CGC pathogenic variants")
 
-    # Step 3: Load ClinVar benign cardiac variants as controls
-    print("\nLoading ClinVar benign cardiac variants (controls)...")
-    clinvar_benign = load_cardiac_benign_variants(
-        n_samples=500,  # Use 500 benign variants
-        seq_length=1024,
-        seed=42
-    )
-    print(f"Loaded {len(clinvar_benign)} ClinVar benign variants")
-
-    # Step 4: Create balanced dataset
-    print("\nCreating balanced control dataset...")
+    # Step 3: Create balanced dataset with CGC low-confidence controls
+    # Uses CGC variants below SMART threshold as controls (same cohort, fewer batch effects)
+    print("\nCreating balanced control dataset with CGC controls...")
     balanced_dataset = create_balanced_control_dataset(
         pathogenic_dataset=cgc_pathogenic,
-        benign_dataset=clinvar_benign,
-        balance_method="upsample",  # Upsample pathogenic to match benign count
-        seed=42
+        benign_dataset=None,  # Will auto-load CGC controls
+        balance_method="upsample",
+        seed=42,
+        control_source="cgc",  # Use CGC low-confidence variants as controls
+        max_smart_score=50.0,
+        n_controls=1000
     )
 
-    # Step 5: Train control vector
+    # Step 4: Train control vector
     print("\nTraining control vector...")
     control_vector = ControlVector.train(
         model=model,
@@ -529,18 +524,18 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
 
     print(f"Control vector trained for {len(control_vector.directions)} layers")
 
-    # Step 6: Create controlled model
+    # Step 5: Create controlled model
     print("\nCreating controlled model...")
     controlled_model = create_omni_dna_control_model(
         model=model,
         layer_ids=list(control_vector.directions.keys())
     )
 
-    # Step 7: Apply control vector
+    # Step 6: Apply control vector
     controlled_model.set_control(control_vector, strength=1.0)
     print("Control vector applied successfully!")
 
-    # Step 8: Test on a CGC variant
+    # Step 7: Test on a CGC variant
     if len(cgc_pathogenic) > 0:
         test_entry = cgc_pathogenic.entries[0]
         test_sequence = test_entry.alt_sequence  # Use pathogenic alt sequence
@@ -571,7 +566,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
         difference = torch.norm(controlled_hidden - original_hidden).item()
         print(f"Difference in final hidden states: {difference:.4f}")
 
-    # Step 9: Save control vector with model name in filename
+    # Step 8: Save control vector with model name in filename
     if model_path:
         # Extract model name from path (e.g., "smart_pretrain_model_nt_CLNSIG_..." -> use as is)
         model_name = Path(model_path).name.replace('/', '_')
@@ -581,11 +576,11 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
     control_vector.save(output_path)
     print(f"\nControl vector saved to: {output_path}")
 
-    # Step 10: Print summary
+    # Step 9: Print summary
     print("\n" + "=" * 60)
     print("Summary:")
     print(f"  CGC pathogenic variants: {len(cgc_pathogenic)}")
-    print(f"  ClinVar benign variants: {len(clinvar_benign)}")
+    print(f"  CGC low-confidence controls: used (SMART < 50)")
     print(f"  Total training samples: {len(balanced_dataset)}")
     print(f"  Layers with control: {len(control_vector.directions)}")
     print(f"  Saved to: {output_path}")
@@ -659,36 +654,25 @@ def train_disease_specific_control_vectors(
 
             print(f"Loaded {len(pathogenic_dataset)} pathogenic variants")
 
-            # Step 2: Get disease-specific genes
+            # Step 2: Get disease-specific genes (for reference)
             print(f"\nGetting gene list for {disease_class}...")
             gene_list = get_disease_specific_genes(disease_class)
             print(f"Found {len(gene_list)} genes: {gene_list[:10]}{'...' if len(gene_list) > 10 else ''}")
 
-            # Step 3: Load gene-matched benign variants
-            print(f"\nLoading gene-matched benign variants...")
-            benign_dataset = load_benign_by_genes(
-                gene_list=gene_list,
-                n_samples=500,
-                seq_length=1024,
-                seed=42
-            )
-            print(f"Loaded {len(benign_dataset)} benign variants")
-
-            # If no gene-matched benign variants, fall back to cardiac benign
-            if len(benign_dataset) == 0:
-                print("No gene-matched benign variants found. Using general cardiac benign variants.")
-                benign_dataset = load_cardiac_benign_variants(n_samples=500, seq_length=1024, seed=42)
-
-            # Step 4: Create balanced dataset
-            print(f"\nCreating balanced control dataset...")
+            # Step 3: Create balanced dataset with CGC low-confidence controls
+            # Uses CGC variants below SMART threshold (same cohort, fewer batch effects)
+            print(f"\nCreating balanced control dataset with CGC controls...")
             balanced_dataset = create_balanced_control_dataset(
                 pathogenic_dataset=pathogenic_dataset,
-                benign_dataset=benign_dataset,
+                benign_dataset=None,  # Will auto-load CGC controls
                 balance_method="upsample",
-                seed=42
+                seed=42,
+                control_source="cgc",  # Use CGC low-confidence variants
+                max_smart_score=50.0,
+                n_controls=1000
             )
 
-            # Step 5: Train control vector
+            # Step 4: Train control vector
             print(f"\nTraining control vector for {disease_class}...")
             control_vector = ControlVector.train(
                 model=model,
@@ -700,7 +684,7 @@ def train_disease_specific_control_vectors(
 
             print(f"Control vector trained for {len(control_vector.directions)} layers")
 
-            # Step 6: Save control vector
+            # Step 5: Save control vector
             save_path = output_path / f"{disease_class.replace(' ', '_')}_control_vector_{model_name}.npz"
             control_vector.save(str(save_path))
             print(f"Saved to: {save_path}")
