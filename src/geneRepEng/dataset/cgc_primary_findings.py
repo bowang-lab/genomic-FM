@@ -5,6 +5,7 @@ Loads pathogenic variants from CGC pediatric cardiac patients and extracts
 reference/alternative sequence pairs for control vector training.
 """
 
+import random
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -387,11 +388,11 @@ def load_cgc_with_smart_scores(
 
 
 def load_cgc_low_confidence_controls(
-    max_smart_score: float = 0.5,
-    csv_path: str = "root/data/primary_findings_analysis/primary_findings_analysis_results.csv",
+    max_smart_score: float = 50.0,
+    csv_path: str = "root/data/unfiltered_variants.csv",
     genome_fa: str = "root/data/hg19.fa",
     seq_length: int = 1024,
-    n_samples: Optional[int] = None,
+    n_samples: Optional[int] = 1000,
     seed: int = 42
 ) -> GenomicDataset:
     """
@@ -401,20 +402,18 @@ def load_cgc_low_confidence_controls(
     as controls, avoiding batch effects from using external datasets.
 
     Args:
-        max_smart_score: Maximum SMART score threshold (variants below this are controls)
-        csv_path: Path to primary findings CSV file
+        max_smart_score: Maximum SMART score threshold (default 50.0, variants below are controls)
+        csv_path: Path to unfiltered variants CSV file
         genome_fa: Path to reference genome FASTA
         seq_length: Length of sequence to extract around variant
-        n_samples: Maximum number of variants to load (None = all below threshold)
+        n_samples: Maximum number of variants to load (default 1000)
         seed: Random seed for sampling
 
     Returns:
         GenomicDataset with low-confidence variants as controls
     """
-    import random
-
-    # Load primary findings
-    df = pd.read_csv(csv_path)
+    # Load variants
+    df = pd.read_csv(csv_path, low_memory=False)
     print(f"Loaded {len(df)} CGC variants from {csv_path}")
 
     # Check if smart_score column exists
@@ -440,18 +439,18 @@ def load_cgc_low_confidence_controls(
     # Initialize sequence extractor
     genome_extractor = GenomeSequenceExtractor(genome_fa)
 
-    # Extract sequences
+    # Extract sequences (using unfiltered_variants.csv column names)
     entries = []
     skipped = 0
 
     for idx, row in df_low.iterrows():
         try:
             record = create_variant_record(
-                chrom=row['chrom'],
-                pos=int(row['pos']),
-                ref=row['ref'],
-                alt=row['alt'],
-                variant_id=row['variant_key']
+                chrom=row['CHROM'],
+                pos=int(row['start']),
+                ref=row['ref_allele'],
+                alt=row['alt_allele'],
+                variant_id=idx
             )
 
             ref_seq, alt_seq = genome_extractor.extract_sequence_from_record(
@@ -483,8 +482,8 @@ def load_cgc_low_confidence_controls(
 
 def load_controls(
     source: str = "cgc",
-    max_smart_score: float = 0.5,
-    n_samples: int = 500,
+    max_smart_score: float = 50.0,
+    n_samples: int = 1000,
     seq_length: int = 1024,
     seed: int = 42,
     **kwargs
@@ -499,8 +498,8 @@ def load_controls(
         source: Control source - "cgc" (default) or "clinvar"
             - "cgc": CGC variants below SMART threshold (same cohort)
             - "clinvar": ClinVar benign variants (external, confirmed benign)
-        max_smart_score: For CGC source, maximum SMART score threshold
-        n_samples: Maximum number of control variants
+        max_smart_score: For CGC source, maximum SMART score threshold (default 50.0)
+        n_samples: Maximum number of control variants (default 1000)
         seq_length: Sequence length to extract
         seed: Random seed
         **kwargs: Additional arguments passed to loader
@@ -525,3 +524,96 @@ def load_controls(
         )
     else:
         raise ValueError(f"Unknown control source: {source}. Use 'cgc' or 'clinvar'")
+
+
+def create_balanced_control_dataset(
+    pathogenic_dataset: GenomicDataset,
+    benign_dataset: GenomicDataset = None,
+    balance_method: str = "upsample",
+    seed: int = 42,
+    control_source: str = "cgc",
+    max_smart_score: float = 50.0,
+    n_controls: int = 1000,
+    seq_length: int = 1024
+) -> GenomicDataset:
+    """
+    Create a balanced dataset with pathogenic and control variants.
+
+    Args:
+        pathogenic_dataset: Dataset with pathogenic variants
+        benign_dataset: Dataset with control variants. If None, loads automatically
+                       based on control_source
+        balance_method: How to balance ("upsample", "downsample", or "none")
+        seed: Random seed
+        control_source: Source for controls if benign_dataset is None:
+            - "cgc" (default): CGC variants below SMART threshold (same cohort)
+            - "clinvar": ClinVar benign variants (external, confirmed benign)
+        max_smart_score: For CGC source, SMART score threshold
+        n_controls: Number of control variants to load if loading automatically
+        seq_length: Sequence length for automatic loading
+
+    Returns:
+        Combined balanced dataset
+    """
+    # Load controls if not provided
+    if benign_dataset is None:
+        print(f"Loading controls from source: {control_source}")
+        benign_dataset = load_controls(
+            source=control_source,
+            max_smart_score=max_smart_score,
+            n_samples=n_controls,
+            seq_length=seq_length,
+            seed=seed
+        )
+
+    n_pathogenic = len(pathogenic_dataset)
+    n_benign = len(benign_dataset)
+
+    print(f"Balancing datasets: {n_pathogenic} pathogenic, {n_benign} control")
+
+    random.seed(seed)
+
+    if balance_method == "upsample":
+        # Upsample the smaller dataset
+        if n_pathogenic < n_benign:
+            # Upsample pathogenic
+            target_size = n_benign
+            pathogenic_entries = list(pathogenic_dataset.entries)
+            while len(pathogenic_entries) < target_size:
+                pathogenic_entries.extend(
+                    random.sample(pathogenic_dataset.entries,
+                                min(len(pathogenic_dataset), target_size - len(pathogenic_entries)))
+                )
+            benign_entries = list(benign_dataset.entries)
+        else:
+            # Upsample benign
+            target_size = n_pathogenic
+            benign_entries = list(benign_dataset.entries)
+            while len(benign_entries) < target_size:
+                benign_entries.extend(
+                    random.sample(benign_dataset.entries,
+                                min(len(benign_dataset), target_size - len(benign_entries)))
+                )
+            pathogenic_entries = list(pathogenic_dataset.entries)
+
+    elif balance_method == "downsample":
+        # Downsample the larger dataset
+        target_size = min(n_pathogenic, n_benign)
+        pathogenic_entries = random.sample(pathogenic_dataset.entries, target_size)
+        benign_entries = random.sample(benign_dataset.entries, target_size)
+
+    else:  # "none"
+        pathogenic_entries = list(pathogenic_dataset.entries)
+        benign_entries = list(benign_dataset.entries)
+
+    # Combine entries
+    combined_entries = pathogenic_entries + benign_entries
+
+    # Shuffle
+    random.shuffle(combined_entries)
+
+    print(f"Created balanced dataset with {len(combined_entries)} total entries")
+    print(f"  Pathogenic: {len(pathogenic_entries)}")
+    print(f"  Control: {len(benign_entries)}")
+
+    return GenomicDataset(combined_entries, f"balanced_{control_source}_control_dataset")

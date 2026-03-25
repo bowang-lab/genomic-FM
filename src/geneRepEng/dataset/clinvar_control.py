@@ -6,13 +6,12 @@ control/reference sequences for training control vectors.
 """
 
 import random
-import numpy as np
 from typing import List, Optional
 from pathlib import Path
 from ..extract import GenomicDatasetEntry
 from .genomic_bench import GenomicDataset
 from ...dataloader.data_wrapper import ClinVarDataWrapper, set_disease_subset_from_file, GenomeSequenceExtractor, create_variant_record
-from ... import load_clinvar
+from ...datasets.clinvar import load_clinvar
 
 
 def load_clinvar_benign_variants(
@@ -109,103 +108,9 @@ def load_cardiac_benign_variants(
     )
 
 
-def create_balanced_control_dataset(
-    pathogenic_dataset: GenomicDataset,
-    benign_dataset: GenomicDataset = None,
-    balance_method: str = "upsample",
-    seed: int = 42,
-    control_source: str = "cgc",
-    max_smart_score: float = 0.5,
-    n_controls: int = 500,
-    seq_length: int = 1024
-) -> GenomicDataset:
-    """
-    Create a balanced dataset with pathogenic and control variants.
-
-    Args:
-        pathogenic_dataset: Dataset with pathogenic variants
-        benign_dataset: Dataset with control variants. If None, loads automatically
-                       based on control_source
-        balance_method: How to balance ("upsample", "downsample", or "none")
-        seed: Random seed
-        control_source: Source for controls if benign_dataset is None:
-            - "cgc" (default): CGC variants below SMART threshold (same cohort)
-            - "clinvar": ClinVar benign variants (external, confirmed benign)
-        max_smart_score: For CGC source, SMART score threshold
-        n_controls: Number of control variants to load if loading automatically
-        seq_length: Sequence length for automatic loading
-
-    Returns:
-        Combined balanced dataset
-    """
-    # Load controls if not provided
-    if benign_dataset is None:
-        from .cgc_primary_findings import load_controls
-        print(f"Loading controls from source: {control_source}")
-        benign_dataset = load_controls(
-            source=control_source,
-            max_smart_score=max_smart_score,
-            n_samples=n_controls,
-            seq_length=seq_length,
-            seed=seed
-        )
-
-    n_pathogenic = len(pathogenic_dataset)
-    n_benign = len(benign_dataset)
-
-    print(f"Balancing datasets: {n_pathogenic} pathogenic, {n_benign} control")
-
-    random.seed(seed)
-
-    if balance_method == "upsample":
-        # Upsample the smaller dataset
-        if n_pathogenic < n_benign:
-            # Upsample pathogenic
-            target_size = n_benign
-            pathogenic_entries = list(pathogenic_dataset.entries)
-            while len(pathogenic_entries) < target_size:
-                pathogenic_entries.extend(
-                    random.sample(pathogenic_dataset.entries,
-                                min(len(pathogenic_dataset), target_size - len(pathogenic_entries)))
-                )
-            benign_entries = list(benign_dataset.entries)
-        else:
-            # Upsample benign
-            target_size = n_pathogenic
-            benign_entries = list(benign_dataset.entries)
-            while len(benign_entries) < target_size:
-                benign_entries.extend(
-                    random.sample(benign_dataset.entries,
-                                min(len(benign_dataset), target_size - len(benign_entries)))
-                )
-            pathogenic_entries = list(pathogenic_dataset.entries)
-
-    elif balance_method == "downsample":
-        # Downsample the larger dataset
-        target_size = min(n_pathogenic, n_benign)
-        pathogenic_entries = random.sample(pathogenic_dataset.entries, target_size)
-        benign_entries = random.sample(benign_dataset.entries, target_size)
-
-    else:  # "none"
-        pathogenic_entries = list(pathogenic_dataset.entries)
-        benign_entries = list(benign_dataset.entries)
-
-    # Combine entries
-    combined_entries = pathogenic_entries + benign_entries
-
-    # Shuffle
-    random.shuffle(combined_entries)
-
-    print(f"Created balanced dataset with {len(combined_entries)} total entries")
-    print(f"  Pathogenic: {len(pathogenic_entries)}")
-    print(f"  Control: {len(benign_entries)}")
-
-    return GenomicDataset(combined_entries, f"balanced_{control_source}_control_dataset")
-
-
 def load_benign_by_genes(
     gene_list: List[str],
-    n_samples: int = 500,
+    n_samples: int = 1000,
     seq_length: int = 1024,
     seed: int = 42,
     genome_fa: str = "root/data/hg19.fa",
