@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH -t 2-00:0:0
+#SBATCH -t 2:00:00
 #SBATCH -J gene_repeng
 #SBATCH -p gpu_bwanggroup
 #SBATCH --account=bwanggroup_gpu
-#SBATCH --mem=200G
+#SBATCH --mem=80G
 #SBATCH -c 8
 #SBATCH -N 1
 #SBATCH --gres=gpu:1

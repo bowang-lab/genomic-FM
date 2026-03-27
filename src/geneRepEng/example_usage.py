@@ -472,7 +472,7 @@ def compare_ref_alt_representations():
         print(f"Layer {layer_id}: Mean representation difference = {mean_diff:.4f}")
 
 
-def train_cgc_cardiac_control_vector(model_path: str = None):
+def train_cgc_cardiac_control_vector(model_path: str = None, max_smart_score: float = 65.0):
     """
     Train control vector using CGC pediatric cardiac patient variants.
 
@@ -484,6 +484,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
                    - Full path: "root/models/pretrain_model_omni_dna_116m_CLNDN"
                    - Model name: "pretrain_model_omni_dna_116m_CLNDN" (will look in root/models/)
                    - None: Uses default omni_dna_116m
+        max_smart_score: Maximum SMART score threshold for CGC controls (default 65.0)
     """
     print("\n=== CGC Cardiac Pathogenicity Control Vector Training ===\n")
 
@@ -508,7 +509,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
         balance_method="upsample",
         seed=42,
         control_source="cgc",  # Use CGC low-confidence variants as controls
-        max_smart_score=50.0,
+        max_smart_score=max_smart_score,
         n_controls=1000
     )
 
@@ -580,7 +581,7 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
     print("\n" + "=" * 60)
     print("Summary:")
     print(f"  CGC pathogenic variants: {len(cgc_pathogenic)}")
-    print(f"  CGC low-confidence controls: used (SMART < 50)")
+    print(f"  CGC low-confidence controls: used (SMART < {max_smart_score})")
     print(f"  Total training samples: {len(balanced_dataset)}")
     print(f"  Layers with control: {len(control_vector.directions)}")
     print(f"  Saved to: {output_path}")
@@ -592,7 +593,8 @@ def train_cgc_cardiac_control_vector(model_path: str = None):
 def train_disease_specific_control_vectors(
     model_path: str = None,
     disease_classes: List[str] = None,
-    output_dir: str = "root/output/disease_vectors"
+    output_dir: str = "root/output/disease_vectors",
+    max_smart_score: float = 65.0
 ) -> Dict[str, ControlVector]:
     """
     Train disease-specific control vectors for cardiac disease classes.
@@ -608,6 +610,7 @@ def train_disease_specific_control_vectors(
                    - None: Uses default omni_dna_116m
         disease_classes: List of disease classes to train. Default: all 4 classes
         output_dir: Directory to save control vectors
+        max_smart_score: Maximum SMART score threshold for CGC controls (default 65.0)
 
     Returns:
         Dict mapping disease class name to trained ControlVector
@@ -668,7 +671,7 @@ def train_disease_specific_control_vectors(
                 balance_method="upsample",
                 seed=42,
                 control_source="cgc",  # Use CGC low-confidence variants
-                max_smart_score=50.0,
+                max_smart_score=max_smart_score,
                 n_controls=1000
             )
 
