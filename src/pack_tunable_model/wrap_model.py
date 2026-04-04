@@ -165,20 +165,35 @@ class WrappedModelWithClassificationHead(nn.Module):
                 output_hidden_states=True,
                 return_dict=True,
             )
-        # check the shape of outputs_ref.hidden_states and outputs_alt.hidden_states
-        # if it does not have the all layers, then add a dummy dimension by nest it in a list
-        # if not isinstance(outputs_ref.hidden_states, tuple):
-        if not isinstance(outputs_ref.hidden_states, tuple):
-            if hasattr(self.base_model.config,"hidden_size"):
-                outputs_ref.hidden_states = (outputs_ref.hidden_states,)
-        # if not isinstance(outputs_alt.hidden_states, tuple):
-        if not isinstance(outputs_alt.hidden_states, tuple):
-            if hasattr(self.base_model.config,"hidden_size"):
-                outputs_alt.hidden_states = (outputs_alt.hidden_states,)
+
+        # Handle models that return tuples instead of objects (e.g., DNABERT2)
+        # Extract hidden states properly based on output type
+        if isinstance(outputs_ref, tuple):
+            # For models returning tuples, the last hidden state is typically the first element
+            hidden_states_ref = (outputs_ref[0],)
+        elif hasattr(outputs_ref, 'hidden_states') and outputs_ref.hidden_states is not None:
+            hidden_states_ref = outputs_ref.hidden_states
+            if not isinstance(hidden_states_ref, tuple):
+                hidden_states_ref = (hidden_states_ref,)
+        elif hasattr(outputs_ref, 'last_hidden_state'):
+            hidden_states_ref = (outputs_ref.last_hidden_state,)
+        else:
+            raise ValueError(f"Cannot extract hidden states from model output: {type(outputs_ref)}")
+
+        if isinstance(outputs_alt, tuple):
+            hidden_states_alt = (outputs_alt[0],)
+        elif hasattr(outputs_alt, 'hidden_states') and outputs_alt.hidden_states is not None:
+            hidden_states_alt = outputs_alt.hidden_states
+            if not isinstance(hidden_states_alt, tuple):
+                hidden_states_alt = (hidden_states_alt,)
+        elif hasattr(outputs_alt, 'last_hidden_state'):
+            hidden_states_alt = (outputs_alt.last_hidden_state,)
+        else:
+            raise ValueError(f"Cannot extract hidden states from model output: {type(outputs_alt)}")
         if not self.decoder:
             # For encoder models, apply pooling strategy (cls or mean)
-            last_hidden_state_ref = self._apply_pooling(outputs_ref.hidden_states[-1], ref_attention_mask)
-            last_hidden_state_alt = self._apply_pooling(outputs_alt.hidden_states[-1], alt_attention_mask)
+            last_hidden_state_ref = self._apply_pooling(hidden_states_ref[-1], ref_attention_mask)
+            last_hidden_state_alt = self._apply_pooling(hidden_states_alt[-1], alt_attention_mask)
             if self.pooler is not None:
                 last_hidden_state_ref = self.pooler(last_hidden_state_ref)
                 last_hidden_state_alt = self.pooler(last_hidden_state_alt)
@@ -186,9 +201,9 @@ class WrappedModelWithClassificationHead(nn.Module):
             # For decoder models, take the last token from the sequence
             ref_seq_lens = ref_attention_mask.sum(dim=-1)
             alt_seq_lens = alt_attention_mask.sum(dim=-1)
-            batch_index = torch.arange(ref_seq_lens.size(0), device=outputs_ref.hidden_states[-1].device)
-            last_hidden_state_ref = outputs_ref.hidden_states[-1][batch_index, ref_seq_lens - 1, :]
-            last_hidden_state_alt = outputs_alt.hidden_states[-1][batch_index, alt_seq_lens - 1, :]
+            batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_states_ref[-1].device)
+            last_hidden_state_ref = hidden_states_ref[-1][batch_index, ref_seq_lens - 1, :]
+            last_hidden_state_alt = hidden_states_alt[-1][batch_index, alt_seq_lens - 1, :]
             if self.pooler is not None:
                 last_hidden_state_ref = self.pooler(last_hidden_state_ref)
                 last_hidden_state_alt = self.pooler(last_hidden_state_alt)
@@ -220,7 +235,7 @@ class WrappedModelWithClassificationHead(nn.Module):
         return {
             "loss": loss,
             "logits": logits,
-            "hidden_states": (outputs_ref.hidden_states, outputs_alt.hidden_states) if output_hidden_states else None,
+            "hidden_states": (hidden_states_ref, hidden_states_alt) if output_hidden_states else None,
             "ref_outputs": outputs_ref,
             "alt_outputs": outputs_alt,
         }
@@ -390,22 +405,39 @@ class WrappedModelWithPairedVariantHead(nn.Module):
             outputs_alt = self.base_model(input_ids=alt_input_ids, attention_mask=alt_attention_mask,
                                           output_hidden_states=True, return_dict=True)
 
-        # Handle hidden states format
-        if not isinstance(outputs_ref.hidden_states, tuple):
-            outputs_ref.hidden_states = (outputs_ref.hidden_states,)
-        if not isinstance(outputs_alt.hidden_states, tuple):
-            outputs_alt.hidden_states = (outputs_alt.hidden_states,)
+        # Handle models that return tuples instead of objects (e.g., DNABERT2)
+        if isinstance(outputs_ref, tuple):
+            hidden_states_ref = (outputs_ref[0],)
+        elif hasattr(outputs_ref, 'hidden_states') and outputs_ref.hidden_states is not None:
+            hidden_states_ref = outputs_ref.hidden_states
+            if not isinstance(hidden_states_ref, tuple):
+                hidden_states_ref = (hidden_states_ref,)
+        elif hasattr(outputs_ref, 'last_hidden_state'):
+            hidden_states_ref = (outputs_ref.last_hidden_state,)
+        else:
+            raise ValueError(f"Cannot extract hidden states from model output: {type(outputs_ref)}")
+
+        if isinstance(outputs_alt, tuple):
+            hidden_states_alt = (outputs_alt[0],)
+        elif hasattr(outputs_alt, 'hidden_states') and outputs_alt.hidden_states is not None:
+            hidden_states_alt = outputs_alt.hidden_states
+            if not isinstance(hidden_states_alt, tuple):
+                hidden_states_alt = (hidden_states_alt,)
+        elif hasattr(outputs_alt, 'last_hidden_state'):
+            hidden_states_alt = (outputs_alt.last_hidden_state,)
+        else:
+            raise ValueError(f"Cannot extract hidden states from model output: {type(outputs_alt)}")
 
         if not self.decoder:
             # For encoder models, apply pooling strategy (cls or mean)
-            ref_embed = self._apply_pooling(outputs_ref.hidden_states[-1], ref_attention_mask)
-            alt_embed = self._apply_pooling(outputs_alt.hidden_states[-1], alt_attention_mask)
+            ref_embed = self._apply_pooling(hidden_states_ref[-1], ref_attention_mask)
+            alt_embed = self._apply_pooling(hidden_states_alt[-1], alt_attention_mask)
         else:
             ref_seq_lens = ref_attention_mask.sum(dim=-1)
             alt_seq_lens = alt_attention_mask.sum(dim=-1)
             batch_index = torch.arange(ref_seq_lens.size(0), device=ref_input_ids.device)
-            ref_embed = outputs_ref.hidden_states[-1][batch_index, ref_seq_lens - 1, :]
-            alt_embed = outputs_alt.hidden_states[-1][batch_index, alt_seq_lens - 1, :]
+            ref_embed = hidden_states_ref[-1][batch_index, ref_seq_lens - 1, :]
+            alt_embed = hidden_states_alt[-1][batch_index, alt_seq_lens - 1, :]
 
         if self.pooler is not None:
             ref_embed = self.pooler(ref_embed)

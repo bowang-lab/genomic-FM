@@ -285,7 +285,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         base_model = LucaGPLMModel.from_pretrained(model_path)
         tokenizer = LucaGPLMTokenizer.from_pretrained(tokenizer_path)
     else:
-        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True, add_pooling_layer=False)
     
     # Load checkpoint weights if provided
     if checkpoint_weights_path and os.path.exists(checkpoint_weights_path):
@@ -452,6 +452,7 @@ def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0
             metric_for_best_model="matthews_correlation", greater_is_better=True,
             load_best_model_at_end=True, save_safetensors=False,  # Weight tying issue
             remove_unused_columns=False, dataloader_num_workers=num_workers,
+            ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
         ),
         train_dataset=datasets['train'],
         eval_dataset=eval_ds,
@@ -532,6 +533,7 @@ def run_allheads_multitask_finetune(
             save_safetensors=False,  # Weight tying issue with OmniDNA
             remove_unused_columns=False,
             dataloader_num_workers=num_workers,
+            ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
         ),
         train_dataset=datasets['train'],
         eval_dataset=datasets['val'],
@@ -687,7 +689,7 @@ def run_generative_multitask_finetune(
         neftune_noise_alpha=neftune_noise_alpha if neftune_noise_alpha > 0 else None,
         logging_steps=50,
         report_to="none",
-        ddp_find_unused_parameters=False,  # Better DDP performance
+        ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
     )
 
     # Create trainer
