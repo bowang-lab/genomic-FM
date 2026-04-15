@@ -97,6 +97,126 @@ class GenomeSequenceExtractor:
         alternate = seq_extractor.extract(interval, [variant], anchor=center)
         return reference, alternate
 
+    def extract_multi_variant_sequence(self, variants: list, sequence_length: int = 1024):
+        """
+        Extract sequence with multiple variants applied.
+
+        Uses kipoiseq's multi-variant support to apply all variants at once.
+        Variants must be on the same chromosome and close enough to fit within
+        the sequence_length window.
+
+        Args:
+            variants: List of dicts with keys 'chrom', 'pos', 'ref', 'alt', 'variant_id'
+                      OR list of kipoiseq.Variant objects
+            sequence_length: Length of sequence to extract (default 1024)
+
+        Returns:
+            Tuple of (reference_sequence, alternate_sequence) or (None, None) on error
+        """
+        if not variants:
+            return None, None
+
+        # Convert dicts to kipoiseq.Variant objects if needed
+        variant_objects = []
+        for v in variants:
+            if isinstance(v, dict):
+                chrom = v['chrom']
+                if not chrom.startswith('chr'):
+                    chrom = f"chr{chrom}"
+                variant_obj = kipoiseq.Variant(
+                    chrom,
+                    int(v['pos']),
+                    v['ref'],
+                    v['alt'],
+                    id=str(v.get('variant_id', ''))
+                )
+                variant_objects.append(variant_obj)
+            else:
+                # Assume it's already a kipoiseq.Variant
+                variant_objects.append(v)
+
+        # Sort variants by position
+        variant_objects = sorted(variant_objects, key=lambda v: v.start)
+
+        # Verify all variants are on the same chromosome
+        chroms = set(v.chrom for v in variant_objects)
+        if len(chroms) > 1:
+            raise ValueError(f"All variants must be on same chromosome for local mode. Found: {chroms}")
+
+        # Calculate the span of variants
+        min_pos = min(v.start for v in variant_objects)
+        max_pos = max(v.start for v in variant_objects)
+        variant_span = max_pos - min_pos
+
+        # Check if variants fit within sequence_length (with some margin for context)
+        if variant_span > sequence_length * 0.8:
+            raise ValueError(
+                f"Variant span ({variant_span}bp) exceeds 80% of sequence_length ({sequence_length}bp). "
+                f"Use aggregated mode for distant variants."
+            )
+
+        # Create interval centered on the middle of the variant span
+        center_pos = (min_pos + max_pos) // 2
+        chrom = variant_objects[0].chrom
+        interval = kipoiseq.Interval(chrom, center_pos, center_pos).resize(sequence_length)
+
+        # Validate chromosome
+        if self.fasta_extractor.is_valid_chromosome(interval.chrom) is None:
+            return None, None
+
+        # Extract sequences using kipoiseq's multi-variant support
+        seq_extractor = kipoiseq.extractors.VariantSeqExtractor(reference_sequence=self.fasta_extractor)
+        center = interval.center() - interval.start
+
+        reference = seq_extractor.extract(interval, [], anchor=center)
+        alternate = seq_extractor.extract(interval, variant_objects, anchor=center)
+
+        return reference, alternate
+
+    def can_use_local_mode(self, variants: list, sequence_length: int = 1024) -> bool:
+        """
+        Check if variants can be processed in local mode (single sequence).
+
+        Local mode requires:
+        - All variants on the same chromosome
+        - Variant span < 80% of sequence_length
+
+        Args:
+            variants: List of variant dicts or kipoiseq.Variant objects
+            sequence_length: Sequence length to use
+
+        Returns:
+            True if local mode can be used, False otherwise
+        """
+        if not variants or len(variants) == 0:
+            return False
+
+        if len(variants) == 1:
+            return True
+
+        # Extract chromosome and position info
+        positions = []
+        chroms = set()
+
+        for v in variants:
+            if isinstance(v, dict):
+                chrom = v['chrom']
+                if not chrom.startswith('chr'):
+                    chrom = f"chr{chrom}"
+                chroms.add(chrom)
+                positions.append(int(v['pos']))
+            else:
+                chroms.add(v.chrom)
+                positions.append(v.start)
+
+        # Check all same chromosome
+        if len(chroms) > 1:
+            return False
+
+        # Check span
+        variant_span = max(positions) - min(positions)
+        return variant_span < sequence_length * 0.8
+
     def extract_sequence_from_record(self, record, sequence_length=1024):
         # Extract information from the record
         chr = record['Chromosome']

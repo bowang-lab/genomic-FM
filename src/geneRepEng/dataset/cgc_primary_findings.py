@@ -9,10 +9,43 @@ import random
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 from ..extract import GenomicDatasetEntry
 from .genomic_bench import GenomicDataset
 from ...dataloader.data_wrapper import GenomeSequenceExtractor, create_variant_record
+
+
+@dataclass
+class VariantInfo:
+    """Information about a single variant."""
+    chrom: str
+    pos: int
+    ref: str
+    alt: str
+    variant_id: str
+    gene_symbol: Optional[str] = None
+    smart_score: Optional[float] = None
+
+
+@dataclass
+class PatientVariantSample:
+    """Sample containing all variants for a single patient."""
+    patient_id: str
+    variants: List[VariantInfo]
+    disease_class: Optional[int] = None
+    disease_name: Optional[str] = None
+    pathogenicity_label: int = 1  # Aggregated from SMART scores (default: pathogenic)
+
+    def __post_init__(self):
+        # Calculate aggregated pathogenicity from SMART scores
+        if self.variants:
+            smart_scores = [v.smart_score for v in self.variants if v.smart_score is not None]
+            if smart_scores:
+                # Use max SMART score for pathogenicity (most pathogenic variant)
+                max_score = max(smart_scores)
+                # Default threshold of 65.0 for pathogenicity
+                self.pathogenicity_label = 1 if max_score >= 65.0 else 0
 
 # Disease classes for cardiac conditions
 DISEASE_CLASSES = ['Aortopathy', 'Cardiomyopathy', 'Arrhythmia', 'Structural defect']
@@ -617,3 +650,177 @@ def create_balanced_control_dataset(
     print(f"  Control: {len(benign_entries)}")
 
     return GenomicDataset(combined_entries, f"balanced_{control_source}_control_dataset")
+
+
+def load_cgc_by_patient(
+    csv_path: str = "root/data/primary_findings_analysis/primary_findings_analysis_results.csv",
+    disease_labels_path: str = "root/data/cgc_disease_labels.csv",
+    max_variants_per_patient: int = 10,
+    min_smart_score: Optional[float] = None,
+    pathogenicity_threshold: float = 65.0,
+) -> Dict[str, PatientVariantSample]:
+    """
+    Group CGC variants by patient (CaseID) for multi-variant training.
+
+    Args:
+        csv_path: Path to primary findings CSV file
+        disease_labels_path: Path to disease labels CSV mapping CaseID to Class
+        max_variants_per_patient: Maximum number of variants per patient (default 10)
+        min_smart_score: Minimum SMART score threshold (default: None = all variants)
+        pathogenicity_threshold: SMART score threshold for pathogenicity (default 65.0)
+
+    Returns:
+        Dict mapping patient_id to PatientVariantSample with all their variants
+    """
+    # Load disease labels
+    case_to_disease = load_disease_labels(disease_labels_path)
+    disease_to_id = {label: idx for idx, label in enumerate(DISEASE_CLASSES)}
+
+    # Load primary findings
+    df = pd.read_csv(csv_path)
+    print(f"Loaded {len(df)} CGC primary findings from {csv_path}")
+
+    # Filter by SMART score if specified
+    if min_smart_score is not None:
+        df = df[df['smart_score'] >= min_smart_score]
+        print(f"Filtered to {len(df)} variants with SMART score >= {min_smart_score}")
+
+    # Group variants by patient
+    patient_variants: Dict[str, List[VariantInfo]] = {}
+
+    for idx, row in df.iterrows():
+        patient_id = str(row['CaseID'])
+
+        variant_info = VariantInfo(
+            chrom=row['chrom'],
+            pos=int(row['pos']),
+            ref=row['ref'],
+            alt=row['alt'],
+            variant_id=row['variant_key'],
+            gene_symbol=row.get('gene_symbol'),
+            smart_score=row.get('smart_score')
+        )
+
+        if patient_id not in patient_variants:
+            patient_variants[patient_id] = []
+
+        # Limit variants per patient
+        if len(patient_variants[patient_id]) < max_variants_per_patient:
+            patient_variants[patient_id].append(variant_info)
+
+    # Create PatientVariantSample objects
+    patient_samples: Dict[str, PatientVariantSample] = {}
+
+    for patient_id, variants in patient_variants.items():
+        # Get disease class for this patient
+        disease_name = case_to_disease.get(patient_id)
+        disease_class = disease_to_id.get(disease_name) if disease_name else None
+
+        # Calculate aggregated pathogenicity
+        smart_scores = [v.smart_score for v in variants if v.smart_score is not None]
+        if smart_scores:
+            max_score = max(smart_scores)
+            pathogenicity_label = 1 if max_score >= pathogenicity_threshold else 0
+        else:
+            pathogenicity_label = 1  # Default for primary findings
+
+        sample = PatientVariantSample(
+            patient_id=patient_id,
+            variants=variants,
+            disease_class=disease_class,
+            disease_name=disease_name,
+            pathogenicity_label=pathogenicity_label
+        )
+        patient_samples[patient_id] = sample
+
+    print(f"Grouped variants into {len(patient_samples)} patients")
+
+    # Print statistics
+    variant_counts = [len(s.variants) for s in patient_samples.values()]
+    print(f"Variants per patient: min={min(variant_counts)}, max={max(variant_counts)}, "
+          f"mean={np.mean(variant_counts):.2f}")
+
+    # Disease class distribution
+    disease_counts = {}
+    for sample in patient_samples.values():
+        if sample.disease_name:
+            disease_counts[sample.disease_name] = disease_counts.get(sample.disease_name, 0) + 1
+    print(f"Disease distribution: {disease_counts}")
+
+    return patient_samples
+
+
+def load_cgc_controls_by_patient(
+    csv_path: str = "root/data/unfiltered_variants.csv",
+    max_smart_score: float = 50.0,
+    max_variants_per_patient: int = 10,
+    n_patients: Optional[int] = None,
+    seed: int = 42
+) -> Dict[str, PatientVariantSample]:
+    """
+    Load CGC variants below SMART threshold as control samples, grouped by patient.
+
+    Args:
+        csv_path: Path to unfiltered variants CSV file
+        max_smart_score: Maximum SMART score threshold (default 50.0)
+        max_variants_per_patient: Maximum variants per patient
+        n_patients: Maximum number of patients (default None = all)
+        seed: Random seed for patient sampling
+
+    Returns:
+        Dict mapping patient_id to PatientVariantSample with control variants
+    """
+    df = pd.read_csv(csv_path, low_memory=False)
+    print(f"Loaded {len(df)} CGC variants from {csv_path}")
+
+    if 'smart_score' not in df.columns:
+        raise ValueError("CSV must contain 'smart_score' column for filtering")
+
+    # Filter to low-confidence variants
+    df_low = df[df['smart_score'] < max_smart_score].copy()
+    print(f"Found {len(df_low)} variants with SMART score < {max_smart_score}")
+
+    # Group by patient
+    patient_variants: Dict[str, List[VariantInfo]] = {}
+
+    for idx, row in df_low.iterrows():
+        patient_id = str(row.get('CaseID', idx))
+
+        variant_info = VariantInfo(
+            chrom=row['CHROM'],
+            pos=int(row['start']),
+            ref=row['ref_allele'],
+            alt=row['alt_allele'],
+            variant_id=str(idx),
+            gene_symbol=row.get('gene_symbol'),
+            smart_score=row.get('smart_score')
+        )
+
+        if patient_id not in patient_variants:
+            patient_variants[patient_id] = []
+
+        if len(patient_variants[patient_id]) < max_variants_per_patient:
+            patient_variants[patient_id].append(variant_info)
+
+    # Sample patients if requested
+    patient_ids = list(patient_variants.keys())
+    if n_patients is not None and len(patient_ids) > n_patients:
+        random.seed(seed)
+        patient_ids = random.sample(patient_ids, n_patients)
+
+    # Create PatientVariantSample objects
+    patient_samples: Dict[str, PatientVariantSample] = {}
+
+    for patient_id in patient_ids:
+        variants = patient_variants[patient_id]
+        sample = PatientVariantSample(
+            patient_id=patient_id,
+            variants=variants,
+            disease_class=None,
+            disease_name=None,
+            pathogenicity_label=0  # Controls are benign
+        )
+        patient_samples[patient_id] = sample
+
+    print(f"Created {len(patient_samples)} control patient samples")
+    return patient_samples

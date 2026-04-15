@@ -1310,3 +1310,155 @@ def return_cardioboost_dataset(
     task_num_classes = {task_name: 2}  # Binary classification
 
     return multitask_datasets, task_num_classes, seq_length
+
+
+# =============================================================================
+# CGC Multi-Variant Patient Dataset Functions
+# =============================================================================
+
+def return_cgc_multivariant_dataset(
+    tokenizer: PreTrainedTokenizer,
+    seq_length: int = 1024,
+    max_variants_per_patient: int = 10,
+    mode: str = "auto",  # "local", "aggregated", or "auto"
+    val_split: float = 0.15,
+    test_split: float = 0.15,
+    include_controls: bool = True,
+    n_controls: int = 500,
+    seed: int = 42,
+    genome_fa: str = "root/data/hg19.fa",
+):
+    """
+    Load CGC dataset for multi-variant per patient training.
+
+    Each sample contains all variants for a single patient, processed in either:
+    - Local mode: All variants in single sequence (if on same chromosome and close)
+    - Aggregated mode: Separate embeddings with attention aggregation
+
+    Args:
+        tokenizer: HuggingFace tokenizer
+        seq_length: Sequence length for extraction
+        max_variants_per_patient: Maximum variants per patient
+        mode: Processing mode - "local", "aggregated", or "auto"
+        val_split: Validation split ratio
+        test_split: Test split ratio
+        include_controls: Include control patients (low SMART score variants)
+        n_controls: Number of control patients to include
+        seed: Random seed
+        genome_fa: Path to reference genome FASTA
+
+    Returns:
+        Tuple of (datasets_dict, task_info, seq_length)
+        - datasets_dict: {'train': Dataset, 'val': Dataset, 'test': Dataset}
+        - task_info: {'disease': num_classes, 'pathogenicity': 2}
+    """
+    from sklearn.model_selection import train_test_split
+    from ..geneRepEng.dataset.cgc_primary_findings import (
+        load_cgc_by_patient,
+        load_cgc_controls_by_patient,
+        DISEASE_CLASSES,
+    )
+    from ..sequence_extractor import GenomeSequenceExtractor
+    from .multi_variant_dataloader import MultiVariantPatientDataset, MultiVariantDataCollator
+
+    tokenizer.model_max_length = seq_length
+
+    # Initialize genome extractor
+    genome_extractor = GenomeSequenceExtractor(fasta_file=genome_fa)
+
+    # Load pathogenic patients
+    print("Loading CGC pathogenic patients...")
+    pathogenic_samples = load_cgc_by_patient(max_variants_per_patient=max_variants_per_patient)
+    pathogenic_list = list(pathogenic_samples.values())
+    print(f"Loaded {len(pathogenic_list)} pathogenic patients")
+
+    # Optionally load control patients
+    if include_controls:
+        print("Loading CGC control patients...")
+        try:
+            control_samples = load_cgc_controls_by_patient(
+                max_variants_per_patient=max_variants_per_patient,
+                n_patients=n_controls,
+                seed=seed
+            )
+            control_list = list(control_samples.values())
+            print(f"Loaded {len(control_list)} control patients")
+        except Exception as e:
+            print(f"Warning: Could not load controls: {e}")
+            control_list = []
+    else:
+        control_list = []
+
+    # Combine samples
+    all_samples = pathogenic_list + control_list
+    random.seed(seed)
+    random.shuffle(all_samples)
+
+    print(f"Total patients: {len(all_samples)}")
+
+    # Split samples with disease labels (for stratification)
+    samples_with_disease = [s for s in all_samples if s.disease_class is not None]
+    samples_without_disease = [s for s in all_samples if s.disease_class is None]
+
+    if len(samples_with_disease) > 0:
+        disease_labels = [s.disease_class for s in samples_with_disease]
+
+        # Train/temp split
+        train_samples, temp_samples = train_test_split(
+            samples_with_disease,
+            test_size=val_split + test_split,
+            stratify=disease_labels,
+            random_state=seed
+        )
+
+        # Val/test split
+        temp_labels = [s.disease_class for s in temp_samples]
+        val_samples, test_samples = train_test_split(
+            temp_samples,
+            test_size=test_split / (val_split + test_split),
+            stratify=temp_labels,
+            random_state=seed
+        )
+    else:
+        # Random split if no disease labels
+        n_total = len(all_samples)
+        n_test = int(n_total * test_split)
+        n_val = int(n_total * val_split)
+
+        test_samples = all_samples[:n_test]
+        val_samples = all_samples[n_test:n_test + n_val]
+        train_samples = all_samples[n_test + n_val:]
+
+    # Add samples without disease labels to training
+    train_samples.extend(samples_without_disease)
+    random.shuffle(train_samples)
+
+    print(f"Splits - Train: {len(train_samples)}, Val: {len(val_samples)}, Test: {len(test_samples)}")
+
+    # Create datasets
+    train_dataset = MultiVariantPatientDataset(
+        train_samples, tokenizer, genome_extractor, seq_length, max_variants_per_patient, mode
+    )
+    val_dataset = MultiVariantPatientDataset(
+        val_samples, tokenizer, genome_extractor, seq_length, max_variants_per_patient, mode
+    )
+    test_dataset = MultiVariantPatientDataset(
+        test_samples, tokenizer, genome_extractor, seq_length, max_variants_per_patient, mode
+    )
+
+    datasets = {
+        'train': train_dataset,
+        'val': val_dataset,
+        'test': test_dataset,
+    }
+
+    # Task info
+    task_info = {
+        'disease': len(DISEASE_CLASSES),
+        'pathogenicity': 2,
+    }
+
+    print(f"Created multi-variant datasets with mode={mode}")
+    print(f"Task info: {task_info}")
+
+    return datasets, task_info, seq_length
