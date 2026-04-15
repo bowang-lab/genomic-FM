@@ -25,20 +25,23 @@ class BertPooler(nn.Module):
 
 class WrappedModelWithClassificationHead(nn.Module):
     def __init__(self, base_model, num_classes, decoder=False, hidden_states_pooler=False,
-                 comparison_mode="delta", pooling="cls"):
+                 comparison_mode="delta", pooling="cls", cov_dim=32):
         """
         Args:
             comparison_mode: "delta" (subtraction) or "concat" (concatenation like DYNA)
-            pooling: "cls" (first token), "mean" (mean pooling), or "last" (last non-padding token)
+            pooling: "cls" (first token), "mean" (mean pooling), "last" (last non-padding token),
+                     or "cov" (covariance-based pooling per Dooms et al. 2026)
+            cov_dim: Compressed dimension for covariance pooling (output is cov_dim x cov_dim)
         """
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
         self.comparison_mode = comparison_mode
         self.pooling = pooling
+        self.cov_dim = cov_dim
 
-        if pooling not in ["cls", "mean", "last"]:
-            raise ValueError(f"Unknown pooling: {pooling}. Use 'cls', 'mean', or 'last'.")
+        if pooling not in ["cls", "mean", "last", "cov"]:
+            raise ValueError(f"Unknown pooling: {pooling}. Use 'cls', 'mean', 'last', or 'cov'.")
 
         # Get the hidden size from the base model configuration
         if hasattr(base_model, "config"):
@@ -52,6 +55,20 @@ class WrappedModelWithClassificationHead(nn.Module):
 
         self.hidden_size = hidden_size
 
+        # Initialize covariance pooling projections if needed
+        if pooling == "cov":
+            # Learnable projections for covariance bottleneck (Dooms et al. 2026)
+            # L and R project from hidden_size to cov_dim before computing second moment
+            self.cov_proj_L = nn.Linear(hidden_size, cov_dim, bias=False)
+            self.cov_proj_R = nn.Linear(hidden_size, cov_dim, bias=False)
+            nn.init.orthogonal_(self.cov_proj_L.weight)
+            nn.init.orthogonal_(self.cov_proj_R.weight)
+            pooled_size = cov_dim * cov_dim
+        else:
+            self.cov_proj_L = None
+            self.cov_proj_R = None
+            pooled_size = hidden_size
+
         if hidden_states_pooler:
             # Add a pooler layer if needed
             self.pooler = BertPooler(base_model.config)
@@ -60,9 +77,9 @@ class WrappedModelWithClassificationHead(nn.Module):
 
         # Determine input size based on comparison mode
         if comparison_mode == "delta":
-            head_input_size = hidden_size
+            head_input_size = pooled_size
         elif comparison_mode == "concat":
-            head_input_size = hidden_size * 2
+            head_input_size = pooled_size * 2
         else:
             raise ValueError(f"Unknown comparison_mode: {comparison_mode}. Use 'delta' or 'concat'.")
 
@@ -92,7 +109,8 @@ class WrappedModelWithClassificationHead(nn.Module):
             attention_mask: Tensor of shape (batch_size, seq_len)
 
         Returns:
-            Pooled tensor of shape (batch_size, hidden_size)
+            Pooled tensor of shape (batch_size, hidden_size) for cls/mean/last,
+            or (batch_size, cov_dim * cov_dim) for cov pooling
         """
         if self.pooling == "cls":
             return hidden_states[:, 0, :]
@@ -106,13 +124,27 @@ class WrappedModelWithClassificationHead(nn.Module):
                 return hidden_states.mean(dim=1)
         elif self.pooling == "last":
             if attention_mask is not None:
-                # Get the last non-padding token for each sequence
                 seq_lengths = attention_mask.sum(dim=1)
                 batch_size = hidden_states.size(0)
                 batch_indices = torch.arange(batch_size, device=hidden_states.device)
                 return hidden_states[batch_indices, seq_lengths - 1, :]
             else:
                 return hidden_states[:, -1, :]
+        elif self.pooling == "cov":
+            # Covariance-based pooling (Dooms et al. 2026)
+            batch_size, seq_len, _ = hidden_states.shape
+
+            if attention_mask is not None:
+                mask_expanded = attention_mask.unsqueeze(-1).float()
+                hidden_states = hidden_states * mask_expanded
+                seq_lens = attention_mask.sum(dim=1, keepdim=True).float().clamp(min=1.0)
+            else:
+                seq_lens = torch.full((batch_size, 1), seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
+
+            proj_L = self.cov_proj_L(hidden_states)
+            proj_R = self.cov_proj_R(hidden_states)
+            cov = torch.bmm(proj_L.transpose(1, 2), proj_R) / seq_lens.unsqueeze(-1)
+            return cov.view(batch_size, -1)
 
     def forward(self,
                 input_ids=None,
@@ -303,23 +335,26 @@ class WrappedModelWithPairedVariantHead(nn.Module):
     """
 
     def __init__(self, base_model, num_classes=2, decoder=False, hidden_states_pooler=False,
-                 combine_mode="concat", pooling="cls"):
+                 combine_mode="concat", pooling="cls", cov_dim=32):
         """
         Args:
             combine_mode: How to combine variant embeddings:
                 - "concat": [emb1; emb2] -> 2x hidden_size
                 - "diff": emb1 - emb2 -> hidden_size
                 - "hadamard": [emb1; emb2; emb1 * emb2] -> 3x hidden_size
-            pooling: "cls" (first token), "mean" (mean pooling), or "last" (last non-padding token)
+            pooling: "cls" (first token), "mean" (mean pooling), "last" (last non-padding token),
+                     or "cov" (covariance-based pooling per Dooms et al. 2026)
+            cov_dim: Compressed dimension for covariance pooling (output is cov_dim x cov_dim)
         """
         super().__init__()
         self.base_model = base_model
         self.decoder = decoder
         self.combine_mode = combine_mode
         self.pooling = pooling
+        self.cov_dim = cov_dim
 
-        if pooling not in ["cls", "mean", "last"]:
-            raise ValueError(f"Unknown pooling: {pooling}. Use 'cls', 'mean', or 'last'.")
+        if pooling not in ["cls", "mean", "last", "cov"]:
+            raise ValueError(f"Unknown pooling: {pooling}. Use 'cls', 'mean', 'last', or 'cov'.")
 
         # Get the hidden size from the base model configuration
         if hasattr(base_model, "config"):
@@ -332,6 +367,18 @@ class WrappedModelWithPairedVariantHead(nn.Module):
 
         self.hidden_size = hidden_size
 
+        # Initialize covariance pooling projections if needed
+        if pooling == "cov":
+            self.cov_proj_L = nn.Linear(hidden_size, cov_dim, bias=False)
+            self.cov_proj_R = nn.Linear(hidden_size, cov_dim, bias=False)
+            nn.init.orthogonal_(self.cov_proj_L.weight)
+            nn.init.orthogonal_(self.cov_proj_R.weight)
+            pooled_size = cov_dim * cov_dim
+        else:
+            self.cov_proj_L = None
+            self.cov_proj_R = None
+            pooled_size = hidden_size
+
         if hidden_states_pooler:
             self.pooler = BertPooler(base_model.config)
         else:
@@ -339,11 +386,11 @@ class WrappedModelWithPairedVariantHead(nn.Module):
 
         # Determine input size based on combine mode
         if combine_mode == "concat":
-            head_input_size = hidden_size * 2
+            head_input_size = pooled_size * 2
         elif combine_mode == "diff":
-            head_input_size = hidden_size
+            head_input_size = pooled_size
         elif combine_mode == "hadamard":
-            head_input_size = hidden_size * 3
+            head_input_size = pooled_size * 3
         else:
             raise ValueError(f"Unknown combine_mode: {combine_mode}")
 
@@ -369,7 +416,8 @@ class WrappedModelWithPairedVariantHead(nn.Module):
             attention_mask: Tensor of shape (batch_size, seq_len)
 
         Returns:
-            Pooled tensor of shape (batch_size, hidden_size)
+            Pooled tensor of shape (batch_size, hidden_size) for cls/mean/last,
+            or (batch_size, cov_dim * cov_dim) for cov pooling
         """
         if self.pooling == "cls":
             return hidden_states[:, 0, :]
@@ -383,13 +431,27 @@ class WrappedModelWithPairedVariantHead(nn.Module):
                 return hidden_states.mean(dim=1)
         elif self.pooling == "last":
             if attention_mask is not None:
-                # Get the last non-padding token for each sequence
                 seq_lengths = attention_mask.sum(dim=1)
                 batch_size = hidden_states.size(0)
                 batch_indices = torch.arange(batch_size, device=hidden_states.device)
                 return hidden_states[batch_indices, seq_lengths - 1, :]
             else:
                 return hidden_states[:, -1, :]
+        elif self.pooling == "cov":
+            # Covariance-based pooling (Dooms et al. 2026)
+            batch_size, seq_len, _ = hidden_states.shape
+
+            if attention_mask is not None:
+                mask_expanded = attention_mask.unsqueeze(-1).float()
+                hidden_states = hidden_states * mask_expanded
+                seq_lens = attention_mask.sum(dim=1, keepdim=True).float().clamp(min=1.0)
+            else:
+                seq_lens = torch.full((batch_size, 1), seq_len, device=hidden_states.device, dtype=hidden_states.dtype)
+
+            proj_L = self.cov_proj_L(hidden_states)
+            proj_R = self.cov_proj_R(hidden_states)
+            cov = torch.bmm(proj_L.transpose(1, 2), proj_R) / seq_lens.unsqueeze(-1)
+            return cov.view(batch_size, -1)
 
     def get_variant_embedding(self, ref_input_ids, ref_attention_mask, alt_input_ids, alt_attention_mask):
         """Get differential embedding (alt - ref) for a single variant."""

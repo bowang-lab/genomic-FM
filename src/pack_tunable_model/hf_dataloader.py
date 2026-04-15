@@ -1193,3 +1193,120 @@ class MAVESDataset(Dataset):
             item["alt_attention_mask"] = self.alt_attention_mask[i]
 
         return item
+
+
+# =============================================================================
+# CardioBoost Dataset Functions
+# =============================================================================
+
+def return_cardioboost_dataset(
+    tokenizer: PreTrainedTokenizer,
+    data_dir: str,
+    disease_type: str = 'cm',  # 'cm' (cardiomyopathy) or 'arm' (arrhythmia)
+    seq_length: int = 1024,  # Default 1024 to match CGC/SMART
+    seed: int = 42,
+    include_vus: bool = False,  # Whether to include VUS data in training
+):
+    """
+    Load CardioBoost cardiac disease variant dataset.
+
+    Args:
+        tokenizer: HuggingFace tokenizer
+        data_dir: Path to CardioBoost data directory
+        disease_type: 'cm' for cardiomyopathy or 'arm' for arrhythmia
+        seq_length: Sequence length (512, 1024, 2048, or 4096)
+        seed: Random seed for reproducibility
+        include_vus: Whether to include VUS (variants of uncertain significance) in training
+
+    Returns:
+        Tuple of (datasets dict, task_num_classes dict, max_seq_len)
+    """
+    import pandas as pd
+    import os
+
+    tokenizer.model_max_length = seq_length
+
+    # Construct file paths
+    train_file = os.path.join(data_dir, f"{disease_type}_train_hg19_dna_{seq_length}.csv")
+    test_file = os.path.join(data_dir, f"{disease_type}_test_hg19_dna_{seq_length}.csv")
+
+    # Check if files exist
+    if not os.path.exists(train_file):
+        raise FileNotFoundError(f"Training file not found: {train_file}")
+    if not os.path.exists(test_file):
+        raise FileNotFoundError(f"Test file not found: {test_file}")
+
+    # Load data
+    train_df = pd.read_csv(train_file)
+    test_df = pd.read_csv(test_file)
+
+    print(f"CardioBoost {disease_type.upper()} Dataset")
+    print(f"  Train samples: {len(train_df)}")
+    print(f"  Test samples: {len(test_df)}")
+
+    # Optionally include VUS data
+    if include_vus:
+        vus_benign_file = os.path.join(data_dir, f"{disease_type}_vus_benign_hg19_dna_{seq_length}.csv")
+        vus_pathogenic_file = os.path.join(data_dir, f"{disease_type}_vus_pathogenic_hg19_dna_{seq_length}.csv")
+
+        if os.path.exists(vus_benign_file) and os.path.exists(vus_pathogenic_file):
+            vus_benign_df = pd.read_csv(vus_benign_file)
+            vus_pathogenic_df = pd.read_csv(vus_pathogenic_file)
+
+            # Add VUS to training data
+            train_df = pd.concat([train_df, vus_benign_df, vus_pathogenic_df], ignore_index=True)
+            print(f"  Added VUS benign: {len(vus_benign_df)}, VUS pathogenic: {len(vus_pathogenic_df)}")
+            print(f"  Total train samples: {len(train_df)}")
+
+    # Convert to list format expected by ClinVarDataset
+    # Format: [[((seq_a, seq_b, variant_type), label], ...]
+    def df_to_data_list(df):
+        data = []
+        for _, row in df.iterrows():
+            seq_pair = (row['seq_a'], row['seq_b'], 'SNV')  # variant_type placeholder
+            label = int(row['labels'])
+            data.append([seq_pair, label])
+        return data
+
+    train_data = df_to_data_list(train_df)
+    test_data = df_to_data_list(test_df)
+
+    # Split training data into train/val
+    random.seed(seed)
+    random.shuffle(train_data)
+
+    val_split = 0.15
+    val_size = int(len(train_data) * val_split)
+    val_data = train_data[:val_size]
+    train_data = train_data[val_size:]
+
+    print(f"  After split → Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+
+    # Print label distribution
+    train_labels = [item[1] for item in train_data]
+    val_labels = [item[1] for item in val_data]
+    test_labels = [item[1] for item in test_data]
+
+    print(f"  Train distribution: benign={train_labels.count(0)}, pathogenic={train_labels.count(1)}")
+    print(f"  Val distribution: benign={val_labels.count(0)}, pathogenic={val_labels.count(1)}")
+    print(f"  Test distribution: benign={test_labels.count(0)}, pathogenic={test_labels.count(1)}")
+
+    # Create label mapping
+    label_to_id = {0: 0, 1: 1}
+    task_name = f"cardioboost_{disease_type.upper()}"
+
+    # Create datasets
+    train_ds = ClinVarDataset(train_data, tokenizer, task_name, label_to_id)
+    val_ds = ClinVarDataset(val_data, tokenizer, task_name, label_to_id)
+    test_ds = ClinVarDataset(test_data, tokenizer, task_name, label_to_id)
+
+    # Store datasets
+    multitask_datasets = {
+        'train': train_ds,
+        f"{task_name}_val": val_ds,
+        f"{task_name}_test": test_ds,
+    }
+
+    task_num_classes = {task_name: 2}  # Binary classification
+
+    return multitask_datasets, task_num_classes, seq_length
