@@ -213,17 +213,13 @@ def load_patient_datasets(
     # Optionally load control patients
     if include_controls:
         print("Loading CGC control patients...")
-        try:
-            control_samples = load_cgc_controls_by_patient(
-                max_variants_per_patient=max_variants,
-                n_patients=n_controls,
-                seed=seed
-            )
-            control_list = list(control_samples.values())
-            print(f"Loaded {len(control_list)} control patients")
-        except Exception as e:
-            print(f"Warning: Could not load controls: {e}")
-            control_list = []
+        control_samples = load_cgc_controls_by_patient(
+            max_variants_per_patient=max_variants,
+            n_patients=n_controls,
+            seed=seed
+        )
+        control_list = list(control_samples.values())
+        print(f"Loaded {len(control_list)} control patients")
     else:
         control_list = []
 

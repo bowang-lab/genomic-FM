@@ -106,7 +106,7 @@ class MultiVariantPatientDataset(Dataset):
 
         # Check span
         variant_span = max(positions) - min(positions)
-        if variant_span < self.seq_length * 0.8:
+        if variant_span < self.seq_length:
             return "local"
 
         return "aggregated"
@@ -116,18 +116,14 @@ class MultiVariantPatientDataset(Dataset):
         skipped = 0
 
         for sample in patient_samples:
-            try:
-                processed = self._process_single_patient(sample)
-                if processed is not None:
-                    self.processed_samples.append(processed)
-                else:
-                    skipped += 1
-            except Exception as e:
-                print(f"Warning: Failed to process patient {sample.patient_id}: {e}")
+            processed = self._process_single_patient(sample)
+            if processed is not None:
+                self.processed_samples.append(processed)
+            else:
                 skipped += 1
 
         if skipped > 0:
-            print(f"Skipped {skipped} patients due to processing errors")
+            print(f"Skipped {skipped} patients (no valid sequences extracted)")
 
     def _process_single_patient(self, sample: PatientVariantSample) -> Optional[ProcessedPatientSample]:
         """Process a single patient sample."""
@@ -158,16 +154,12 @@ class MultiVariantPatientDataset(Dataset):
             for v in variants
         ]
 
-        try:
-            ref_seq, alt_seq = self.genome_extractor.extract_multi_variant_sequence(
-                variant_dicts, sequence_length=self.seq_length
-            )
-        except Exception as e:
-            # Fallback to aggregated mode if local extraction fails
-            return self._process_aggregated_mode(sample, variants)
+        ref_seq, alt_seq = self.genome_extractor.extract_multi_variant_sequence(
+            variant_dicts, sequence_length=self.seq_length
+        )
 
         if ref_seq is None or alt_seq is None:
-            return self._process_aggregated_mode(sample, variants)
+            return None
 
         return ProcessedPatientSample(
             patient_id=sample.patient_id,
@@ -195,15 +187,12 @@ class MultiVariantPatientDataset(Dataset):
                 'variant_id': v.variant_id
             }
 
-            try:
-                ref_seq, alt_seq = self.genome_extractor.extract_multi_variant_sequence(
-                    [variant_dict], sequence_length=self.seq_length
-                )
-                if ref_seq is not None and alt_seq is not None:
-                    ref_sequences.append(ref_seq)
-                    alt_sequences.append(alt_seq)
-            except Exception:
-                continue
+            ref_seq, alt_seq = self.genome_extractor.extract_multi_variant_sequence(
+                [variant_dict], sequence_length=self.seq_length
+            )
+            if ref_seq is not None and alt_seq is not None:
+                ref_sequences.append(ref_seq)
+                alt_sequences.append(alt_seq)
 
         if not ref_sequences:
             return None

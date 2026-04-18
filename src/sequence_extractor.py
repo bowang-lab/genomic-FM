@@ -148,10 +148,10 @@ class GenomeSequenceExtractor:
         max_pos = max(v.start for v in variant_objects)
         variant_span = max_pos - min_pos
 
-        # Check if variants fit within sequence_length (with some margin for context)
-        if variant_span > sequence_length * 0.8:
+        # Check if variants fit within sequence_length
+        if variant_span > sequence_length:
             raise ValueError(
-                f"Variant span ({variant_span}bp) exceeds 80% of sequence_length ({sequence_length}bp). "
+                f"Variant span ({variant_span}bp) exceeds sequence_length ({sequence_length}bp). "
                 f"Use aggregated mode for distant variants."
             )
 
@@ -179,7 +179,7 @@ class GenomeSequenceExtractor:
 
         Local mode requires:
         - All variants on the same chromosome
-        - Variant span < 80% of sequence_length
+        - Variant span < sequence_length
 
         Args:
             variants: List of variant dicts or kipoiseq.Variant objects
@@ -215,7 +215,7 @@ class GenomeSequenceExtractor:
 
         # Check span
         variant_span = max(positions) - min(positions)
-        return variant_span < sequence_length * 0.8
+        return variant_span < sequence_length
 
     def extract_sequence_from_record(self, record, sequence_length=1024):
         # Extract information from the record

@@ -1329,7 +1329,7 @@ def return_cgc_multivariant_dataset(
     genome_fa: str = "root/data/hg19.fa",
 ):
     """
-    Load CGC dataset for multi-variant per patient training.
+    Load CGC dataset for multi-variant per patient training (primary findings only).
 
     Each sample contains all variants for a single patient, processed in either:
     - Local mode: All variants in single sequence (if on same chromosome and close)
@@ -1375,17 +1375,13 @@ def return_cgc_multivariant_dataset(
     # Optionally load control patients
     if include_controls:
         print("Loading CGC control patients...")
-        try:
-            control_samples = load_cgc_controls_by_patient(
-                max_variants_per_patient=max_variants_per_patient,
-                n_patients=n_controls,
-                seed=seed
-            )
-            control_list = list(control_samples.values())
-            print(f"Loaded {len(control_list)} control patients")
-        except Exception as e:
-            print(f"Warning: Could not load controls: {e}")
-            control_list = []
+        control_samples = load_cgc_controls_by_patient(
+            max_variants_per_patient=max_variants_per_patient,
+            n_patients=n_controls,
+            seed=seed
+        )
+        control_list = list(control_samples.values())
+        print(f"Loaded {len(control_list)} control patients")
     else:
         control_list = []
 
@@ -1459,6 +1455,124 @@ def return_cgc_multivariant_dataset(
     }
 
     print(f"Created multi-variant datasets with mode={mode}")
+    print(f"Task info: {task_info}")
+
+    return datasets, task_info, seq_length
+
+
+def return_cgc_all_variants_dataset(
+    tokenizer: PreTrainedTokenizer,
+    seq_length: int = 1024,
+    max_variants_per_patient: int = 100,
+    mode: str = "aggregated",  # Almost always aggregated with many variants
+    val_split: float = 0.15,
+    test_split: float = 0.15,
+    variant_selection: str = "smart_ranked",
+    include_n_pathogenic: int = 5,
+    include_n_benign: int = 95,
+    seed: int = 42,
+    genome_fa: str = "root/data/hg19.fa",
+    csv_path: str = "root/data/unfiltered_variants.csv",
+):
+    """
+    Load CGC dataset with ALL variants per patient for realistic multi-variant training.
+
+    This creates a "needle in haystack" scenario where each patient has many variants
+    (mostly benign) and the model must identify the pathogenic ones.
+
+    Args:
+        tokenizer: HuggingFace tokenizer
+        seq_length: Sequence length for extraction
+        max_variants_per_patient: Maximum total variants per patient
+        mode: Processing mode - typically "aggregated" for many variants
+        val_split: Validation split ratio
+        test_split: Test split ratio
+        variant_selection: How to select variants ("smart_ranked", "random", "all")
+        include_n_pathogenic: For smart_ranked, include top N pathogenic variants
+        include_n_benign: For smart_ranked, include N benign variants
+        seed: Random seed
+        genome_fa: Path to reference genome FASTA
+        csv_path: Path to unfiltered variants CSV
+
+    Returns:
+        Tuple of (datasets_dict, task_info, seq_length)
+    """
+    from sklearn.model_selection import train_test_split
+    from ..geneRepEng.dataset.cgc_primary_findings import (
+        load_all_variants_by_patient,
+        DISEASE_CLASSES,
+    )
+    from ..sequence_extractor import GenomeSequenceExtractor
+    from .multi_variant_dataloader import MultiVariantPatientDataset, MultiVariantDataCollator
+
+    tokenizer.model_max_length = seq_length
+
+    # Initialize genome extractor
+    genome_extractor = GenomeSequenceExtractor(fasta_file=genome_fa)
+
+    # Load ALL variants per patient
+    print("Loading all variants per patient...")
+    all_patient_samples = load_all_variants_by_patient(
+        csv_path=csv_path,
+        max_variants_per_patient=max_variants_per_patient,
+        variant_selection=variant_selection,
+        include_n_pathogenic=include_n_pathogenic,
+        include_n_benign=include_n_benign,
+        seed=seed,
+    )
+    all_samples = list(all_patient_samples.values())
+    print(f"Loaded {len(all_samples)} patients with all variants")
+
+    # Shuffle
+    random.seed(seed)
+    random.shuffle(all_samples)
+
+    # Split by pathogenicity label for stratification
+    pathogenicity_labels = [s.pathogenicity_label for s in all_samples]
+
+    # Train/temp split
+    train_samples, temp_samples = train_test_split(
+        all_samples,
+        test_size=val_split + test_split,
+        stratify=pathogenicity_labels,
+        random_state=seed
+    )
+
+    # Val/test split
+    temp_labels = [s.pathogenicity_label for s in temp_samples]
+    val_samples, test_samples = train_test_split(
+        temp_samples,
+        test_size=test_split / (val_split + test_split),
+        stratify=temp_labels,
+        random_state=seed
+    )
+
+    print(f"Splits - Train: {len(train_samples)}, Val: {len(val_samples)}, Test: {len(test_samples)}")
+
+    # Create datasets
+    train_dataset = MultiVariantPatientDataset(
+        train_samples, tokenizer, genome_extractor, seq_length, max_variants_per_patient, mode
+    )
+    val_dataset = MultiVariantPatientDataset(
+        val_samples, tokenizer, genome_extractor, seq_length, max_variants_per_patient, mode
+    )
+    test_dataset = MultiVariantPatientDataset(
+        test_samples, tokenizer, genome_extractor, seq_length, max_variants_per_patient, mode
+    )
+
+    datasets = {
+        'train': train_dataset,
+        'val': val_dataset,
+        'test': test_dataset,
+    }
+
+    # Task info
+    task_info = {
+        'disease': len(DISEASE_CLASSES),
+        'pathogenicity': 2,
+    }
+
+    print(f"Created all-variants dataset with mode={mode}")
     print(f"Task info: {task_info}")
 
     return datasets, task_info, seq_length

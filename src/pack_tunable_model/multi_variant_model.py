@@ -203,7 +203,7 @@ class WrappedModelWithMultiVariantHead(nn.Module):
             nn.Dropout(dropout),
         )
 
-        # Multi-task heads
+        # Disease classification head (primary task)
         self.disease_head = nn.Sequential(
             nn.Linear(hidden_size, 128),
             nn.ReLU(),
@@ -211,6 +211,7 @@ class WrappedModelWithMultiVariantHead(nn.Module):
             nn.Linear(128, num_disease_classes),
         )
 
+        # Pathogenicity head (optional - only useful if data has benign patients)
         self.pathogenicity_head = nn.Sequential(
             nn.Linear(hidden_size, 128),
             nn.ReLU(),
@@ -226,7 +227,7 @@ class WrappedModelWithMultiVariantHead(nn.Module):
 
         # Loss functions
         self.disease_loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
-        self.pathogenicity_loss_fn = nn.CrossEntropyLoss()
+        self.pathogenicity_loss_fn = nn.CrossEntropyLoss(ignore_index=-100)  # Also ignore -100
 
     def _apply_pooling(
         self, hidden_states: torch.Tensor, attention_mask: Optional[torch.Tensor]
@@ -460,15 +461,21 @@ class WrappedModelWithMultiVariantHead(nn.Module):
 
         if all_disease_labels:
             disease_labels = torch.cat(all_disease_labels, dim=0)
-            disease_loss = self.disease_loss_fn(disease_logits, disease_labels)
+            # Only compute loss if there are valid labels (not all -100)
+            valid_disease = (disease_labels != -100).any()
+            if valid_disease:
+                disease_loss = self.disease_loss_fn(disease_logits, disease_labels)
 
         if all_pathogenicity_labels:
             pathogenicity_labels = torch.cat(all_pathogenicity_labels, dim=0)
-            pathogenicity_loss = self.pathogenicity_loss_fn(
-                pathogenicity_logits, pathogenicity_labels
-            )
+            # Only compute pathogenicity loss if labels have variance (not all same class)
+            unique_labels = pathogenicity_labels[pathogenicity_labels != -100].unique()
+            if len(unique_labels) > 1:
+                pathogenicity_loss = self.pathogenicity_loss_fn(
+                    pathogenicity_logits, pathogenicity_labels
+                )
 
-        # Combine losses
+        # Combine losses (disease is primary, pathogenicity is optional)
         if disease_loss is not None and pathogenicity_loss is not None:
             loss = (
                 self.disease_weight * disease_loss

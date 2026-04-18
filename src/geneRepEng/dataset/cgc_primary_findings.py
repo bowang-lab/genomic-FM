@@ -35,17 +35,7 @@ class PatientVariantSample:
     variants: List[VariantInfo]
     disease_class: Optional[int] = None
     disease_name: Optional[str] = None
-    pathogenicity_label: int = 1  # Aggregated from SMART scores (default: pathogenic)
-
-    def __post_init__(self):
-        # Calculate aggregated pathogenicity from SMART scores
-        if self.variants:
-            smart_scores = [v.smart_score for v in self.variants if v.smart_score is not None]
-            if smart_scores:
-                # Use max SMART score for pathogenicity (most pathogenic variant)
-                max_score = max(smart_scores)
-                # Default threshold of 65.0 for pathogenicity
-                self.pathogenicity_label = 1 if max_score >= 65.0 else 0
+    pathogenicity_label: int = 1  # Set by loading function
 
 # Disease classes for cardiac conditions
 DISEASE_CLASSES = ['Aortopathy', 'Cardiomyopathy', 'Arrhythmia', 'Structural defect']
@@ -729,7 +719,7 @@ def load_cgc_by_patient(
             variants=variants,
             disease_class=disease_class,
             disease_name=disease_name,
-            pathogenicity_label=pathogenicity_label
+            pathogenicity_label=pathogenicity_label,
         )
         patient_samples[patient_id] = sample
 
@@ -818,9 +808,156 @@ def load_cgc_controls_by_patient(
             variants=variants,
             disease_class=None,
             disease_name=None,
-            pathogenicity_label=0  # Controls are benign
+            pathogenicity_label=0,
         )
         patient_samples[patient_id] = sample
 
     print(f"Created {len(patient_samples)} control patient samples")
+    return patient_samples
+
+
+def load_all_variants_by_patient(
+    csv_path: str = "root/data/unfiltered_variants.csv",
+    primary_findings_path: str = "root/data/primary_findings_analysis/primary_findings_analysis_results.csv",
+    disease_labels_path: str = "root/data/cgc_disease_labels.csv",
+    max_variants_per_patient: int = 100,
+    variant_selection: str = "smart_ranked",  # "smart_ranked", "random", "all"
+    include_n_top: int = 10,  # Include top N variants by SMART score
+    include_n_random: int = 90,  # Include N random other variants
+    seed: int = 42,
+) -> Dict[str, PatientVariantSample]:
+    """
+    Load ALL variants per patient from unfiltered data for multi-variant training.
+
+    Pathogenicity is determined by PRIMARY FINDINGS (not SMART score):
+    - Patients WITH primary findings → pathogenic (label=1)
+    - Patients WITHOUT primary findings → control (label=0)
+
+    Args:
+        csv_path: Path to unfiltered variants CSV file
+        primary_findings_path: Path to primary findings CSV (determines pathogenic patients)
+        disease_labels_path: Path to disease labels CSV mapping case_id to Class
+        max_variants_per_patient: Maximum total variants per patient
+        variant_selection: How to select variants ("smart_ranked", "random", "all")
+        include_n_top: For smart_ranked, include top N by SMART score
+        include_n_random: For smart_ranked, include N random other variants
+        seed: Random seed
+
+    Returns:
+        Dict mapping patient_id to PatientVariantSample with all their variants
+    """
+    random.seed(seed)
+
+    # Load primary findings to determine which patients are pathogenic
+    primary_df = pd.read_csv(primary_findings_path)
+    pathogenic_patients = set(primary_df['CaseID'].astype(str).unique())
+    print(f"Loaded {len(pathogenic_patients)} patients with primary findings (pathogenic)")
+
+    # Load disease labels if file exists
+    if Path(disease_labels_path).exists():
+        case_to_disease = load_disease_labels(disease_labels_path)
+        disease_to_id = {label: idx for idx, label in enumerate(DISEASE_CLASSES)}
+    else:
+        print(f"Disease labels file not found: {disease_labels_path}")
+        case_to_disease = {}
+        disease_to_id = {}
+
+    # Load variants - only needed columns for efficiency
+    print(f"Loading variants from {csv_path}...")
+    cols_needed = ['case_id', 'CHROM', 'start', 'ref_allele', 'alt_allele',
+                   'gene_symbol', 'smart_score']
+    df = pd.read_csv(csv_path, usecols=cols_needed, low_memory=False)
+    print(f"Loaded {len(df):,} variants for {df['case_id'].nunique()} patients")
+
+    # Remove duplicate variants (same patient, same position) - keep highest SMART score
+    df = df.sort_values('smart_score', ascending=False)
+    df = df.drop_duplicates(subset=['case_id', 'CHROM', 'start'], keep='first')
+    print(f"After deduplication: {len(df):,} unique variants")
+
+    # Group by patient
+    patient_samples: Dict[str, PatientVariantSample] = {}
+
+    for patient_id, patient_df in df.groupby('case_id'):
+        patient_id = str(patient_id)
+
+        # Select variants based on strategy
+        if variant_selection == "smart_ranked":
+            # Sort by SMART score (highest first)
+            patient_df = patient_df.sort_values('smart_score', ascending=False)
+
+            # Get top N by SMART score
+            top_variants = patient_df.head(include_n_top)
+
+            # Get random sample from the rest
+            remaining = patient_df.iloc[include_n_top:]
+            if len(remaining) > include_n_random:
+                random_variants = remaining.sample(n=include_n_random, random_state=seed)
+            else:
+                random_variants = remaining
+
+            # Combine and shuffle
+            selected_df = pd.concat([top_variants, random_variants])
+            selected_df = selected_df.sample(frac=1, random_state=seed)
+
+        elif variant_selection == "random":
+            if len(patient_df) > max_variants_per_patient:
+                selected_df = patient_df.sample(n=max_variants_per_patient, random_state=seed)
+            else:
+                selected_df = patient_df
+
+        else:  # "all"
+            selected_df = patient_df.head(max_variants_per_patient)
+
+        # Create VariantInfo objects
+        variants = []
+        for idx, row in selected_df.iterrows():
+            variant_info = VariantInfo(
+                chrom=str(row['CHROM']),
+                pos=int(row['start']),
+                ref=str(row['ref_allele']),
+                alt=str(row['alt_allele']),
+                variant_id=str(idx),
+                gene_symbol=row.get('gene_symbol'),
+                smart_score=row.get('smart_score')
+            )
+            variants.append(variant_info)
+
+        if not variants:
+            continue
+
+        # Pathogenicity based on PRIMARY FINDINGS (not SMART score)
+        pathogenicity_label = 1 if patient_id in pathogenic_patients else 0
+
+        # Get disease class (only for pathogenic patients)
+        disease_name = case_to_disease.get(patient_id)
+        disease_class = disease_to_id.get(disease_name) if disease_name else None
+
+        sample = PatientVariantSample(
+            patient_id=patient_id,
+            variants=variants,
+            disease_class=disease_class,
+            disease_name=disease_name,
+            pathogenicity_label=pathogenicity_label,
+        )
+        patient_samples[patient_id] = sample
+
+    # Print statistics
+    print(f"\nCreated {len(patient_samples)} patient samples")
+    variant_counts = [len(s.variants) for s in patient_samples.values()]
+    print(f"Variants per patient: min={min(variant_counts)}, max={max(variant_counts)}, "
+          f"mean={np.mean(variant_counts):.1f}")
+
+    # Label distribution
+    n_pathogenic = sum(1 for s in patient_samples.values() if s.pathogenicity_label == 1)
+    n_benign = sum(1 for s in patient_samples.values() if s.pathogenicity_label == 0)
+    print(f"Patient labels: {n_pathogenic} pathogenic, {n_benign} benign")
+
+    # Disease distribution (only for pathogenic patients)
+    disease_counts = {}
+    for sample in patient_samples.values():
+        if sample.disease_name:
+            disease_counts[sample.disease_name] = disease_counts.get(sample.disease_name, 0) + 1
+    if disease_counts:
+        print(f"Disease distribution: {disease_counts}")
+
     return patient_samples
