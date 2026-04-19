@@ -610,11 +610,11 @@ def _should_process_variant(row: pd.Series, region_type: Optional[str]) -> bool:
 
     return True
 
-def get_maves(seq_length=1024, limit=None, target='score', sequence_type='dna', region_type=None, verbose_warnings=True):
+def get_maves(Seq_length=1024, limit=None, target='score', sequence_type='dna', region_type=None, verbose_warnings=True):
     """Load MAVE data with comprehensive HGVS processing.
 
     Args:
-        seq_length: Maximum sequence length to include (default: 1024)
+        Seq_length: Maximum sequence length to include (default: 1024)
         limit: Maximum number of studies to process (default: None)
         target: Target column name to extract (default: 'score')
         sequence_type: Type of sequence to filter for (default: 'dna')
@@ -639,7 +639,7 @@ def get_maves(seq_length=1024, limit=None, target='score', sequence_type='dna', 
                 continue
 
             ref_sequence = target_genes[0]['sequence']
-            if len(ref_sequence) > seq_length:
+            if len(ref_sequence) > Seq_length:
                 continue
 
             total_count += exp.get('numVariants', 0)
