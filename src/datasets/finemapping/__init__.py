@@ -10,11 +10,11 @@ from .susie_wrapper import (
     compute_credible_set_labels,
     prepare_sumstats_for_susie,
 )
-from .ld_matrix import LDMatrixComputer
+from .ld_matrix import LDMatrix
 
 __all__ = [
     'run_susie_finemapping',
     'compute_credible_set_labels',
     'prepare_sumstats_for_susie',
-    'LDMatrixComputer',
+    'LDMatrix',
 ]

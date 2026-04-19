@@ -1020,9 +1020,9 @@ class FinemapDataWrapper:
         else:
             self.gwas_catalog = None
 
-        # Initialize LD computer
-        from ..datasets.finemapping import LDMatrixComputer
-        self.ld_computer = LDMatrixComputer(vcf_path=vcf_path, panel=ld_panel)
+        # Initialize LD calculator
+        from ..datasets.finemapping import LDMatrix
+        self.ld_calculator = LDMatrix(vcf_path=vcf_path, panel=ld_panel)
 
     def __call__(self, *args, **kwargs):
         return self.get_data(*args, **kwargs)
@@ -1130,7 +1130,7 @@ class FinemapDataWrapper:
             raise ValueError("Need at least 2 variants for finemapping")
 
         # Compute LD matrix
-        R, ld_positions, indices = self.ld_computer.compute_for_variants(
+        R, ld_positions, indices = self.ld_calculator.compute_for_variants(
             positions, chrom
         )
 

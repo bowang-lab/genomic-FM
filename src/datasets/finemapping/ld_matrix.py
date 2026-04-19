@@ -11,7 +11,7 @@ from cyvcf2 import VCF
 from numba import jit, prange
 
 
-class LDMatrixComputer:
+class LDMatrix:
     """
     Compute LD correlation matrices from 1000G VCF.
 
