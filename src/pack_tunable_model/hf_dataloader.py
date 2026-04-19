@@ -1310,3 +1310,252 @@ def return_cardioboost_dataset(
     task_num_classes = {task_name: 2}  # Binary classification
 
     return multitask_datasets, task_num_classes, seq_length
+
+
+class FinemapDataset(Dataset):
+    """Dataset for finemapping data with binary credible set labels."""
+
+    def __init__(self, data, tokenizer, task_name="finemap"):
+        """
+        Initialize finemapping dataset.
+
+        Args:
+            data: List of ([ref_seq, alt_seq, annotation], label) tuples
+            tokenizer: HuggingFace tokenizer
+            task_name: Task name for multi-task training
+        """
+        super(FinemapDataset, self).__init__()
+        self.task_name = task_name
+        self.num_labels = 2  # Binary classification
+
+        # Process data
+        ref_sequences = []
+        alt_sequences = []
+        labels = []
+        annotations = []
+
+        for item in data:
+            ref, alt, annotation = item[0]
+            ref_sequences.append(ref)
+            alt_sequences.append(alt)
+            labels.append(item[1])
+            annotations.append(annotation)
+
+        # Tokenize reference sequences
+        ref_output = tokenizer(
+            ref_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        )
+
+        # Tokenize alternative sequences
+        alt_output = tokenizer(
+            alt_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        )
+
+        # Store tokenized sequences and masks
+        self.ref_input_ids = ref_output["input_ids"]
+        self.ref_attention_mask = ref_output.get("attention_mask")
+        self.alt_input_ids = alt_output["input_ids"]
+        self.alt_attention_mask = alt_output.get("attention_mask")
+        self.labels = labels
+        self.annotations = annotations
+
+    def __len__(self):
+        return len(self.ref_input_ids)
+
+    def __getitem__(self, i):
+        item = {
+            "ref_input_ids": self.ref_input_ids[i],
+            "alt_input_ids": self.alt_input_ids[i],
+            "labels": self.labels[i],
+            "task_name": self.task_name,
+        }
+
+        if self.ref_attention_mask is not None:
+            item["ref_attention_mask"] = self.ref_attention_mask[i]
+        if self.alt_attention_mask is not None:
+            item["alt_attention_mask"] = self.alt_attention_mask[i]
+
+        return item
+
+
+def return_finemap_dataset(
+    tokenizer,
+    gwas_trait: str = None,
+    sumstats_path: str = None,
+    locus: str = None,
+    n_samples: int = None,
+    vcf_path: str = './root/data/1000G/EUR.vcf.gz',
+    ld_panel: str = 'EUR',
+    coverage: float = 0.95,
+    seq_length: int = 1024,
+    val_split: float = 0.1,
+    test_split: float = 0.1,
+    seed: int = 42,
+):
+    """
+    Load finemapping data as binary classification dataset.
+
+    Args:
+        tokenizer: HuggingFace tokenizer
+        gwas_trait: Trait name to query from GWAS Catalog
+        sumstats_path: Path to custom summary statistics TSV
+        locus: Genomic locus to finemap (e.g., "10:114750000-114850000")
+        n_samples: GWAS sample size (required for finemapping)
+        vcf_path: Path to population VCF for LD computation
+        ld_panel: LD reference panel population
+        coverage: Credible set coverage threshold
+        seq_length: Sequence length for variant context
+        val_split: Fraction for validation set
+        test_split: Fraction for test set
+        seed: Random seed for reproducibility
+
+    Returns:
+        Tuple of (datasets_dict, task_num_classes_dict, seq_length)
+    """
+    from ..dataloader.data_wrapper import FinemapDataWrapper
+
+    tokenizer.model_max_length = seq_length
+
+    # Initialize wrapper
+    wrapper = FinemapDataWrapper(
+        gwas_trait=gwas_trait,
+        sumstats_path=sumstats_path,
+        ld_panel=ld_panel,
+        vcf_path=vcf_path,
+        coverage=coverage,
+        n_samples=n_samples,
+        locus=locus,
+    )
+
+    # Get data
+    data = wrapper.get_data(Seq_length=seq_length, target='credible')
+
+    if len(data) == 0:
+        raise ValueError("No data returned from finemapping wrapper")
+
+    # Split data
+    random.seed(seed)
+    indices = list(range(len(data)))
+    random.shuffle(indices)
+
+    n_test = int(len(data) * test_split)
+    n_val = int(len(data) * val_split)
+
+    test_indices = indices[:n_test]
+    val_indices = indices[n_test:n_test + n_val]
+    train_indices = indices[n_test + n_val:]
+
+    train_data = [data[i] for i in train_indices]
+    val_data = [data[i] for i in val_indices]
+    test_data = [data[i] for i in test_indices]
+
+    print(f"Finemapping dataset: Train={len(train_data)}, Val={len(val_data)}, Test={len(test_data)}")
+
+    # Print class distribution
+    train_pos = sum(1 for _, l in train_data if l == 1)
+    val_pos = sum(1 for _, l in val_data if l == 1)
+    test_pos = sum(1 for _, l in test_data if l == 1)
+
+    print(f"  Train: {train_pos} in CS, {len(train_data) - train_pos} outside CS")
+    print(f"  Val: {val_pos} in CS, {len(val_data) - val_pos} outside CS")
+    print(f"  Test: {test_pos} in CS, {len(test_data) - test_pos} outside CS")
+
+    # Create datasets
+    task_name = "finemap"
+    train_ds = FinemapDataset(train_data, tokenizer, task_name)
+    val_ds = FinemapDataset(val_data, tokenizer, task_name)
+    test_ds = FinemapDataset(test_data, tokenizer, task_name)
+
+    datasets = {
+        'train': train_ds,
+        f'{task_name}_val': val_ds,
+        f'{task_name}_test': test_ds,
+    }
+
+    task_num_classes = {task_name: 2}
+
+    return datasets, task_num_classes, seq_length
+
+
+def return_finemap_dataset_from_precomputed(
+    tokenizer,
+    credible_sets_path: str,
+    seq_length: int = 1024,
+    val_split: float = 0.1,
+    test_split: float = 0.1,
+    seed: int = 42,
+):
+    """
+    Load finemapping data from pre-computed credible sets file.
+
+    Args:
+        tokenizer: HuggingFace tokenizer
+        credible_sets_path: Path to TSV with columns: chr, pos, pip, cs_id, ref, alt
+        seq_length: Sequence length for variant context
+        val_split: Fraction for validation set
+        test_split: Fraction for test set
+        seed: Random seed
+
+    Returns:
+        Tuple of (datasets_dict, task_num_classes_dict, seq_length)
+    """
+    from ..dataloader.data_wrapper import FinemapDataWrapper
+
+    tokenizer.model_max_length = seq_length
+
+    # Use a minimal wrapper just for sequence extraction
+    wrapper = FinemapDataWrapper(
+        sumstats_path=credible_sets_path,  # Just need a valid path
+        locus="1:1-1",  # Placeholder, won't be used
+    )
+
+    # Get data from precomputed file
+    data = wrapper.get_data_from_precomputed(
+        credible_sets_path=credible_sets_path,
+        Seq_length=seq_length,
+    )
+
+    if len(data) == 0:
+        raise ValueError("No data returned from precomputed credible sets file")
+
+    # Split data
+    random.seed(seed)
+    indices = list(range(len(data)))
+    random.shuffle(indices)
+
+    n_test = int(len(data) * test_split)
+    n_val = int(len(data) * val_split)
+
+    test_indices = indices[:n_test]
+    val_indices = indices[n_test:n_test + n_val]
+    train_indices = indices[n_test + n_val:]
+
+    train_data = [data[i] for i in train_indices]
+    val_data = [data[i] for i in val_indices]
+    test_data = [data[i] for i in test_indices]
+
+    print(f"Finemapping dataset (precomputed): Train={len(train_data)}, Val={len(val_data)}, Test={len(test_data)}")
+
+    # Create datasets
+    task_name = "finemap"
+    train_ds = FinemapDataset(train_data, tokenizer, task_name)
+    val_ds = FinemapDataset(val_data, tokenizer, task_name)
+    test_ds = FinemapDataset(test_data, tokenizer, task_name)
+
+    datasets = {
+        'train': train_ds,
+        f'{task_name}_val': val_ds,
+        f'{task_name}_test': test_ds,
+    }
+
+    task_num_classes = {task_name: 2}
+
+    return datasets, task_num_classes, seq_length

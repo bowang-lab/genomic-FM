@@ -17,6 +17,9 @@ kipoi==0.8.6
 sgkit
 pyliftover
 mavehgvs
+cyvcf2>=0.30.0
+numba>=0.57.0
+susieinf @ git+https://github.com/FinucaneLab/fine-mapping-inf.git#subdirectory=susieinf
 
 # Tokenizers
 tokenizers

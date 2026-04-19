@@ -962,3 +962,348 @@ class SmartVariantDataWrapper:
         print(f"  Samples without disease class: {len(data) - with_disease}")
 
         return data
+
+
+class FinemapDataWrapper:
+    """
+    Data wrapper for SuSiE-based statistical fine-mapping.
+
+    Generates binary credible set labels for training variant prioritization models.
+    Integrates with existing GWAS Catalog infrastructure and GenomeSequenceExtractor.
+    """
+
+    def __init__(
+        self,
+        gwas_trait: str = None,
+        sumstats_path: str = None,
+        ld_panel: str = 'EUR',
+        vcf_path: str = './root/data/1000G/EUR.vcf.gz',
+        coverage: float = 0.95,
+        n_samples: int = None,
+        locus: str = None,
+        L: int = 10,
+    ):
+        """
+        Initialize finemapping data wrapper.
+
+        Args:
+            gwas_trait: Trait name to query from GWAS Catalog (e.g., "type 2 diabetes")
+            sumstats_path: Path to custom summary statistics TSV (alternative to gwas_trait)
+            ld_panel: LD reference panel population (default: 'EUR')
+            vcf_path: Path to population VCF file for LD computation
+            coverage: Credible set coverage threshold (default: 0.95)
+            n_samples: GWAS sample size (required for finemapping)
+            locus: Genomic locus to finemap (e.g., "10:114750000-114850000")
+            L: Maximum number of causal signals for SuSiE (default: 10)
+        """
+        if gwas_trait is None and sumstats_path is None:
+            raise ValueError("Must provide either gwas_trait or sumstats_path")
+
+        self.gwas_trait = gwas_trait
+        self.sumstats_path = sumstats_path
+        self.ld_panel = ld_panel
+        self.vcf_path = vcf_path
+        self.coverage = coverage
+        self.n_samples = n_samples
+        self.locus = locus
+        self.L = L
+
+        # Initialize components
+        self.genome_extractor = GenomeSequenceExtractor()
+
+        # Load GWAS catalog if using trait-based query
+        if gwas_trait is not None:
+            self.gwas_catalog = download_file(
+                file_path='./root/data/gwas_catalog_v1.0.2-associations_e111_r2024-03-01.tsv',
+                gwas_path='alternative'
+            )
+        else:
+            self.gwas_catalog = None
+
+        # Initialize LD computer
+        from ..datasets.finemapping import LDMatrixComputer
+        self.ld_computer = LDMatrixComputer(vcf_path=vcf_path, panel=ld_panel)
+
+    def __call__(self, *args, **kwargs):
+        return self.get_data(*args, **kwargs)
+
+    def _parse_locus(self, locus: str) -> Tuple[str, int, int]:
+        """Parse locus string like '10:114750000-114850000' into (chrom, start, end)."""
+        chrom, positions = locus.split(':')
+        start, end = positions.split('-')
+        return chrom, int(start), int(end)
+
+    def _load_sumstats_from_gwas_catalog(self, chrom: str, start: int, end: int) -> pd.DataFrame:
+        """Load summary statistics from GWAS Catalog for a specific locus."""
+        if self.gwas_catalog is None:
+            raise ValueError("GWAS catalog not loaded")
+
+        # Get risk SNPs for the trait
+        risk_snps = get_risk_snps(self.gwas_catalog, self.gwas_trait)
+
+        if risk_snps.empty:
+            raise ValueError(f"No SNPs found for trait: {self.gwas_trait}")
+
+        # Filter to locus
+        risk_snps = risk_snps.copy()
+
+        # Get chromosome and position from GWAS catalog
+        trait_data = self.gwas_catalog[
+            self.gwas_catalog['DISEASE/TRAIT'].str.contains(self.gwas_trait, case=False, na=False)
+        ].copy()
+
+        # Merge to get positions
+        merged = risk_snps.merge(
+            trait_data[['SNPS', 'CHR_ID', 'CHR_POS']].drop_duplicates(),
+            on='SNPS',
+            how='left'
+        )
+
+        # Filter by locus
+        merged['CHR_ID'] = merged['CHR_ID'].astype(str)
+        merged['CHR_POS'] = pd.to_numeric(merged['CHR_POS'], errors='coerce')
+        merged = merged.dropna(subset=['CHR_POS'])
+        merged['CHR_POS'] = merged['CHR_POS'].astype(int)
+
+        chrom_clean = chrom.replace('chr', '')
+        locus_snps = merged[
+            (merged['CHR_ID'] == chrom_clean) &
+            (merged['CHR_POS'] >= start) &
+            (merged['CHR_POS'] <= end)
+        ]
+
+        if locus_snps.empty:
+            raise ValueError(f"No SNPs found in locus {chrom}:{start}-{end} for trait {self.gwas_trait}")
+
+        return locus_snps
+
+    def _load_custom_sumstats(self, chrom: str, start: int, end: int) -> pd.DataFrame:
+        """Load custom summary statistics from TSV file."""
+        df = pd.read_csv(self.sumstats_path, sep='\t')
+
+        # Standardize column names
+        col_mapping = {
+            'chr': 'CHR_ID',
+            'chrom': 'CHR_ID',
+            'chromosome': 'CHR_ID',
+            'pos': 'CHR_POS',
+            'position': 'CHR_POS',
+            'bp': 'CHR_POS',
+            'beta': 'OR or BETA',
+            'effect': 'OR or BETA',
+            'se': 'SE',
+            'standard_error': 'SE',
+            'pval': 'P-VALUE',
+            'p': 'P-VALUE',
+            'pvalue': 'P-VALUE',
+            'ref': 'REF',
+            'alt': 'ALT',
+            'a1': 'ALT',
+            'a2': 'REF',
+        }
+
+        df.columns = [col_mapping.get(c.lower(), c) for c in df.columns]
+
+        # Filter to locus
+        df['CHR_ID'] = df['CHR_ID'].astype(str).str.replace('chr', '')
+        df['CHR_POS'] = pd.to_numeric(df['CHR_POS'], errors='coerce')
+        df = df.dropna(subset=['CHR_POS'])
+        df['CHR_POS'] = df['CHR_POS'].astype(int)
+
+        chrom_clean = chrom.replace('chr', '')
+        locus_df = df[
+            (df['CHR_ID'] == chrom_clean) &
+            (df['CHR_POS'] >= start) &
+            (df['CHR_POS'] <= end)
+        ]
+
+        return locus_df
+
+    def _run_finemapping(self, sumstats: pd.DataFrame, chrom: str) -> Tuple[np.ndarray, np.ndarray, List]:
+        """Run SuSiE finemapping on summary statistics."""
+        from ..datasets.finemapping import run_susie_finemapping, prepare_sumstats_for_susie
+
+        # Prepare z-scores
+        z_scores, positions = prepare_sumstats_for_susie(sumstats)
+
+        if len(z_scores) < 2:
+            raise ValueError("Need at least 2 variants for finemapping")
+
+        # Compute LD matrix
+        R, ld_positions, indices = self.ld_computer.compute_for_variants(
+            positions, chrom
+        )
+
+        if len(ld_positions) < 2:
+            raise ValueError("Could not match enough variants to LD reference panel")
+
+        # Subset z-scores to matched variants
+        z_matched = z_scores[indices]
+
+        # Estimate sample size if not provided
+        n = self.n_samples
+        if n is None:
+            # Try to estimate from data - use median of available sample sizes
+            n = 50000  # Default fallback
+            print(f"Warning: n_samples not provided, using default: {n}")
+
+        # Run SuSiE
+        result = run_susie_finemapping(
+            z_scores=z_matched,
+            ld_matrix=R,
+            n_samples=n,
+            L=self.L,
+            coverage=self.coverage,
+        )
+
+        return result['pip'], result['credible_sets'], ld_positions, indices
+
+    def get_data(
+        self,
+        Seq_length: int = 1024,
+        target: str = 'credible',
+    ) -> List[Tuple[List, int]]:
+        """
+        Get finemapping data with binary credible set labels.
+
+        Args:
+            Seq_length: Sequence length for variant context extraction
+            target: Label type - 'credible' for binary credible set membership
+
+        Returns:
+            List of ([ref_seq, alt_seq, annotation], label) tuples where:
+                - ref_seq: Reference sequence centered on variant
+                - alt_seq: Alternate sequence centered on variant
+                - annotation: String with chr:pos:cs_id:pip info
+                - label: 1 if in credible set, 0 otherwise
+        """
+        from ..datasets.finemapping import compute_credible_set_labels
+
+        if self.locus is None:
+            raise ValueError("locus must be specified for finemapping")
+
+        chrom, start, end = self._parse_locus(self.locus)
+
+        # Load summary statistics
+        if self.sumstats_path is not None:
+            sumstats = self._load_custom_sumstats(chrom, start, end)
+        else:
+            sumstats = self._load_sumstats_from_gwas_catalog(chrom, start, end)
+
+        print(f"Loaded {len(sumstats)} variants for locus {self.locus}")
+
+        # Run finemapping
+        pips, credible_sets, positions, matched_indices = self._run_finemapping(sumstats, chrom)
+
+        # Compute binary labels
+        labels = compute_credible_set_labels(pips, credible_sets)
+
+        print(f"Finemapping complete: {len(credible_sets)} credible sets, {np.sum(labels)} variants in CS")
+
+        # Extract sequences for each variant
+        data = []
+        sumstats_matched = sumstats.iloc[matched_indices].reset_index(drop=True)
+
+        for i, (idx, row) in enumerate(sumstats_matched.iterrows()):
+            pos = int(positions[i])
+            pip = pips[i]
+            label = int(labels[i])
+
+            # Find which credible set this variant belongs to (if any)
+            cs_id = 'none'
+            for cs_idx, cs in enumerate(credible_sets):
+                if i in cs:
+                    cs_id = f'cs{cs_idx + 1}'
+                    break
+
+            # Get alleles
+            if 'STRONGEST SNP-RISK ALLELE' in row:
+                alt = row['STRONGEST SNP-RISK ALLELE']
+                ref = None  # Will need to look up
+            elif 'ALT' in row and 'REF' in row:
+                ref = row['REF']
+                alt = row['ALT']
+            else:
+                continue
+
+            # Get SNP ID if available
+            snp_id = row.get('SNPS', f'{chrom}:{pos}')
+
+            # Create variant record
+            record = create_variant_record(
+                chrom=chrom,
+                pos=pos,
+                ref=ref if ref else 'N',  # Placeholder if ref not available
+                alt=alt,
+                variant_id=snp_id,
+            )
+
+            # Extract sequences
+            ref_seq, alt_seq = self.genome_extractor.extract_sequence_from_record(
+                record, sequence_length=Seq_length
+            )
+
+            if ref_seq is None or alt_seq is None:
+                continue
+
+            # Create annotation string
+            annotation = f"{chrom}:{pos}:{cs_id}:{pip:.4f}"
+
+            data.append(([ref_seq, alt_seq, annotation], label))
+
+        print(f"Extracted sequences for {len(data)} variants")
+        print(f"  In credible set: {sum(1 for _, l in data if l == 1)}")
+        print(f"  Outside credible set: {sum(1 for _, l in data if l == 0)}")
+
+        return data
+
+    def get_data_from_precomputed(
+        self,
+        credible_sets_path: str,
+        Seq_length: int = 1024,
+    ) -> List[Tuple[List, int]]:
+        """
+        Load data from pre-computed credible sets file.
+
+        Args:
+            credible_sets_path: Path to TSV with columns: chr, pos, pip, cs_id
+            Seq_length: Sequence length for extraction
+
+        Returns:
+            List of ([ref_seq, alt_seq, annotation], label) tuples
+        """
+        df = pd.read_csv(credible_sets_path, sep='\t')
+
+        data = []
+        for _, row in tqdm(df.iterrows(), total=len(df), desc="Extracting sequences"):
+            chrom = str(row['chr']).replace('chr', '')
+            pos = int(row['pos'])
+            pip = float(row.get('pip', 0))
+            cs_id = row.get('cs_id', 'none')
+
+            # Label is 1 if in a credible set
+            label = 1 if cs_id != 'none' and pd.notna(cs_id) else 0
+
+            # Get alleles
+            ref = row.get('ref', 'N')
+            alt = row.get('alt', 'N')
+
+            record = create_variant_record(
+                chrom=chrom,
+                pos=pos,
+                ref=ref,
+                alt=alt,
+                variant_id=f'{chrom}:{pos}',
+            )
+
+            ref_seq, alt_seq = self.genome_extractor.extract_sequence_from_record(
+                record, sequence_length=Seq_length
+            )
+
+            if ref_seq is None or alt_seq is None:
+                continue
+
+            annotation = f"{chrom}:{pos}:{cs_id}:{pip:.4f}"
+            data.append(([ref_seq, alt_seq, annotation], label))
+
+        return data
