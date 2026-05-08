@@ -22,6 +22,7 @@ Then, install the dependencies
 
 
 ```bash
+source /Users/emmy/envs_python/gemonic_fm/bin/activate
 pip install torch==2.2.0 torchvision
 pip install -r requirements.txt
 ```

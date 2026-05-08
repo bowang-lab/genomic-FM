@@ -125,7 +125,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                             filter_genes=None, experimental_methods=None, region_type='all',
                             variant_types=None, seq_length_range=None, max_samples_per_experiment=None,
                             normalize_scores=False, disease_subset_file=None, pretrained_model=None,
-                            comparison_mode="delta"):
+                            comparison_mode="delta", exp_id=0, num_experiments=64):
     set_seed(seed)
     accelerator = Accelerator()
     # Configuration
@@ -278,7 +278,8 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     else:
         # Load ClinVar dataset for classification
         datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-            tokenizer, task, seed=seed, disease_subset_file=disease_subset_file
+            tokenizer, task, seed=seed, disease_subset_file=disease_subset_file, exp_id=exp_id, num_experiments=num_experiments,
+            keep_dir=f"{path_prefix}/pretrain_model_{model_type}_{task}_{exp_id}_{num_experiments}/keep.npy"
         )
     tokenizer.model_max_length = max_seq_len
     num_classes = task_num_classes[task]
@@ -385,6 +386,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
     # Evaluation
     test_dataset = datasets.get(f"{task}_test")
     test_metrics = trainer.evaluate(eval_dataset=test_dataset)
+
+    full_evaluation_results = trainer.predict(datasets.get(f"{task}_full"))
+    torch.save({"pred": full_evaluation_results, "labels": datasets.get(f"{task}_full").labels},
+               f"{path_prefix}/pretrain_model_{model_type}_{task}_{exp_id}_{num_experiments}/full_evaluation_results.pt")
     print(f"Test Metrics for {task}: {test_metrics}")
     # log the test metrics
     write_header = not os.path.exists(results_file)
@@ -452,6 +457,9 @@ def main():
                         choices=["delta", "concat"],
                         help="How to compare ref/alt embeddings: 'delta' (subtraction) or 'concat' (concatenation like DYNA)")
 
+    parser.add_argument("--expid", type=int, default=0)
+    parser.add_argument("--num_experiments", type=int, default=16)
+
     args = parser.parse_args()
 
     # Configure logging
@@ -511,7 +519,8 @@ def main():
                             normalize_scores=normalize_scores,
                             disease_subset_file=args.disease_subset_file,
                             pretrained_model=args.pretrained_model,
-                            comparison_mode=args.comparison_mode)
+                            comparison_mode=args.comparison_mode,
+                            exp_id=args.exp_id, num_experiments=args.num_experiments)
 
 if __name__ == "__main__":
     main()

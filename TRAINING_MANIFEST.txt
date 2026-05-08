@@ -1,0 +1,772 @@
+================================================================================
+                    GENOMIC FM TRAINING MANIFEST
+================================================================================
+
+This document describes the training infrastructure, data loading mechanisms,
+and available datasets for the Genomic Foundation Model finetuning framework.
+
+================================================================================
+1. TRAINING PIPELINE ARCHITECTURE
+================================================================================
+
+Framework: HuggingFace Transformers + Accelerate (distributed training)
+
+ENTRY POINTS:
+-------------
+src/pack_tunable_model/hf_trainer.py          - Single-task finetuning
+src/pack_tunable_model/hf_trainer_smart.py    - SMART variant training
+
+TRAINER CLASS:
+--------------
+SafeDistributedTrainer: Extends HF Trainer for distributed evaluation
+
+SLURM SCRIPTS (slurm/):
+-----------------------
+train_finetune.sh         - Main finetuning orchestrator
+train_finetune_grid.sh    - Grid search over hyperparameters
+train_smart.sh            - SMART variant data training
+train_maves.sh            - MAVE-DB variant data training
+train_clinvar.sh          - ClinVar-specific training
+
+DEFAULT HYPERPARAMETERS:
+------------------------
+Learning Rate:         0.000005
+Batch Size:            8 per device
+Epochs:                10
+Max Gradient Norm:     1.0
+Gradient Accumulation: 2 steps (MAVES regression)
+Warmup:                10% of steps (MAVES)
+Optimizer:             AdamW
+Loss:                  CrossEntropyLoss (classification) / MSELoss (regression)
+
+
+================================================================================
+2. VARIANT TO SEQUENCE PIPELINE
+================================================================================
+
+OVERVIEW:
+---------
+The pipeline transforms raw variant data (VCF/CSV) into tokenized sequences
+ready for model training. Each variant produces TWO sequences: reference and
+alternate, which are compared to predict variant effects.
+
+STEP 1: VARIANT RECORD PARSING
+------------------------------
+Source: src/dataloader/data_wrapper.py
+
+Each dataset wrapper parses variants into a standardized record format:
+
+    {
+        'Chromosome': str,           # e.g., 'chr7' or '7'
+        'Position': int,             # 1-based genomic position
+        'Reference Base': str,       # Reference allele (e.g., 'A', 'ATG')
+        'Alternate Base': tuple,     # Alternate alleles (e.g., ('G',))
+        'ID': str                    # Variant identifier
+    }
+
+Helper function for creating records:
+    def create_variant_record(chrom, pos, ref, alt, variant_id=0):
+        # Normalizes chromosome format (adds 'chr' prefix if missing)
+        # Returns standardized dictionary
+
+
+STEP 2: SEQUENCE EXTRACTION
+---------------------------
+Source: src/sequence_extractor.py
+Class: GenomeSequenceExtractor
+
+The extractor retrieves genomic context around each variant:
+
+    genome_extractor = GenomeSequenceExtractor('./root/data/hg19.fa')
+    ref_seq, alt_seq = genome_extractor.extract_sequence_from_record(
+        record,
+        sequence_length=1024  # Default: 1024bp (±512bp around variant)
+    )
+
+REFERENCE GENOME HANDLING:
+    - Default: hg19 (GRCh37)
+    - Auto-downloads from UCSC if not present:
+      http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz
+    - Chromosome aliases loaded from chromAlias.txt for NCBI<->UCSC mapping
+    - Indexed with pyfaidx for fast random access
+
+EDGE CASE HANDLING:
+    - Chromosome boundaries: N-padding for sequences extending past ends
+    - Invalid chromosomes: Returns (None, None), skipped during loading
+    - Chromosome name normalization: Handles both 'chr7' and '7' formats
+
+Internal implementation using kipoiseq:
+    # Create variant object
+    variant = kipoiseq.Variant(f"chr{chr}", pos, ref, alt, id=f'rs{variant_id}')
+
+    # Create interval centered on variant
+    interval = kipoiseq.Interval(variant.chrom, variant.start, variant.start)
+    interval = interval.resize(sequence_length)  # Expand to 1024bp
+
+    # Extract sequences using VariantSeqExtractor
+    seq_extractor = kipoiseq.extractors.VariantSeqExtractor(reference_sequence=fasta)
+    center = interval.center() - interval.start
+    reference = seq_extractor.extract(interval, [], anchor=center)
+    alternate = seq_extractor.extract(interval, [variant], anchor=center)
+
+Output:
+    ref_seq = "ATCGATCG...GCTAGCTA"  # 1024bp reference sequence
+    alt_seq = "ATCGTTCG...GCTAGCTA"  # 1024bp alternate (variant applied at center)
+
+
+STEP 3: DATA WRAPPER OUTPUT FORMAT
+----------------------------------
+Each data wrapper returns a list of (features, label) tuples:
+
+    data = [
+        ([ref_seq, alt_seq, annotation], label),
+        ([ref_seq, alt_seq, annotation], label),
+        ...
+    ]
+
+Where:
+    - ref_seq: Reference DNA sequence string (1024 chars)
+    - alt_seq: Alternate DNA sequence string (1024 chars)
+    - annotation: Context string (variant_type, organism, disease, etc.)
+    - label: Task-specific (class ID for classification, float for regression)
+
+
+STEP 4: TOKENIZATION
+--------------------
+Source: src/pack_tunable_model/hf_dataloader.py
+Classes: ClinVarDataset, MAVESDataset
+
+DNA sequences are tokenized using the model's tokenizer:
+
+    # Tokenize reference sequences (batch)
+    ref_output = tokenizer(
+        ref_sequences,           # List of DNA strings
+        return_tensors="pt",
+        padding="longest",       # Pad to longest in batch
+        max_length=seq_length,   # Truncate if needed (1024)
+        truncation=True,
+    )
+
+    # Tokenize alternate sequences (batch)
+    alt_output = tokenizer(
+        alt_sequences,
+        return_tensors="pt",
+        padding="longest",
+        max_length=seq_length,
+        truncation=True,
+    )
+
+TOKENIZER DETAILS BY MODEL:
+    - Nucleotide Transformer: 6-mer tokenization
+    - DNABERT-2: BPE tokenization
+    - HyenaDNA: Character-level tokenization
+    - Others: Model-specific (loaded from HuggingFace with trust_remote_code)
+
+Output tensors:
+    - ref_input_ids:      [batch_size, seq_len] - Token IDs
+    - ref_attention_mask: [batch_size, seq_len] - 1=real, 0=padding
+    - alt_input_ids:      [batch_size, seq_len] - Token IDs
+    - alt_attention_mask: [batch_size, seq_len] - 1=real, 0=padding
+
+
+STEP 5: DATA COLLATION
+----------------------
+Source: src/pack_tunable_model/hf_dataloader.py
+Class: DataCollator
+
+Batches are collated with dynamic padding:
+
+    class DataCollator:
+        def __call__(self, instances):
+            # Pad ref_input_ids to longest in batch
+            ref_input_ids = pad_sequence(ref_ids, padding_value=pad_token_id)
+
+            # Pad alt_input_ids to longest in batch
+            alt_input_ids = pad_sequence(alt_ids, padding_value=pad_token_id)
+
+            # Create attention masks (1 for real tokens, 0 for padding)
+            ref_attention_mask = ref_input_ids.ne(pad_token_id)
+            alt_attention_mask = alt_input_ids.ne(pad_token_id)
+
+            # Convert labels (float for regression, long for classification)
+            labels = torch.tensor(labels, dtype=torch.float if regression else torch.long)
+
+Output batch dictionary:
+    {
+        "ref_input_ids":      [B, max_seq_len],
+        "alt_input_ids":      [B, max_seq_len],
+        "ref_attention_mask": [B, max_seq_len],
+        "alt_attention_mask": [B, max_seq_len],
+        "labels":             [B],
+        "task_names":         [str, str, ...]
+    }
+
+
+STEP 6: MODEL FORWARD PASS
+--------------------------
+Source: src/pack_tunable_model/wrap_model.py
+Class: WrappedModelWithClassificationHead
+
+ARCHITECTURE:
+    base_model (frozen or finetuned)
+         |
+         v
+    [Encode ref_seq] --> ref_hidden (pooled)
+    [Encode alt_seq] --> alt_hidden (pooled)
+         |
+         v
+    [Comparison: delta or concat]
+         |
+         v
+    classification_head (MLP)
+         |
+         v
+    logits --> loss
+
+POOLING STRATEGIES (configured in WrappedModelWithClassificationHead):
+    - "cls":  First token pooling (default for encoders)
+              hidden_states[:, 0, :]
+
+    - "mean": Mean pooling over sequence (masked)
+              sum(hidden * mask) / sum(mask)
+
+    - "last": Last non-padding token (used for decoders with --decoder flag)
+              hidden_states[batch_idx, seq_len-1, :]
+
+    - "cov":  Covariance-based pooling (Dooms et al. 2026)
+              Uses learnable projections L, R to compute:
+              cov = (L @ hidden)^T @ (R @ hidden) / seq_len
+              Output: flattened cov_dim x cov_dim matrix
+
+COMPARISON MODES (--comparison_mode flag):
+    - "delta":  embedding = alt_hidden - ref_hidden
+                Captures effect direction and magnitude
+
+    - "concat": embedding = [ref_hidden, alt_hidden]
+                Preserves both representations (doubles input size)
+
+CLASSIFICATION HEAD (MLP):
+    nn.Sequential(
+        nn.Linear(hidden_size, 128),    # or hidden_size*2 for concat
+        nn.ReLU(),
+        nn.Dropout(0.1),
+        nn.Linear(128, num_classes)     # 1 for regression, N for classification
+    )
+
+LOSS COMPUTATION:
+    if num_classes == 1:  # Regression
+        loss = MSELoss(logits.squeeze(), labels.float())
+    else:                 # Classification
+        loss = CrossEntropyLoss(logits, labels.long())
+
+MODEL-SPECIFIC HANDLING:
+    - HyenaDNA/Caduceus/Mamba: Skip attention_mask (not supported)
+    - DNABERT2: Handle tuple outputs (first element is hidden states)
+    - Others: Use standard HuggingFace output format
+
+
+================================================================================
+3. AVAILABLE DATASETS
+================================================================================
+
+DATASET WRAPPERS (src/dataloader/data_wrapper.py):
+---------------------------------------------------
+
++---------------+------------------------+----------------+--------------------------------+
+| Dataset       | Class                  | Task Type      | Description                    |
++---------------+------------------------+----------------+--------------------------------+
+| ClinVar       | ClinVarDataWrapper     | Classification | Pathogenicity (CLNSIG) or      |
+|               |                        |                | Disease prediction (CLNDN)     |
+|               |                        |                | 30K+ curated clinical variants |
++---------------+------------------------+----------------+--------------------------------+
+| MAVE-DB       | MAVEDataWrapper        | Regression     | Deep mutational scanning       |
+|               |                        |                | Functional scores from DMS,    |
+|               |                        |                | MPRA, and other assays         |
++---------------+------------------------+----------------+--------------------------------+
+| GWAS Catalog  | GWASDataWrapper        | Regression     | Genome-wide association SNPs   |
+|               |                        |                | P-value and effect prediction  |
++---------------+------------------------+----------------+--------------------------------+
+| eQTL          | eQTLDataWrapper        | Classification | Expression QTL effects         |
+|               |                        |                | GTEx tissue-specific data      |
+|               |                        |                | Targets: slope (+/-), p-value  |
++---------------+------------------------+----------------+--------------------------------+
+| sQTL          | sQTLDataWrapper        | Classification | Splice QTL effects             |
+|               |                        |                | Targets: slope, p-value,       |
+|               |                        |                | splice_change direction        |
++---------------+------------------------+----------------+--------------------------------+
+| Gene KO       | GeneKoDataWrapper      | Regression     | CRISPR knockout fitness        |
+|               |                        |                | Cell line viability scores     |
++---------------+------------------------+----------------+--------------------------------+
+| CellPassport  | CellPassportDataWrapper| Classification | Cancer cell line genomics      |
+|               |                        |                | Classes: DRV, CPV, NPGL        |
++---------------+------------------------+----------------+--------------------------------+
+| OLIDA         | OligogenicDataWrapper  | Classification | Oligogenic disease prediction  |
+|               |                        |                | 2-variant combinations         |
+|               |                        |                | Binary: disease/no disease     |
++---------------+------------------------+----------------+--------------------------------+
+| SMART         | SmartVariantDataWrapper| Class/Reg      | Cardiac variant pathogenicity  |
+|               |                        |                | Disease class or SMART score   |
++---------------+------------------------+----------------+--------------------------------+
+| Finemapping   | FinemapDataWrapper     | Classification | GWAS credible set membership   |
+|               |                        |                | SuSiE-based statistical mapping|
++---------------+------------------------+----------------+--------------------------------+
+
+DATA SOURCES:
+-------------
+ClinVar:      https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh37/
+MAVE-DB:      https://api.mavedb.org/api/v1 (REST API)
+GWAS Catalog: NCBI TSV dumps (gwas_catalog_v1.0.2-associations)
+GTEx:         Gene expression quantification files (Whole_Blood default)
+1000 Genomes: LD reference panel for finemapping (EUR population)
+
+FILE FORMATS:
+-------------
+- VCF:     ClinVar, GTEx QTL, CellPassport
+- CSV/TSV: SMART data, GWAS catalog, summary statistics
+- JSONL:   Cached preprocessed data (./root/data/maves.jsonl)
+- FASTA:   Reference genomes (hg19.fa, hg38.fa)
+
+
+================================================================================
+4. DATASET-SPECIFIC DATA LOADING
+================================================================================
+
+CLINVAR DATA LOADING:
+---------------------
+Source: src/datasets/clinvar/load_clinvar.py
+Wrapper: ClinVarDataWrapper
+
+Pipeline:
+    1. Download VCF from NCBI FTP if not cached
+    2. Parse VCF records using cyvcf2
+    3. Extract: CHROM, POS, REF, ALT, CLNSIG, CLNDN, CLNVC
+    4. Filter out: Uncertain_significance, Conflicting_classifications, not_provided
+    5. Generate sequences via GenomeSequenceExtractor
+    6. Return [(ref, alt, variant_type), label]
+
+Label Processing:
+    CLNSIG targets:
+        - Benign, Likely_benign -> 'Benign' (class 0)
+        - Pathogenic, Likely_pathogenic -> 'Pathogenic' (class 1)
+
+    CLNDN targets:
+        - Disease names cleaned (trailing numbers removed)
+        - e.g., 'Breast_cancer_2' -> 'Breast_cancer'
+
+Variant Types (CLNVC):
+    - single_nucleotide_variant
+    - deletion
+    - insertion
+    - duplication
+
+
+MAVES DATA LOADING:
+-------------------
+Source: src/datasets/maves/load_maves.py
+Wrapper: MAVEDataWrapper
+
+Pipeline:
+    1. Fetch from MAVE-DB API or load cached JSONL
+    2. Download experiment metadata and variant scores
+    3. Apply filters (genes, methods, regions, variant types)
+    4. Extract sequences for each variant
+    5. Return [(ref, alt, annotation), score]
+
+MAVE METHOD CATEGORIES (src/datasets/maves/mave_utils.py):
+    DMS:                  DMS-BarSeq, DMS-TileSeq, deep mutational scan
+    REGULATORY:           MPRA, saturation mutagenesis
+    BIOPHYSICAL_STABILITY: trypsin digestion, chymotrypsin digestion
+    RNA_ABUNDANCE:        RNA abundance assays
+    PROTEIN_ABUNDANCE:    Protein level measurements
+    PROTEIN_TRANSLATION:  Polysome profiling
+    ESCAPE:               Viral escape assays
+    COMPUTATIONAL:        Enrich2, regression scores, combined scores
+
+Filtering Options:
+    filter_genes:              ['BRCA1', 'TP53', ...]
+    experimental_methods:      ['DMS', 'MPRA', ...] or categories
+    region_type:               'coding' | 'non-coding' | 'all'
+    variant_types:             ['sub', 'del', 'ins']
+    seq_length_range:          (min_len, max_len)
+    max_samples_per_experiment: Limit per study (prevents bias)
+
+Annotation String Format:
+    "ExperimentID, Gene: BRCA1, Method: DMS-BarSeq, HGVS Prefix: c, Variant Type: sub"
+
+
+SMART DATA LOADING:
+-------------------
+Wrapper: SmartVariantDataWrapper
+
+Pipeline:
+    1. Load CSV with cardiac variant data
+    2. Extract: CHROM, start, ref_allele, alt_allele, smart_score
+    3. Generate sequences via GenomeSequenceExtractor
+    4. Apply threshold-based filtering
+    5. Return [(ref, alt, None), label]
+
+Targets:
+    'score':   Regression on SMART pathogenicity score (0-100)
+    'disease': Classification into 4 cardiac disease classes
+
+Disease Classes:
+    - Aortopathy
+    - Cardiomyopathy
+    - Arrhythmia
+    - Structural defect
+
+Threshold Filtering (--threshold):
+    - For disease mode: Only include variants with smart_score >= threshold
+    - Ensures high-confidence pathogenic variants per class
+    - min_samples_per_class: Fallback to top-N if threshold too strict
+
+
+eQTL DATA LOADING:
+------------------
+Wrapper: eQTLDataWrapper
+Source: GTEx v8 data
+
+Pipeline:
+    1. Load GTEx eQTL significant pairs
+    2. Extract variant records with slope and p-values
+    3. Generate sequences
+    4. Return [(ref, alt, tissue), label]
+
+Targets:
+    'slope':  Binary classification (positive/negative effect direction)
+    'p_val':  Binary classification (significant vs not, based on threshold)
+
+Default Tissue: Whole_Blood (ORGANISM variable)
+
+
+sQTL DATA LOADING:
+------------------
+Wrapper: sQTLDataWrapper
+Source: GTEx v8 splice QTL data
+
+Pipeline:
+    1. Load GTEx sQTL significant pairs
+    2. Extract splice junction phenotype info
+    3. Calculate splice position distance change
+    4. Generate sequences
+    5. Return [(ref, alt, tissue), label]
+
+Targets:
+    'slope':         Effect direction (positive/negative)
+    'p_val':         Significance classification
+    'splice_change': Splice junction distance change direction
+
+
+OLIDA DATA LOADING:
+-------------------
+Wrapper: OligogenicDataWrapper
+Source: OLIDA database (oligogenic disease combinations)
+
+Pipeline:
+    1. Load variant combinations with FINALmeta >= 1
+    2. For each combination, extract Variant_1 and Variant_2
+    3. Generate sequences for both variants
+    4. Load negative examples (random non-disease pairs)
+    5. Return paired variant data with binary labels
+
+Output Modes:
+    paired=True:  Dictionary with variant1_ref/alt, variant2_ref/alt
+    paired=False: Concatenated sequences with 'N' separator
+
+
+FINEMAPPING DATA LOADING:
+-------------------------
+Wrapper: FinemapDataWrapper
+Source: GWAS summary statistics + 1000 Genomes LD
+
+Pipeline:
+    1. Load summary statistics (GWAS Catalog trait or custom TSV)
+    2. Parse locus (e.g., "10:114750000-114850000")
+    3. Compute LD matrix from 1000 Genomes VCF
+    4. Run SuSiE-inf finemapping
+    5. Compute PIPs and credible sets
+    6. Generate binary labels (in CS = 1, not in CS = 0)
+    7. Extract sequences for each variant
+
+Key Parameters:
+    coverage:   Credible set coverage (default: 0.95)
+    L:          Max causal signals (default: 10)
+    purity:     Min LD correlation for CS (default: 0.5)
+    n_samples:  GWAS sample size (required)
+
+Output Annotation: "chr:pos:cs_id:pip" (e.g., "10:114780000:cs1:0.8234")
+
+
+================================================================================
+5. SUPPORTED GENOMIC FOUNDATION MODELS
+================================================================================
+
++------------------------+----------+--------------------------------------------+--------+
+| Model                  | Type     | HuggingFace ID                             | Params |
++------------------------+----------+--------------------------------------------+--------+
+| Nucleotide Transformer | Encoder  | InstaDeepAI/nucleotide-transformer-v2-     | 500M   |
+| v2                     |          | 500m-multi-species                         |        |
++------------------------+----------+--------------------------------------------+--------+
+| DNABERT-2              | Encoder  | zhihan1996/DNABERT-2-117M                  | 117M   |
++------------------------+----------+--------------------------------------------+--------+
+| HyenaDNA               | Decoder  | LongSafari/hyenadna-medium-160k-seqlen-hf  | Medium |
++------------------------+----------+--------------------------------------------+--------+
+| Omni-DNA               | Decoder  | zehui127/Omni-DNA-116M                     | 116M   |
++------------------------+----------+--------------------------------------------+--------+
+| Caduceus               | Mamba    | kuleshov-group/caduceus-ph_seqlen-131k_    | -      |
+|                        |          | d_model-256_n_layer-16                     |        |
++------------------------+----------+--------------------------------------------+--------+
+| GENA-LM                | Encoder  | AIRI-Institute/gena-lm-bert-base-t2t       | Base   |
++------------------------+----------+--------------------------------------------+--------+
+| GPN-Star               | MLM      | songlab/gpn-star-hg38-v100-200m            | 200M   |
++------------------------+----------+--------------------------------------------+--------+
+| LucaOne                | Causal   | LucaGroup/LucaOne-default-step36M          | 36M    |
++------------------------+----------+--------------------------------------------+--------+
+
+MODEL LOADING LOGIC:
+    1. Check for local model in ./root/models/{model_type}
+    2. If not found, use HuggingFace model ID (requires pre-cached locally)
+    3. Load with trust_remote_code=True, local_files_only=True
+    Note: Models must be pre-downloaded to HuggingFace cache before training
+
+POOLING BY MODEL TYPE:
+    Encoder (NT, DNABERT2, GENA-LM, GPN-Star):
+        - Default: CLS token (first position)
+        - Uses attention masks for proper handling
+
+    Decoder (HyenaDNA, Caduceus, Omni-DNA):
+        - Default: Last token pooling
+        - Attention mask skipped (not supported)
+        - Requires --decoder flag
+
+HIDDEN SIZE BY MODEL (approximate, varies by model variant):
+    NT v2-500M:      1024
+    DNABERT-2:       768
+    HyenaDNA Medium: 256
+    GENA-LM Base:    768
+    Fallback:        768 (if config unavailable)
+
+
+================================================================================
+6. CONFIGURATION FILES
+================================================================================
+
+DISTRIBUTED TRAINING CONFIGS (configs/):
+----------------------------------------
+ddp.yaml              - Data Distributed Parallel
+                        num_processes: 4, mixed_precision: bf16
+
+ddp_2node.yaml        - Multi-node DDP
+                        2 machines, 4 GPUs each
+
+deepspeed_zero1.yaml  - DeepSpeed ZeRO Stage 1
+                        Optimizer state partitioning
+
+deepspeed_zero2.yaml  - DeepSpeed ZeRO Stage 2
+                        + Gradient partitioning
+
+fsdp.yaml             - Fully Sharded Data Parallel
+                        Full model sharding
+
+TASK DEFINITIONS (configs/):
+----------------------------
+finetune.yaml             - Main task configurations
+finetune_nt.yaml          - Nucleotide Transformer tasks
+finetune_ntv2.yaml        - Nucleotide Transformer v2 tasks
+finetune_dnabert2.yaml    - DNABERT2-specific tasks
+finetune_hyena.yaml       - HyenaDNA-specific tasks
+finetune_var_context.yaml - Variable context length tasks
+finetune_sweep.yaml       - Hyperparameter sweep configs
+
+EXAMPLE TASK CONFIG:
+    mave_score_nt:
+      class: MAVEDataWrapper
+      task: regression
+      target: score
+      Seq_length: 1024
+      model_initiator_name: InstaDeepAI/nucleotide-transformer-v2-500m
+      output_size: 1
+
+
+================================================================================
+7. COMMAND-LINE ARGUMENTS
+================================================================================
+
+MODEL AND TASK:
+---------------
+--model              Model architecture
+                     Options: 'nt', 'dnabert2', 'hyenadna', 'omni_dna_116m',
+                              'caduceus', 'gena-lm', 'gpn-star', 'luca'
+
+--task               Task name
+                     Options: 'CLNSIG', 'CLNDN', 'MAVES', etc.
+
+--decoder            Flag for autoregressive models (HyenaDNA, Omni-DNA)
+                     Changes pooling to last-token
+
+HYPERPARAMETERS:
+----------------
+--learning_rate      Learning rate (default: 0.000005)
+--batch_size         Per-device batch size (default: 8)
+--num_epochs         Training epochs (default: 10)
+--max_grad_norm      Gradient clipping (default: 1.0)
+--num_workers        DataLoader workers (default: 8)
+
+MODEL OPTIONS:
+--------------
+--comparison_mode         'delta' (subtraction) or 'concat' (concatenation)
+--gradient_checkpointing  Enable memory-efficient training
+
+MAVES FILTERS:
+--------------
+--filter_genes            Comma-separated gene list ('BRCA1,TP53')
+--experimental_methods    Comma-separated methods ('DMS,MPRA')
+--region_type             'coding', 'non-coding', or 'all'
+--variant_types           Comma-separated types ('sub,del,ins')
+--seq_len_min             Minimum sequence length
+--seq_len_max             Maximum sequence length
+--max_samples_per_experiment  Limit samples per study
+--normalize_scores        Z-score normalize regression targets
+
+SMART OPTIONS:
+--------------
+--threshold              Pathogenicity score threshold (default: 65.0)
+--min_samples_per_class  Minimum samples per disease class
+
+CHECKPOINTING:
+--------------
+--pretrained_model   Path to pretrained checkpoint
+--test_only          Skip training, evaluate only
+
+
+================================================================================
+8. EXAMPLE TRAINING WORKFLOWS
+================================================================================
+
+BASIC CLINVAR TRAINING:
+-----------------------
+accelerate launch \
+  --config_file configs/ddp.yaml \
+  -m src.pack_tunable_model.hf_trainer \
+  --model "nt" \
+  --task "CLNSIG" \
+  --batch_size 8 \
+  --num_epochs 10
+
+MAVES WITH FILTERING:
+---------------------
+accelerate launch \
+  --config_file configs/ddp.yaml \
+  -m src.pack_tunable_model.hf_trainer \
+  --model "nt" \
+  --task "MAVES" \
+  --filter_genes "BRCA1,TP53,PTEN" \
+  --experimental_methods "DMS" \
+  --region_type "coding" \
+  --batch_size 8 \
+  --num_epochs 20
+
+DECODER MODEL (HyenaDNA):
+-------------------------
+accelerate launch \
+  --config_file configs/ddp.yaml \
+  -m src.pack_tunable_model.hf_trainer \
+  --model "hyenadna" \
+  --decoder \
+  --task "CLNSIG" \
+  --batch_size 4
+
+SMART DISEASE CLASSIFICATION:
+-----------------------------
+python -m src.pack_tunable_model.hf_trainer_smart \
+  --csv_path "./data/smart_variants.csv" \
+  --target "disease" \
+  --threshold 65.0 \
+  --model "nt"
+
+
+TRAINING PROCESS STEPS:
+-----------------------
+1.  Load model + tokenizer from HuggingFace or local cache
+2.  Initialize WrappedModelWithClassificationHead
+3.  Load dataset wrapper (ClinVarDataWrapper, MAVEDataWrapper, etc.)
+4.  Download/load raw data (VCF, API, CSV)
+5.  Parse variant records into standardized format
+6.  Extract reference + alternate sequences from FASTA
+7.  Tokenize sequences into input tensors
+8.  Create train/val/test splits (val_split=0.1, test_split=0.1)
+9.  Initialize SafeDistributedTrainer with data collator
+10. Training loop with evaluation every epoch
+11. Save best model based on primary metric
+12. Final evaluation on test set
+
+OUTPUT LOCATIONS:
+-----------------
+Results:     ./root/models/test_results_clinvar.csv
+Checkpoints: ./root/models/pretrain_model_{model}_{task}{filter_suffix}/
+
+Checkpoint Contents:
+    - pytorch_model.bin (base model weights)
+    - classification_head.bin (MLP head weights)
+    - config.json (model configuration)
+    - tokenizer files
+
+
+================================================================================
+9. METRICS AND EVALUATION
+================================================================================
+
+CLASSIFICATION METRICS:
+-----------------------
+- Accuracy:                   Correct predictions / Total
+- F1 Score:                   Harmonic mean of precision and recall
+- Matthews Correlation:       Primary metric (handles class imbalance)
+- Precision:                  TP / (TP + FP)
+- Recall:                     TP / (TP + FN)
+
+REGRESSION METRICS:
+-------------------
+- MSE:                        Mean Squared Error
+- MAE:                        Mean Absolute Error
+- R-squared:                  Coefficient of determination
+- Spearman Correlation:       Primary metric (rank correlation)
+
+METRIC SELECTION:
+-----------------
+Classification tasks: metric_for_best_model = "matthews_correlation"
+Regression tasks:     metric_for_best_model = "spearman_correlation"
+
+================================================================================
+10. DIRECTORY STRUCTURE
+================================================================================
+
+genomic-FM/
+├── configs/                    # Training configurations
+│   ├── ddp.yaml               # Distributed training
+│   ├── deepspeed_*.yaml       # DeepSpeed configs
+│   └── finetune*.yaml         # Task definitions
+├── root/
+│   ├── data/                  # Downloaded data cache
+│   │   ├── hg19.fa           # Reference genome
+│   │   ├── clinvar_*.vcf     # ClinVar VCF
+│   │   ├── maves.jsonl       # MAVE-DB cache
+│   │   └── 1000G/            # LD reference panel
+│   └── models/               # Saved checkpoints
+├── slurm/                    # SLURM job scripts
+├── src/
+│   ├── dataloader/
+│   │   └── data_wrapper.py   # Dataset wrappers
+│   ├── datasets/
+│   │   ├── clinvar/          # ClinVar loading
+│   │   ├── maves/            # MAVE-DB loading
+│   │   ├── finemapping/      # SuSiE integration
+│   │   ├── qtl/              # eQTL/sQTL loading
+│   │   ├── gwas/             # GWAS catalog loading
+│   │   ├── gene_ko/          # Gene knockout data
+│   │   ├── cellpassport/     # Cell line genomics
+│   │   └── olida/            # Oligogenic disease data
+│   ├── pack_tunable_model/
+│   │   ├── hf_trainer.py     # Main trainer
+│   │   ├── hf_dataloader.py  # Dataset classes
+│   │   └── wrap_model.py     # Model wrapper
+│   └── sequence_extractor.py # FASTA extraction

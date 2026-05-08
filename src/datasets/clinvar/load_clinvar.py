@@ -96,3 +96,7 @@ def read_vcf(vcf_file_path, num_records=5, all_records=False):
             break
 
     return records
+
+
+if __name__ == '__main__':
+    download_file()

@@ -8,6 +8,8 @@ from typing import Dict, Sequence, List, Tuple, Optional
 from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper, set_disease_subset_from_file
 import random
 import numpy as np
+from itertools import compress
+import os
 
 
 # =============================================================================
@@ -304,8 +306,23 @@ def split_train_val(dataset_train, val_split=0.1, seed=42):
 
     return dataset_train_subset, dataset_val_subset
 
+
+def generate_keep_for_lira(dataset_size, pkeep=0.5, expid=None, num_experiments=None, seed=0):
+    np.random.seed(seed)
+    if num_experiments is not None and expid < num_experiments:
+        keep = np.random.uniform(0, 1, size=(num_experiments, dataset_size))
+        order = keep.argsort(0)
+        keep = order < int(pkeep * num_experiments)
+        keep = np.array(keep[expid], dtype=bool)
+    else:
+        keep = np.random.uniform(0, 1, size=dataset_size) <= pkeep
+
+    return keep
+
+
+
 def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLNDN', disease_subset_file=None,
-                                    seq_length=1024, val_split=0.1, test_split=0.1, seed=42):
+                                    seq_length=1024, val_split=0.25, test_split=0.25, seed=42,  exp_id=0, num_experiments=64, keep_dir=None,):
     """
     3377987, Train: 6381, Validation: 708, Test: 787
     Load ClinVar datasets for multi-task learning.
@@ -337,16 +354,29 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
 
     # Shuffle data
     random.seed(seed)
-    random.shuffle(data)
+    list_of_indices = list(range(len(data)))
+
+    if os.path.exists(keep_dir):
+        keep = np.load(keep_dir)
+    else:
+        keep = generate_keep_for_lira(len(data), pkeep=1-val_split-test_split, expid=exp_id, num_experiments=num_experiments, seed=0)
+        if keep_dir is not None:
+            np.save(keep_dir, keep)
+        else:
+            print("keep dir is not provided")
+
+    train_data = list(compress(data, keep))
+    val_test_indicies = list(compress(list_of_indices, ~keep))
+
     # Split data into train, validation, and test sets
     total_size = len(data)
     test_size = int(total_size * test_split)
-    val_size = int((total_size - test_size) * val_split)
-    train_size = total_size - test_size - val_size
 
-    train_data = data[:train_size]
-    val_data = data[train_size:train_size + val_size]
-    test_data = data[train_size + val_size:]
+    test_indicies = val_test_indicies[:test_size]
+    val_indicies = val_test_indicies[test_size:]
+
+    val_data = [data[i] for i in val_indicies]
+    test_data = [data[i] for i in test_indicies]
 
     print(f"Data splits - Train: {len(train_data)}, Validation: {len(val_data)}, Test: {len(test_data)}")
 
@@ -381,6 +411,10 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
     if test_data:
         test_dataset = ClinVarDataset(test_data, tokenizer, task_name, label_to_id)
         multitask_datasets[f"{task_name}_test"] = test_dataset
+
+    if keep_dir is not None:
+        full_dataset = ClinVarDataset(data, tokenizer, task_name, label_to_id)
+        multitask_datasets[f"{task_name}_full"] = full_dataset
 
     # Track task info
     task_num_classes = {task_name: num_labels}
