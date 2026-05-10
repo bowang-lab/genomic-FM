@@ -5,7 +5,7 @@ import datasets as hf_datasets
 import logging
 import typing
 from typing import Dict, Sequence, List, Tuple, Optional
-from ..dataloader.data_wrapper import ClinVarDataWrapper,SmartVariantDataWrapper,MAVEDataWrapper, set_disease_subset_from_file
+from ..dataloader.data_wrapper import ClinVarDataWrapper, ClinVarGroupedDataWrapper, SmartVariantDataWrapper, MAVEDataWrapper, set_disease_subset_from_file
 import random
 import numpy as np
 from itertools import compress
@@ -726,6 +726,187 @@ class ClinVarDataset(Dataset):
 
         return item
 
+
+class ClinVarGroupedDataset(Dataset):
+    """
+    Dataset for ClinVar variants grouped by gene for privacy research.
+
+    Each sample includes group_id (gene) for privacy mechanisms that need
+    to account for dependencies between related variants.
+    """
+
+    def __init__(self, data, tokenizer, task_name, label_to_id, group_ids=None):
+        """
+        Args:
+            data: List of tuples ([ref, alt, variant_type], label, group_id, gene_name)
+            tokenizer: Tokenizer for DNA sequences
+            task_name: Name of the task (e.g., 'CLNSIG_grouped')
+            label_to_id: Dict mapping label names to IDs
+            group_ids: Optional pre-computed group IDs (if data format differs)
+        """
+        super().__init__()
+        self.task_name = task_name
+        self.num_labels = len(set(label_to_id.values()))
+
+        ref_sequences = []
+        alt_sequences = []
+        labels = []
+        self.group_ids = []
+        self.gene_names = []
+
+        for item in data:
+            # Handle format: ([ref, alt, variant_type], label, group_id, gene_name)
+            x, label, group_id, gene_name = item
+            ref, alt, _ = x
+
+            ref_sequences.append(ref)
+            alt_sequences.append(alt)
+            labels.append(label_to_id.get(label, label))  # Handle both int and str labels
+            self.group_ids.append(group_id)
+            self.gene_names.append(gene_name)
+
+        # Tokenize sequences
+        ref_output = tokenizer(
+            ref_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        )
+        alt_output = tokenizer(
+            alt_sequences,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        )
+
+        self.ref_input_ids = ref_output["input_ids"]
+        self.ref_attention_mask = ref_output.get("attention_mask")
+        self.alt_input_ids = alt_output["input_ids"]
+        self.alt_attention_mask = alt_output.get("attention_mask")
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.ref_input_ids)
+
+    def __getitem__(self, i):
+        item = {
+            "ref_input_ids": self.ref_input_ids[i],
+            "alt_input_ids": self.alt_input_ids[i],
+            "labels": self.labels[i],
+            "task_name": self.task_name,
+            "group_id": self.group_ids[i],
+        }
+
+        if self.ref_attention_mask is not None:
+            item["ref_attention_mask"] = self.ref_attention_mask[i]
+        if self.alt_attention_mask is not None:
+            item["alt_attention_mask"] = self.alt_attention_mask[i]
+
+        return item
+
+
+def return_clinvar_grouped_dataset(
+    tokenizer: PreTrainedTokenizer,
+    seq_length: int = 1024,
+    val_split: float = 0.15,
+    test_split: float = 0.15,
+    seed: int = 42,
+    min_variants_per_gene: int = 5,
+    max_variants_per_gene: int = 50,
+    balance_classes: bool = True,
+    use_default_dir: bool = False,
+    num_records: int = 100000,
+    all_records: bool = False,
+):
+    """
+    Load ClinVar dataset grouped by gene for privacy research.
+
+    Each variant has a group_id corresponding to its gene, enabling
+    privacy mechanisms that account for biological dependencies.
+
+    Args:
+        tokenizer: Tokenizer for DNA sequences
+        seq_length: Sequence context length
+        val_split: Validation split ratio
+        test_split: Test split ratio
+        seed: Random seed
+        min_variants_per_gene: Minimum variants per gene to include
+        max_variants_per_gene: Maximum variants per gene
+        balance_classes: Whether to balance pathogenic/benign within genes
+        use_default_dir: Use default data directory
+        num_records: Number of records to load
+        all_records: Load all records
+
+    Returns:
+        datasets: Dict with 'train', 'CLNSIG_grouped_val', 'CLNSIG_grouped_test'
+        task_num_classes: Dict with task name -> num classes
+        max_seq_len: Maximum sequence length
+        gene_to_id: Dict mapping gene names to IDs
+        stats: Dataset statistics
+    """
+    from sklearn.model_selection import train_test_split
+
+    tokenizer.model_max_length = seq_length
+    task_name = 'CLNSIG_grouped'
+
+    # Load grouped data
+    wrapper = ClinVarGroupedDataWrapper(
+        num_records=num_records,
+        all_records=all_records,
+        use_default_dir=use_default_dir,
+        min_variants_per_gene=min_variants_per_gene,
+        max_variants_per_gene=max_variants_per_gene,
+    )
+    data, gene_to_id, stats = wrapper.get_data(
+        Seq_length=seq_length,
+        balance_classes=balance_classes
+    )
+
+    # Label mapping (already integers from wrapper)
+    label_to_id = {0: 0, 1: 1}  # benign=0, pathogenic=1
+    num_labels = 2
+
+    # Stratified split by label
+    random.seed(seed)
+    labels = [item[1] for item in data]
+
+    train_data, temp_data = train_test_split(
+        data,
+        test_size=val_split + test_split,
+        stratify=labels,
+        random_state=seed
+    )
+
+    temp_labels = [item[1] for item in temp_data]
+    val_ratio = val_split / (val_split + test_split)
+    val_data, test_data = train_test_split(
+        temp_data,
+        test_size=1 - val_ratio,
+        stratify=temp_labels,
+        random_state=seed
+    )
+
+    print(f"Grouped ClinVar splits - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+
+    # Print group distribution
+    from collections import Counter
+    train_groups = Counter([item[2] for item in train_data])
+    print(f"  Train covers {len(train_groups)} genes")
+
+    # Create datasets
+    datasets = {
+        'train': ClinVarGroupedDataset(train_data, tokenizer, task_name, label_to_id),
+        f'{task_name}_val': ClinVarGroupedDataset(val_data, tokenizer, task_name, label_to_id),
+        f'{task_name}_test': ClinVarGroupedDataset(test_data, tokenizer, task_name, label_to_id),
+    }
+
+    task_num_classes = {task_name: num_labels}
+
+    return datasets, task_num_classes, seq_length, gene_to_id, stats
+
+
 class MultiTaskDataCollator:
     """Collate examples for multi-task supervised fine-tuning with separate reference and alternative sequences."""
 
@@ -738,6 +919,7 @@ class MultiTaskDataCollator:
         ref_attention_masks, alt_attention_masks = [], []
         labels = []
         task_names = []
+        group_ids = []
 
         for instance in instances:
             # Handle reference sequences
@@ -753,6 +935,10 @@ class MultiTaskDataCollator:
             # Handle labels and task names
             labels.append(instance["labels"])
             task_names.append(instance.get("task_name", "unknown_task"))
+
+            # Handle group_ids for grouped datasets (privacy research)
+            if "group_id" in instance:
+                group_ids.append(instance["group_id"])
 
         # Pad reference input_ids
         ref_input_ids = torch.nn.utils.rnn.pad_sequence(
@@ -796,6 +982,10 @@ class MultiTaskDataCollator:
             )
         else:
             batch["alt_attention_mask"] = alt_input_ids.ne(self.tokenizer.pad_token_id)
+
+        # Add group_ids if present (for grouped datasets used in privacy research)
+        if group_ids:
+            batch["group_ids"] = torch.tensor(group_ids, dtype=torch.long)
 
         return batch
 

@@ -447,6 +447,291 @@ class ClinVarDataWrapper:
         return data
 
 
+class ClinVarGroupedDataWrapper:
+    """
+    ClinVar data wrapper that groups variants by gene or cardiac panel for privacy research.
+
+    Returns variants with group_id for studying privacy-utility tradeoffs
+    with biologically meaningful dependency structure.
+
+    Grouping modes:
+        - 'gene': Each gene is a group (fine-grained)
+        - 'cardiac_panel': Groups by cardiac gene panel (CM, ARM, OTHER)
+        - 'cardiac_gene': Only cardiac genes, grouped by gene
+    """
+
+    # Cardiac gene panels from CardioBoost
+    CM_GENES = [  # Cardiomyopathy (16 genes)
+        'ACTC1', 'DES', 'GLA', 'LAMP2', 'LMNA', 'MYBPC3', 'MYH7', 'MYL2',
+        'MYL3', 'PLN', 'PRKAG2', 'PTPN11', 'SCN5A', 'TNNI3', 'TNNT2', 'TPM1'
+    ]
+    ARM_GENES = [  # Arrhythmia (7 genes)
+        'KCNQ1', 'KCNH2', 'SCN5A', 'CACNA1C', 'CALM1', 'CALM2', 'CALM3'
+    ]
+    CARDIAC_GENES = set(CM_GENES + ARM_GENES)
+
+    def __init__(self, num_records=100000, all_records=False, use_default_dir=True,
+                 min_variants_per_gene=5, max_variants_per_gene=50,
+                 grouping='gene', cardiac_panel_path=None):
+        """
+        Args:
+            num_records: Number of ClinVar records to read
+            all_records: Whether to read all records
+            use_default_dir: Whether to use default data directory
+            min_variants_per_gene: Minimum variants required per gene to include
+            max_variants_per_gene: Maximum variants per gene (for balance)
+            grouping: Grouping strategy - 'gene', 'cardiac_panel', or 'cardiac_gene'
+            cardiac_panel_path: Optional path to CardioBoost gene panel directory
+        """
+        if use_default_dir:
+            self.clinvar_vcf_path = load_clinvar.download_file()
+            self.genome_extractor = GenomeSequenceExtractor()
+        else:
+            self.clinvar_vcf_path = load_clinvar.download_file(
+                vcf_file_path='./root/data/clinvar_20250409.vcf'
+            )
+            self.genome_extractor = GenomeSequenceExtractor('./root/data/hg19.fa')
+
+        self.records = load_clinvar.read_vcf(
+            self.clinvar_vcf_path,
+            num_records=num_records,
+            all_records=all_records
+        )
+        self.min_variants_per_gene = min_variants_per_gene
+        self.max_variants_per_gene = max_variants_per_gene
+        self.grouping = grouping
+
+        # Load custom cardiac panels if provided
+        if cardiac_panel_path:
+            self._load_cardiac_panels(cardiac_panel_path)
+
+    def _load_cardiac_panels(self, panel_dir):
+        """Load cardiac gene panels from CardioBoost files."""
+        cm_path = os.path.join(panel_dir, 'cm_gene.txt')
+        arm_path = os.path.join(panel_dir, 'arm_gene.txt')
+
+        if os.path.exists(cm_path):
+            cm_df = pd.read_csv(cm_path, sep='\t')
+            self.CM_GENES = cm_df['gene_symbol'].tolist()
+
+        if os.path.exists(arm_path):
+            arm_df = pd.read_csv(arm_path, sep='\t')
+            self.ARM_GENES = arm_df['gene_symbol'].tolist()
+
+        self.CARDIAC_GENES = set(self.CM_GENES + self.ARM_GENES)
+        print(f"Loaded cardiac panels: CM={len(self.CM_GENES)} genes, ARM={len(self.ARM_GENES)} genes")
+
+    def _get_cardiac_panel(self, gene):
+        """Get cardiac panel for a gene (CM, ARM, or OTHER)."""
+        if gene in self.CM_GENES:
+            return 'CM'
+        elif gene in self.ARM_GENES:
+            return 'ARM'
+        else:
+            return 'OTHER'
+
+    def __call__(self, *args, **kwargs):
+        return self.get_data(*args, **kwargs)
+
+    def _parse_gene_info(self, gene_info):
+        """Extract gene symbol from GENEINFO field (format: 'GENE:ID' or 'GENE:ID|GENE2:ID2')."""
+        if gene_info == 'NA' or gene_info is None:
+            return None
+        if isinstance(gene_info, list):
+            gene_info = gene_info[0] if gene_info else None
+        if gene_info is None:
+            return None
+        # Take first gene if multiple
+        first_gene = gene_info.split('|')[0]
+        gene_symbol = first_gene.split(':')[0]
+        return gene_symbol if gene_symbol else None
+
+    def _parse_pathogenicity(self, clnsig):
+        """Parse CLNSIG to binary pathogenicity label (0=benign, 1=pathogenic)."""
+        if not clnsig or clnsig == 'NA':
+            return None
+        if isinstance(clnsig, list):
+            clnsig = clnsig[0]
+
+        # Skip uncertain/conflicting
+        skip_labels = [
+            "Uncertain_significance",
+            "Conflicting_classifications_of_pathogenicity",
+            "not_provided", "drug_response", "other",
+            "risk_factor", "Affects", "association", "protective"
+        ]
+        if clnsig in skip_labels:
+            return None
+
+        # Map to binary
+        if clnsig in ['Benign', 'Likely_benign', 'Benign/Likely_benign']:
+            return 0
+        elif clnsig in ['Pathogenic', 'Likely_pathogenic', 'Pathogenic/Likely_pathogenic']:
+            return 1
+        return None
+
+    def get_data(self, Seq_length=1024, balance_classes=True):
+        """
+        Get grouped ClinVar data with configurable grouping strategy.
+
+        Args:
+            Seq_length: Sequence context length around variant
+            balance_classes: Whether to balance pathogenic/benign within groups
+
+        Returns:
+            data: List of tuples ([ref_seq, alt_seq, variant_type], label, group_id, group_name)
+            group_to_id: Dict mapping group names to integer IDs
+            stats: Dict with dataset statistics
+
+        Grouping modes:
+            - 'gene': group_name is gene symbol (e.g., 'MYBPC3')
+            - 'cardiac_panel': group_name is panel (e.g., 'CM', 'ARM', 'OTHER')
+            - 'cardiac_gene': only cardiac genes, group_name is gene symbol
+        """
+        # First pass: collect variants grouped by gene
+        gene_variants = {}  # gene_name -> {'benign': [], 'pathogenic': []}
+
+        for record in tqdm(self.records, desc="Parsing ClinVar records"):
+            gene = self._parse_gene_info(record.get('GENEINFO'))
+            if gene is None:
+                continue
+
+            label = self._parse_pathogenicity(record.get('CLNSIG'))
+            if label is None:
+                continue
+
+            if gene not in gene_variants:
+                gene_variants[gene] = {'benign': [], 'pathogenic': []}
+
+            if label == 0:
+                gene_variants[gene]['benign'].append(record)
+            else:
+                gene_variants[gene]['pathogenic'].append(record)
+
+        # Filter genes based on grouping mode
+        if self.grouping == 'cardiac_gene':
+            # Only keep cardiac genes
+            filtered_genes = {}
+            for gene, variants in gene_variants.items():
+                if gene not in self.CARDIAC_GENES:
+                    continue
+                total = len(variants['benign']) + len(variants['pathogenic'])
+                if total >= self.min_variants_per_gene:
+                    filtered_genes[gene] = variants
+            print(f"Cardiac genes with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
+
+        elif self.grouping == 'cardiac_panel':
+            # Group by cardiac panel (CM, ARM, OTHER)
+            panel_variants = {'CM': {'benign': [], 'pathogenic': []},
+                            'ARM': {'benign': [], 'pathogenic': []},
+                            'OTHER': {'benign': [], 'pathogenic': []}}
+
+            for gene, variants in gene_variants.items():
+                panel = self._get_cardiac_panel(gene)
+                panel_variants[panel]['benign'].extend(variants['benign'])
+                panel_variants[panel]['pathogenic'].extend(variants['pathogenic'])
+
+            # Use panel_variants as filtered_genes
+            filtered_genes = {p: v for p, v in panel_variants.items()
+                            if len(v['benign']) + len(v['pathogenic']) >= self.min_variants_per_gene}
+            print(f"Cardiac panels with >= {self.min_variants_per_gene} variants: {list(filtered_genes.keys())}")
+
+        else:  # 'gene' mode (default)
+            filtered_genes = {}
+            for gene, variants in gene_variants.items():
+                total = len(variants['benign']) + len(variants['pathogenic'])
+                if total >= self.min_variants_per_gene:
+                    filtered_genes[gene] = variants
+            print(f"Genes with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
+
+        # Create group to ID mapping
+        sorted_groups = sorted(filtered_genes.keys())
+        group_to_id = {group: idx for idx, group in enumerate(sorted_groups)}
+
+        # Second pass: extract sequences and build dataset
+        data = []
+        class_counts = {'benign': 0, 'pathogenic': 0}
+        group_counts = {group: 0 for group in sorted_groups}
+
+        for group in tqdm(sorted_groups, desc="Extracting sequences"):
+            variants = filtered_genes[group]
+            group_id = group_to_id[group]
+
+            if balance_classes:
+                # Balance classes within group
+                n_benign = len(variants['benign'])
+                n_pathogenic = len(variants['pathogenic'])
+
+                if self.grouping == 'cardiac_panel':
+                    # Allow more variants for panel-level grouping
+                    max_per_class = self.max_variants_per_gene * 10
+                else:
+                    max_per_class = self.max_variants_per_gene // 2
+
+                n_each = min(n_benign, n_pathogenic, max_per_class)
+
+                if n_each == 0:
+                    continue
+
+                selected_benign = random.sample(variants['benign'], min(n_each, n_benign))
+                selected_pathogenic = random.sample(variants['pathogenic'], min(n_each, n_pathogenic))
+                selected = [(r, 0) for r in selected_benign] + [(r, 1) for r in selected_pathogenic]
+            else:
+                all_variants = [(r, 0) for r in variants['benign']] + [(r, 1) for r in variants['pathogenic']]
+                max_variants = self.max_variants_per_gene * 10 if self.grouping == 'cardiac_panel' else self.max_variants_per_gene
+                if len(all_variants) > max_variants:
+                    selected = random.sample(all_variants, max_variants)
+                else:
+                    selected = all_variants
+
+            for record, label in selected:
+                ref, alt = self.genome_extractor.extract_sequence_from_record(
+                    record, sequence_length=Seq_length
+                )
+                if ref is None:
+                    continue
+
+                variant_type = record.get('CLNVC', 'unknown')
+                if isinstance(variant_type, list):
+                    variant_type = variant_type[0] if variant_type else 'unknown'
+
+                x = [ref, alt, variant_type]
+                data.append((x, label, group_id, group))
+
+                class_counts['benign' if label == 0 else 'pathogenic'] += 1
+                group_counts[group] += 1
+
+        # Compute statistics
+        variants_per_group = [c for c in group_counts.values() if c > 0]
+        stats = {
+            'total_variants': len(data),
+            'num_groups': len([g for g in sorted_groups if group_counts[g] > 0]),
+            'grouping_mode': self.grouping,
+            'class_distribution': class_counts,
+            'group_counts': {g: group_counts[g] for g in sorted_groups if group_counts[g] > 0},
+            'variants_per_group_mean': np.mean(variants_per_group) if variants_per_group else 0,
+            'variants_per_group_std': np.std(variants_per_group) if variants_per_group else 0,
+            'variants_per_group_min': min(variants_per_group) if variants_per_group else 0,
+            'variants_per_group_max': max(variants_per_group) if variants_per_group else 0,
+        }
+
+        # Add cardiac-specific stats
+        if self.grouping in ['cardiac_panel', 'cardiac_gene']:
+            stats['cardiac_genes_cm'] = len(self.CM_GENES)
+            stats['cardiac_genes_arm'] = len(self.ARM_GENES)
+
+        print(f"\nGrouped ClinVar Dataset Statistics:")
+        print(f"  Grouping mode: {self.grouping}")
+        print(f"  Total variants: {stats['total_variants']}")
+        print(f"  Number of groups: {stats['num_groups']}")
+        print(f"  Class distribution: {stats['class_distribution']}")
+        print(f"  Variants per group: {stats['variants_per_group_mean']:.1f} ± {stats['variants_per_group_std']:.1f}")
+        if self.grouping == 'cardiac_panel':
+            print(f"  Group sizes: {stats['group_counts']}")
+
+        return data, group_to_id, stats
+
+
 class ClinVarDataWrapperPrintPercent:
     def __init__(self, num_records=30000, all_records=True, use_default_dir=True):
         if use_default_dir:

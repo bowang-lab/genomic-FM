@@ -52,6 +52,8 @@ python download_data.py
 ```
 Instead you can manually download the data from the Zenodo repository [here](https://zenodo.org/records/11502840). And save it locally in the `genomic-FM/root/data` directory.
 
+For LD-based grouping, download the 1000G EUR LD reference: `mkdir -p root/data/1000G && cd root/data/1000G && wget https://personal.broadinstitute.org/hhuang/public/PRS-CSx/Reference/1KG/ldblk_1kg_eur.tar.gz && tar -xzf ldblk_1kg_eur.tar.gz && rm ldblk_1kg_eur.tar.gz`
+
 #### Accessing the Data
 
 Use the following code snippets to load various datasets. Adjust NUM_RECORDS, ALL_RECORDS, and SEQ_LEN as needed.
