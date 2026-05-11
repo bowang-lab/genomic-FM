@@ -456,23 +456,18 @@ class ClinVarGroupedDataWrapper:
 
     Grouping modes:
         - 'gene': Each gene is a group (fine-grained)
-        - 'cardiac_panel': Groups by cardiac gene panel (CM, ARM, OTHER)
-        - 'cardiac_gene': Only cardiac genes, grouped by gene
+        - 'cardiac_panel': Groups by CGC cardiac category (CM_ARM, AORTOPATHY, CHD, OTHER)
+        - 'cardiac_gene': Only CGC cardiac genes (647 genes), grouped by gene
+        - 'hcm_gene': Only HCM genes (168 genes), grouped by gene
     """
 
-    # Cardiac gene panels from CardioBoost
-    CM_GENES = [  # Cardiomyopathy (16 genes)
-        'ACTC1', 'DES', 'GLA', 'LAMP2', 'LMNA', 'MYBPC3', 'MYH7', 'MYL2',
-        'MYL3', 'PLN', 'PRKAG2', 'PTPN11', 'SCN5A', 'TNNI3', 'TNNT2', 'TPM1'
-    ]
-    ARM_GENES = [  # Arrhythmia (7 genes)
-        'KCNQ1', 'KCNH2', 'SCN5A', 'CACNA1C', 'CALM1', 'CALM2', 'CALM3'
-    ]
-    CARDIAC_GENES = set(CM_GENES + ARM_GENES)
+    # Default gene list paths
+    DEFAULT_CGC_GENE_LIST = os.path.expanduser('~/Documents/cgc/CardiacGVRep/root/GeneListCGC.csv')
+    DEFAULT_HCM_GENE_LIST = os.path.expanduser('~/Documents/cgc/CardiacGVRep/root/GeneListHCM.csv')
 
     def __init__(self, num_records=100000, all_records=False, use_default_dir=True,
                  min_variants_per_gene=5, max_variants_per_gene=50,
-                 grouping='gene', cardiac_panel_path=None):
+                 grouping='gene', cgc_gene_list_path=None, hcm_gene_list_path=None):
         """
         Args:
             num_records: Number of ClinVar records to read
@@ -480,8 +475,9 @@ class ClinVarGroupedDataWrapper:
             use_default_dir: Whether to use default data directory
             min_variants_per_gene: Minimum variants required per gene to include
             max_variants_per_gene: Maximum variants per gene (for balance)
-            grouping: Grouping strategy - 'gene', 'cardiac_panel', or 'cardiac_gene'
-            cardiac_panel_path: Optional path to CardioBoost gene panel directory
+            grouping: Grouping strategy - 'gene', 'cardiac_panel', 'cardiac_gene', or 'hcm_gene'
+            cgc_gene_list_path: Path to CGC gene list CSV (647 genes)
+            hcm_gene_list_path: Path to HCM gene list CSV (168 genes)
         """
         if use_default_dir:
             self.clinvar_vcf_path = load_clinvar.download_file()
@@ -501,34 +497,64 @@ class ClinVarGroupedDataWrapper:
         self.max_variants_per_gene = max_variants_per_gene
         self.grouping = grouping
 
-        # Load custom cardiac panels if provided
-        if cardiac_panel_path:
-            self._load_cardiac_panels(cardiac_panel_path)
+        # Load CGC gene lists
+        self._load_cgc_gene_lists(
+            cgc_path=cgc_gene_list_path or self.DEFAULT_CGC_GENE_LIST,
+            hcm_path=hcm_gene_list_path or self.DEFAULT_HCM_GENE_LIST
+        )
 
-    def _load_cardiac_panels(self, panel_dir):
-        """Load cardiac gene panels from CardioBoost files."""
-        cm_path = os.path.join(panel_dir, 'cm_gene.txt')
-        arm_path = os.path.join(panel_dir, 'arm_gene.txt')
+    def _load_cgc_gene_lists(self, cgc_path, hcm_path):
+        """Load CGC and HCM gene lists from CSV files."""
+        # Initialize gene sets
+        self.CM_ARM_GENES = set()  # Cardiomyopathy/Arrhythmia (306 genes)
+        self.AORTOPATHY_GENES = set()  # Aortopathy (182 genes)
+        self.CHD_GENES = set()  # Congenital heart disease (159 genes)
+        self.HCM_GENES = set()  # HCM genes (168 genes)
+        self.CARDIAC_GENES = set()  # All cardiac genes (647 genes)
+        self.gene_to_category = {}  # Map gene -> category
 
-        if os.path.exists(cm_path):
-            cm_df = pd.read_csv(cm_path, sep='\t')
-            self.CM_GENES = cm_df['gene_symbol'].tolist()
+        # Load CGC gene list (647 genes)
+        if not os.path.exists(cgc_path):
+            raise FileNotFoundError(f"CGC gene list not found at {cgc_path}")
 
-        if os.path.exists(arm_path):
-            arm_df = pd.read_csv(arm_path, sep='\t')
-            self.ARM_GENES = arm_df['gene_symbol'].tolist()
+        cgc_df = pd.read_csv(cgc_path, encoding='utf-8-sig')
+        for _, row in cgc_df.iterrows():
+            gene = row['Gene']
+            category = row['Category']
+            self.CARDIAC_GENES.add(gene)
+            self.gene_to_category[gene] = category
 
-        self.CARDIAC_GENES = set(self.CM_GENES + self.ARM_GENES)
-        print(f"Loaded cardiac panels: CM={len(self.CM_GENES)} genes, ARM={len(self.ARM_GENES)} genes")
+            if category == 'Cardiomyopathy/Arrhythmia':
+                self.CM_ARM_GENES.add(gene)
+            elif category == 'Aortopathy':
+                self.AORTOPATHY_GENES.add(gene)
+            elif category == 'Congenital heart disease':
+                self.CHD_GENES.add(gene)
+
+        print(f"Loaded CGC gene list: {len(self.CARDIAC_GENES)} total genes")
+        print(f"  - Cardiomyopathy/Arrhythmia: {len(self.CM_ARM_GENES)} genes")
+        print(f"  - Aortopathy: {len(self.AORTOPATHY_GENES)} genes")
+        print(f"  - Congenital heart disease: {len(self.CHD_GENES)} genes")
+
+        # Load HCM gene list (168 genes)
+        if os.path.exists(hcm_path):
+            hcm_df = pd.read_csv(hcm_path)
+            self.HCM_GENES = set(hcm_df['Gene'].tolist())
+            print(f"Loaded HCM gene list: {len(self.HCM_GENES)} genes")
+        else:
+            print(f"Warning: HCM gene list not found at {hcm_path}")
 
     def _get_cardiac_panel(self, gene):
-        """Get cardiac panel for a gene (CM, ARM, or OTHER)."""
-        if gene in self.CM_GENES:
-            return 'CM'
-        elif gene in self.ARM_GENES:
-            return 'ARM'
-        else:
-            return 'OTHER'
+        """Get cardiac panel/category for a gene."""
+        if gene in self.gene_to_category:
+            category = self.gene_to_category[gene]
+            if category == 'Cardiomyopathy/Arrhythmia':
+                return 'CM_ARM'
+            elif category == 'Aortopathy':
+                return 'AORTOPATHY'
+            elif category == 'Congenital heart disease':
+                return 'CHD'
+        return 'OTHER'
 
     def __call__(self, *args, **kwargs):
         return self.get_data(*args, **kwargs)
@@ -584,9 +610,10 @@ class ClinVarGroupedDataWrapper:
             stats: Dict with dataset statistics
 
         Grouping modes:
-            - 'gene': group_name is gene symbol (e.g., 'MYBPC3')
-            - 'cardiac_panel': group_name is panel (e.g., 'CM', 'ARM', 'OTHER')
-            - 'cardiac_gene': only cardiac genes, group_name is gene symbol
+            - 'gene': group_name is gene symbol (e.g., 'MYBPC3') - all genes
+            - 'cardiac_panel': group_name is CGC category (CM_ARM, AORTOPATHY, CHD, OTHER)
+            - 'cardiac_gene': only CGC cardiac genes (647), group_name is gene symbol
+            - 'hcm_gene': only HCM genes (168), group_name is gene symbol
         """
         # First pass: collect variants grouped by gene
         gene_variants = {}  # gene_name -> {'benign': [], 'pathogenic': []}
@@ -610,7 +637,7 @@ class ClinVarGroupedDataWrapper:
 
         # Filter genes based on grouping mode
         if self.grouping == 'cardiac_gene':
-            # Only keep cardiac genes
+            # Only keep CGC cardiac genes (647 genes)
             filtered_genes = {}
             for gene, variants in gene_variants.items():
                 if gene not in self.CARDIAC_GENES:
@@ -618,13 +645,27 @@ class ClinVarGroupedDataWrapper:
                 total = len(variants['benign']) + len(variants['pathogenic'])
                 if total >= self.min_variants_per_gene:
                     filtered_genes[gene] = variants
-            print(f"Cardiac genes with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
+            print(f"CGC cardiac genes with >= {self.min_variants_per_gene} variants: {len(filtered_genes)} / {len(self.CARDIAC_GENES)} total")
+
+        elif self.grouping == 'hcm_gene':
+            # Only keep HCM genes (168 genes)
+            filtered_genes = {}
+            for gene, variants in gene_variants.items():
+                if gene not in self.HCM_GENES:
+                    continue
+                total = len(variants['benign']) + len(variants['pathogenic'])
+                if total >= self.min_variants_per_gene:
+                    filtered_genes[gene] = variants
+            print(f"HCM genes with >= {self.min_variants_per_gene} variants: {len(filtered_genes)} / {len(self.HCM_GENES)} total")
 
         elif self.grouping == 'cardiac_panel':
-            # Group by cardiac panel (CM, ARM, OTHER)
-            panel_variants = {'CM': {'benign': [], 'pathogenic': []},
-                            'ARM': {'benign': [], 'pathogenic': []},
-                            'OTHER': {'benign': [], 'pathogenic': []}}
+            # Group by CGC cardiac category (CM_ARM, AORTOPATHY, CHD, OTHER)
+            panel_variants = {
+                'CM_ARM': {'benign': [], 'pathogenic': []},
+                'AORTOPATHY': {'benign': [], 'pathogenic': []},
+                'CHD': {'benign': [], 'pathogenic': []},
+                'OTHER': {'benign': [], 'pathogenic': []}
+            }
 
             for gene, variants in gene_variants.items():
                 panel = self._get_cardiac_panel(gene)
@@ -634,7 +675,9 @@ class ClinVarGroupedDataWrapper:
             # Use panel_variants as filtered_genes
             filtered_genes = {p: v for p, v in panel_variants.items()
                             if len(v['benign']) + len(v['pathogenic']) >= self.min_variants_per_gene}
-            print(f"Cardiac panels with >= {self.min_variants_per_gene} variants: {list(filtered_genes.keys())}")
+            print(f"CGC cardiac panels with >= {self.min_variants_per_gene} variants: {list(filtered_genes.keys())}")
+            for panel, variants in filtered_genes.items():
+                print(f"  - {panel}: {len(variants['benign'])} benign, {len(variants['pathogenic'])} pathogenic")
 
         else:  # 'gene' mode (default)
             filtered_genes = {}
@@ -716,9 +759,12 @@ class ClinVarGroupedDataWrapper:
         }
 
         # Add cardiac-specific stats
-        if self.grouping in ['cardiac_panel', 'cardiac_gene']:
-            stats['cardiac_genes_cm'] = len(self.CM_GENES)
-            stats['cardiac_genes_arm'] = len(self.ARM_GENES)
+        if self.grouping in ['cardiac_panel', 'cardiac_gene', 'hcm_gene']:
+            stats['cardiac_genes_cm_arm'] = len(self.CM_ARM_GENES)
+            stats['cardiac_genes_aortopathy'] = len(self.AORTOPATHY_GENES)
+            stats['cardiac_genes_chd'] = len(self.CHD_GENES)
+            stats['cardiac_genes_total'] = len(self.CARDIAC_GENES)
+            stats['hcm_genes_total'] = len(self.HCM_GENES)
 
         print(f"\nGrouped ClinVar Dataset Statistics:")
         print(f"  Grouping mode: {self.grouping}")
