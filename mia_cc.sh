@@ -14,8 +14,13 @@
 expid=$SLURM_ARRAY_TASK_ID
 num_experiments=64
 
-python reconstruct_genotype/guess_kolter_one_codon.py --expid $expid --num_experiments $num_experiments
+# random split
+python reconstruct_genotype/guess_kolter_one_codon.py --expid $expid --num_experiments $num_experiments \
+--use_delta 1 --mode head_only
 
+# split by codon position/groups
+python reconstruct_genotype/guess_kolter_one_codon.py --expid $expid --num_experiments $num_experiments \
+--use_delta 1 --mode head_only --split_by_group 1
 
 
 #python reconstruct_genotype/guess_kolter_one_codon.py --global_output_dir "/home/fangcong/scratch/checkpoints_12" --use_delta 1 --mode head_only \
