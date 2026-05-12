@@ -277,7 +277,7 @@ class ClinVarAttributeInference:
             top_n_accuracy = 0.0
             if group_size > 1:
                 top_n_correct = sum(
-                    t in top_n for t, top_n in zip(true, all_top_n_predicted[group_size])
+                    t in top_n_preds for t, top_n_preds in zip(true, all_top_n_predicted[group_size])
                 )
                 top_n_accuracy = top_n_correct / total if total > 0 else 0
 
