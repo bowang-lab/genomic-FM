@@ -643,18 +643,53 @@ class ClinVarGroupedDataWrapper:
             return 1
         return None
 
-    def get_data(self, Seq_length=1024, balance_classes=True):
+    def _parse_disease(self, clndn):
+        """Parse CLNDN to disease name string."""
+        if not clndn or clndn == 'NA':
+            return None
+        if isinstance(clndn, list):
+            clndn = clndn[0] if clndn else None
+        if clndn is None:
+            return None
+
+        # Split by '|' and take first non-'not_provided' disease
+        diseases = clndn.split('|')
+        for disease in diseases:
+            if disease and disease != 'not_provided':
+                return self._convert_disease_name(disease)
+        return None
+
+    def _convert_disease_name(self, disease_name):
+        """
+        Convert a disease name by removing trailing numbers and underscores.
+        E.g., 'Hypertrophic_cardiomyopathy_1' -> 'Hypertrophic_cardiomyopathy'
+        """
+        parts = disease_name.split('_')
+        if parts[-1].isdigit():
+            parts = parts[:-1]
+        return '_'.join(parts)
+
+    def get_data(self, Seq_length=1024, balance_classes=True, target='CLNSIG', min_samples_per_class=10,
+                 disease_subset=None, disease_subset_file=None):
         """
         Get grouped ClinVar data with configurable grouping strategy.
 
         Args:
             Seq_length: Sequence context length around variant
-            balance_classes: Whether to balance pathogenic/benign within groups
+            balance_classes: Whether to balance classes within groups
+            target: Prediction target - 'CLNSIG' (pathogenicity) or 'CLNDN' (disease)
+            min_samples_per_class: Minimum samples per class for disease prediction
+            disease_subset: List of disease names to filter (for CLNDN target)
+            disease_subset_file: Path to file with disease names (for CLNDN target)
 
         Returns:
+            For CLNSIG: (data, group_to_id, stats)
+            For CLNDN: (data, group_to_id, stats, label_to_id)
+
             data: List of tuples ([ref_seq, alt_seq, variant_type], label, group_id, group_name)
             group_to_id: Dict mapping group names to integer IDs
             stats: Dict with dataset statistics
+            label_to_id: Dict mapping disease names to integer IDs (CLNDN only)
 
         Grouping modes:
             - 'gene': group_name is gene symbol (e.g., 'MYBPC3') - all genes
@@ -663,6 +698,14 @@ class ClinVarGroupedDataWrapper:
             - 'cardiac_gene': only CGC cardiac genes (647), group_name is gene symbol
             - 'hcm_gene': only HCM genes (168), group_name is gene symbol
         """
+        # Disease prediction mode
+        if target == 'CLNDN':
+            return self._get_data_disease(
+                Seq_length, balance_classes, min_samples_per_class,
+                disease_subset=disease_subset, disease_subset_file=disease_subset_file
+            )
+
+        # Pathogenicity prediction mode (default)
         # First pass: collect variants grouped by gene (or exon if exon mode)
         gene_variants = {}  # group_name -> {'benign': [], 'pathogenic': []}
 
@@ -844,6 +887,198 @@ class ClinVarGroupedDataWrapper:
             print(f"  Group sizes: {stats['group_counts']}")
 
         return data, group_to_id, stats
+
+    def _get_data_disease(self, Seq_length=1024, balance_classes=True, min_samples_per_class=10,
+                          disease_subset=None, disease_subset_file=None):
+        """
+        Get grouped ClinVar data for disease prediction (CLNDN target).
+
+        Args:
+            Seq_length: Sequence context length around variant
+            balance_classes: Whether to balance classes
+            min_samples_per_class: Minimum samples per disease class to include
+            disease_subset: List of disease names to include (None = all diseases)
+            disease_subset_file: Path to file with disease names (one per line)
+
+        Returns:
+            data: List of tuples ([ref_seq, alt_seq, variant_type], label_id, group_id, group_name)
+            group_to_id: Dict mapping group names to integer IDs
+            stats: Dict with dataset statistics
+            label_to_id: Dict mapping disease names to integer IDs
+        """
+        # Load disease subset from file if provided
+        if disease_subset_file is not None and disease_subset is None:
+            if os.path.exists(disease_subset_file):
+                with open(disease_subset_file, 'r') as f:
+                    disease_subset = [line.strip() for line in f if line.strip()]
+                print(f"Loaded {len(disease_subset)} diseases from {disease_subset_file}")
+            else:
+                print(f"Warning: Disease subset file not found: {disease_subset_file}")
+
+        # Use global DISEASE_SUBSET if set and no local subset provided
+        if disease_subset is None and DISEASE_SUBSET is not None:
+            disease_subset = DISEASE_SUBSET
+
+        disease_subset_set = set(disease_subset) if disease_subset else None
+
+        # First pass: collect variants with disease labels, grouped by gene
+        gene_variants = {}  # group_name -> {disease: [records]}
+        disease_counts = {}  # disease -> count (for filtering)
+
+        for record in tqdm(self.records, desc="Parsing ClinVar records (disease)"):
+            gene = self._parse_gene_info(record.get('GENEINFO'))
+            if gene is None:
+                continue
+
+            disease = self._parse_disease(record.get('CLNDN'))
+            if disease is None:
+                continue
+
+            # Filter by disease subset if provided
+            if disease_subset_set is not None and disease not in disease_subset_set:
+                continue
+
+            # Determine group key based on grouping mode
+            if self.grouping == 'exon':
+                chrom = record.get('Chromosome')
+                pos = record.get('Position')
+                group_key = self._get_exon_for_variant(chrom, pos)
+                if group_key is None:
+                    group_key = gene
+            elif self.grouping == 'cardiac_panel':
+                group_key = self._get_cardiac_panel(gene)
+            elif self.grouping == 'cardiac_gene':
+                if gene not in self.CARDIAC_GENES:
+                    continue
+                group_key = gene
+            elif self.grouping == 'hcm_gene':
+                if gene not in self.HCM_GENES:
+                    continue
+                group_key = gene
+            else:
+                group_key = gene
+
+            if group_key not in gene_variants:
+                gene_variants[group_key] = {}
+
+            if disease not in gene_variants[group_key]:
+                gene_variants[group_key][disease] = []
+
+            gene_variants[group_key][disease].append(record)
+            disease_counts[disease] = disease_counts.get(disease, 0) + 1
+
+        # Filter diseases by minimum sample count
+        valid_diseases = {d for d, c in disease_counts.items() if c >= min_samples_per_class}
+        print(f"Diseases with >= {min_samples_per_class} samples: {len(valid_diseases)} / {len(disease_counts)}")
+
+        # Create disease to ID mapping
+        sorted_diseases = sorted(valid_diseases)
+        label_to_id = {disease: idx for idx, disease in enumerate(sorted_diseases)}
+        id_to_label = {idx: disease for disease, idx in label_to_id.items()}
+
+        # Filter genes based on grouping mode and minimum variants
+        filtered_genes = {}
+        for group_key, disease_records in gene_variants.items():
+            # Filter to valid diseases only
+            valid_records = {d: r for d, r in disease_records.items() if d in valid_diseases}
+            total = sum(len(r) for r in valid_records.values())
+            if total >= self.min_variants_per_gene:
+                filtered_genes[group_key] = valid_records
+
+        print(f"Groups with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
+
+        # Create group to ID mapping
+        sorted_groups = sorted(filtered_genes.keys())
+        group_to_id = {group: idx for idx, group in enumerate(sorted_groups)}
+
+        # Second pass: extract sequences and build dataset
+        data = []
+        class_counts = {d: 0 for d in sorted_diseases}
+        group_counts = {group: 0 for group in sorted_groups}
+
+        for group in tqdm(sorted_groups, desc="Extracting sequences (disease)"):
+            disease_records = filtered_genes[group]
+            group_id = group_to_id[group]
+
+            # Collect all variants with their disease labels
+            all_variants = []
+            for disease, records in disease_records.items():
+                label_id = label_to_id[disease]
+                for record in records:
+                    all_variants.append((record, label_id, disease))
+
+            # Balance classes if requested
+            if balance_classes and len(label_to_id) > 1:
+                # Sample equal number from each disease class
+                by_class = {}
+                for record, label_id, disease in all_variants:
+                    if label_id not in by_class:
+                        by_class[label_id] = []
+                    by_class[label_id].append((record, label_id, disease))
+
+                min_per_class = min(len(v) for v in by_class.values())
+                max_per_class = self.max_variants_per_gene // len(by_class)
+                n_each = min(min_per_class, max_per_class)
+
+                if n_each == 0:
+                    continue
+
+                selected = []
+                for label_id, variants in by_class.items():
+                    selected.extend(random.sample(variants, min(n_each, len(variants))))
+            else:
+                if len(all_variants) > self.max_variants_per_gene:
+                    selected = random.sample(all_variants, self.max_variants_per_gene)
+                else:
+                    selected = all_variants
+
+            for record, label_id, disease in selected:
+                ref, alt = self.genome_extractor.extract_sequence_from_record(
+                    record, sequence_length=Seq_length
+                )
+                if ref is None:
+                    continue
+
+                variant_type = record.get('CLNVC', 'unknown')
+                if isinstance(variant_type, list):
+                    variant_type = variant_type[0] if variant_type else 'unknown'
+
+                x = [ref, alt, variant_type]
+                data.append((x, label_id, group_id, group))
+
+                class_counts[disease] += 1
+                group_counts[group] += 1
+
+        # Compute statistics
+        variants_per_group = [c for c in group_counts.values() if c > 0]
+        stats = {
+            'total_variants': len(data),
+            'num_groups': len([g for g in sorted_groups if group_counts[g] > 0]),
+            'num_classes': len(sorted_diseases),
+            'grouping_mode': self.grouping,
+            'target': 'CLNDN',
+            'class_distribution': {d: class_counts[d] for d in sorted_diseases if class_counts[d] > 0},
+            'group_counts': {g: group_counts[g] for g in sorted_groups if group_counts[g] > 0},
+            'variants_per_group_mean': np.mean(variants_per_group) if variants_per_group else 0,
+            'variants_per_group_std': np.std(variants_per_group) if variants_per_group else 0,
+            'variants_per_group_min': min(variants_per_group) if variants_per_group else 0,
+            'variants_per_group_max': max(variants_per_group) if variants_per_group else 0,
+            'label_to_id': label_to_id,
+            'id_to_label': id_to_label,
+            'disease_subset_used': disease_subset is not None,
+        }
+
+        print(f"\nGrouped ClinVar Disease Dataset Statistics:")
+        print(f"  Grouping mode: {self.grouping}")
+        print(f"  Target: CLNDN (disease prediction)")
+        print(f"  Total variants: {stats['total_variants']}")
+        print(f"  Number of groups: {stats['num_groups']}")
+        print(f"  Number of disease classes: {stats['num_classes']}")
+        print(f"  Variants per group: {stats['variants_per_group_mean']:.1f} ± {stats['variants_per_group_std']:.1f}")
+        if disease_subset:
+            print(f"  Using disease subset: {len(disease_subset)} diseases")
+
+        return data, group_to_id, stats, label_to_id
 
 
 class ClinVarDataWrapperPrintPercent:

@@ -354,6 +354,7 @@ def generate_keep_for_lira(size, pkeep=0.5, expid=None, num_experiments=None, se
 def return_clinvar_grouped_lira_dataset(
     tokenizer: PreTrainedTokenizer,
     grouping: str = 'gene',
+    target: str = 'CLNSIG',
     seq_length: int = 1024,
     pkeep: float = 0.5,
     exp_id: int = 0,
@@ -366,6 +367,9 @@ def return_clinvar_grouped_lira_dataset(
     use_default_dir: bool = False,
     num_records: int = 100000,
     all_records: bool = True,
+    disease_subset: list = None,
+    disease_subset_file: str = None,
+    min_samples_per_class: int = 10,
 ):
     """
     Load ClinVar grouped dataset for LiRA membership inference attacks.
@@ -376,6 +380,7 @@ def return_clinvar_grouped_lira_dataset(
     Args:
         tokenizer: Tokenizer for DNA sequences
         grouping: Grouping mode ('gene', 'cardiac_gene', 'hcm_gene', 'cardiac_panel', 'exon')
+        target: Prediction target - 'CLNSIG' (pathogenicity) or 'CLNDN' (disease)
         seq_length: Sequence context length
         pkeep: Fraction of groups to keep in training (default 0.5 for LiRA)
         exp_id: Experiment ID (0 to num_experiments-1)
@@ -388,6 +393,9 @@ def return_clinvar_grouped_lira_dataset(
         use_default_dir: Use default data directory
         num_records: Number of records to load
         all_records: Load all records
+        disease_subset: List of disease names to filter (for CLNDN target)
+        disease_subset_file: Path to file with disease names (for CLNDN target)
+        min_samples_per_class: Minimum samples per disease class (for CLNDN target)
 
     Returns:
         datasets: Dict with 'train', 'val', 'test', 'full' datasets
@@ -395,10 +403,9 @@ def return_clinvar_grouped_lira_dataset(
         max_seq_len: Maximum sequence length
         group_to_id: Dict mapping group names to IDs
         stats: Dataset statistics including group membership info
-        membership_info: Dict with group-level membership labels for MIA
     """
     tokenizer.model_max_length = seq_length
-    task_name = f'CLNSIG_{grouping}'
+    task_name = f'{target}_{grouping}'
 
     # Load grouped data
     wrapper = ClinVarGroupedDataWrapper(
@@ -409,10 +416,26 @@ def return_clinvar_grouped_lira_dataset(
         max_variants_per_gene=max_variants_per_gene,
         grouping=grouping,
     )
-    data, group_to_id, stats = wrapper.get_data(
-        Seq_length=seq_length,
-        balance_classes=balance_classes
-    )
+
+    # Get data based on target
+    if target == 'CLNDN':
+        data, group_to_id, stats, label_to_id = wrapper.get_data(
+            Seq_length=seq_length,
+            balance_classes=balance_classes,
+            target='CLNDN',
+            min_samples_per_class=min_samples_per_class,
+            disease_subset=disease_subset,
+            disease_subset_file=disease_subset_file,
+        )
+        num_labels = len(label_to_id)
+    else:
+        data, group_to_id, stats = wrapper.get_data(
+            Seq_length=seq_length,
+            balance_classes=balance_classes,
+            target='CLNSIG',
+        )
+        label_to_id = {0: 0, 1: 1}  # benign=0, pathogenic=1
+        num_labels = 2
 
     # Extract group IDs from data
     # Data format: ([ref, alt, variant_type], label, group_id, group_name)
@@ -423,7 +446,7 @@ def return_clinvar_grouped_lira_dataset(
     keep_file = None
     if keep_dir is not None:
         os.makedirs(keep_dir, exist_ok=True)
-        keep_file = os.path.join(keep_dir, f'keep_groups_{grouping}_exp{exp_id}_of{num_experiments}.npz')
+        keep_file = os.path.join(keep_dir, f'keep_groups_{target}_{grouping}_exp{exp_id}_of{num_experiments}.npz')
 
     if keep_file and os.path.exists(keep_file):
         loaded = np.load(keep_file)
@@ -454,18 +477,15 @@ def return_clinvar_grouped_lira_dataset(
     val_data = out_data[:val_size]
     test_data = out_data[val_size:]
 
-    # Label mapping
-    label_to_id = {0: 0, 1: 1}
-    num_labels = 2
-
     # Stats
     train_groups = set(item[2] for item in train_data)
     out_groups = set(item[2] for item in out_data)
 
-    print(f"\nGrouped LiRA Dataset ({grouping} grouping):")
+    print(f"\nGrouped LiRA Dataset ({target} target, {grouping} grouping):")
     print(f"  Experiment: {exp_id}/{num_experiments}")
     print(f"  Total groups: {num_groups}, In training: {len(train_groups)}, Out: {len(out_groups)}")
     print(f"  Total samples: {len(data)}, Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+    print(f"  Number of classes: {num_labels}")
 
     # Create datasets (handle empty splits gracefully)
     datasets = {}
@@ -487,12 +507,17 @@ def return_clinvar_grouped_lira_dataset(
         'id_to_group': {v: k for k, v in group_to_id.items()},
         'train_groups': list(train_groups),
         'out_groups': list(out_groups),
+        'label_to_id': label_to_id,
+        'id_to_label': {v: k for k, v in label_to_id.items()},
+        'target': target,
+        'num_classes': num_labels,
     }
 
     stats['membership_info'] = membership_info
     stats['exp_id'] = exp_id
     stats['num_experiments'] = num_experiments
     stats['pkeep'] = pkeep
+    stats['target'] = target
 
     return datasets, task_num_classes, seq_length, group_to_id, stats
 

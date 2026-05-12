@@ -7,9 +7,20 @@ Runs attribute inference attack on grouped ClinVar data to test whether
 variants can be re-identified based on model behavior within their
 biological group (e.g., gene, exon, cardiac panel).
 
+Supports two prediction targets:
+    - CLNSIG: Pathogenicity classification (benign/pathogenic) - 2 classes
+    - CLNDN: Disease prediction (multi-class) - N disease classes
+
 Usage:
-    python scripts/run_clinvar_attack.py --expid 0 --num_experiments 64 --grouping gene
-    python scripts/run_clinvar_attack.py --expid 0 --num_experiments 64 --grouping gene --eval_only 1
+    # Pathogenicity attack (default)
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping gene --target CLNSIG
+
+    # Disease prediction attack
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping gene --target CLNDN
+
+    # Disease prediction with heart disease subset
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_gene --target CLNDN \
+        --disease_subset_file ./root/data/heart_related_diseases.txt
 """
 
 from __future__ import annotations
@@ -111,6 +122,11 @@ def main():
     parser.add_argument("--grouping", default="gene",
                         choices=["gene", "exon", "cardiac_panel", "cardiac_gene", "hcm_gene"],
                         help="Grouping mode for variants")
+    parser.add_argument("--target", default="CLNSIG",
+                        choices=["CLNSIG", "CLNDN"],
+                        help="Prediction target: CLNSIG (pathogenicity) or CLNDN (disease)")
+    parser.add_argument("--disease_subset_file", type=str, default=None,
+                        help="Path to file with disease names to filter (for CLNDN target)")
     parser.add_argument("--num_records", type=int, default=100000,
                         help="Number of records to load")
     parser.add_argument("--all_records", type=int, default=1,
@@ -149,7 +165,7 @@ def main():
         torch.cuda.manual_seed_all(args.seed)
 
     # Create output directory
-    args.output_dir = f"{args.output_dir}/{args.grouping}/exp{args.expid}_{args.num_experiments}"
+    args.output_dir = f"{args.output_dir}/{args.target}_{args.grouping}/exp{args.expid}_{args.num_experiments}"
     os.makedirs(args.output_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -165,32 +181,37 @@ def main():
     )
 
     # Load data with grouped LiRA function
-    print(f"\nLoading data with {args.grouping} grouping...")
+    print(f"\nLoading data with {args.target} target, {args.grouping} grouping...")
     datasets, task_num_classes, seq_length, group_to_id, stats = return_clinvar_grouped_lira_dataset(
         tokenizer,
         grouping=args.grouping,
+        target=args.target,
         exp_id=args.expid,
         num_experiments=args.num_experiments,
         seed=args.seed,
         num_records=args.num_records,
         all_records=bool(args.all_records),
+        disease_subset_file=args.disease_subset_file,
     )
 
     # Get the full dataset
-    task_name = f'CLNSIG_{args.grouping}'
+    task_name = f'{args.target}_{args.grouping}'
     full_dataset = datasets[f'{task_name}_full']
     train_mask = stats['membership_info']['sample_membership']
+    num_classes = stats['membership_info']['num_classes']
 
     print(f"\nDataset loaded:")
+    print(f"  Target: {args.target}")
     print(f"  Total samples: {len(full_dataset)}")
     print(f"  Total groups: {len(group_to_id)}")
+    print(f"  Number of classes: {num_classes}")
     print(f"  Training samples: {sum(train_mask)}")
     print(f"  Validation samples: {len(train_mask) - sum(train_mask)}")
 
     # Run attack
     if args.eval_only:
         print("\n" + "="*70)
-        print("Running Attribute Inference Attack")
+        print(f"Running Attribute Inference Attack ({args.target} target)")
         print("="*70)
 
         results = run_attack(
@@ -204,7 +225,7 @@ def main():
         )
 
         # Save results
-        results_path = os.path.join(args.output_dir, f"attack_results_{args.grouping}.pkl")
+        results_path = os.path.join(args.output_dir, f"attack_results_{args.target}_{args.grouping}.pkl")
         with open(results_path, 'wb') as f:
             pickle.dump(results, f)
         print(f"\nResults saved to {results_path}")
