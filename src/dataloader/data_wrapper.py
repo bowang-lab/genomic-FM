@@ -455,10 +455,11 @@ class ClinVarGroupedDataWrapper:
     with biologically meaningful dependency structure.
 
     Grouping modes:
-        - 'gene': Each gene is a group (fine-grained)
+        - 'gene': Each gene is a group (all genes)
+        - 'exon': Each exon is a group (gene:exon_number)
         - 'cardiac_panel': Groups by CGC cardiac category (CM_ARM, AORTOPATHY, CHD, OTHER)
-        - 'cardiac_gene': Only CGC cardiac genes (647 genes), grouped by gene
-        - 'hcm_gene': Only HCM genes (168 genes), grouped by gene
+        - 'cardiac_gene': Only CGC cardiac genes (647), each gene is a group
+        - 'hcm_gene': Only HCM genes (168), each gene is a group
     """
 
     # Default gene list paths
@@ -475,7 +476,7 @@ class ClinVarGroupedDataWrapper:
             use_default_dir: Whether to use default data directory
             min_variants_per_gene: Minimum variants required per gene to include
             max_variants_per_gene: Maximum variants per gene (for balance)
-            grouping: Grouping strategy - 'gene', 'cardiac_panel', 'cardiac_gene', or 'hcm_gene'
+            grouping: Grouping strategy - 'gene', 'exon', 'cardiac_panel', 'cardiac_gene', or 'hcm_gene'
             cgc_gene_list_path: Path to CGC gene list CSV (647 genes)
             hcm_gene_list_path: Path to HCM gene list CSV (168 genes)
         """
@@ -502,6 +503,52 @@ class ClinVarGroupedDataWrapper:
             cgc_path=cgc_gene_list_path or self.DEFAULT_CGC_GENE_LIST,
             hcm_path=hcm_gene_list_path or self.DEFAULT_HCM_GENE_LIST
         )
+
+        # Load exon annotations if needed
+        self._exon_pr = None
+        if self.grouping == 'exon':
+            self._load_exon_annotations()
+
+    def _load_exon_annotations(self, gtf_path='./root/data/gencode.v45.annotation.gtf'):
+        """Load exon annotations from GTF file using pyranges."""
+        import pyranges as pr
+
+        # Download GTF if not present
+        if not os.path.exists(gtf_path):
+            from ..datasets.gene_ko.load_gene_position_gtf import run_bash_commands_gtf
+            run_bash_commands_gtf(gtf_path)
+
+        print(f"Loading exon annotations from {gtf_path}...")
+        gtf = pr.read_gtf(gtf_path)
+
+        # Filter to exons only and keep relevant columns
+        exons = gtf[gtf.Feature == 'exon']
+        self._exon_pr = exons
+        print(f"Loaded {len(exons)} exon annotations")
+
+    def _get_exon_for_variant(self, chrom, pos):
+        """Map a variant position to its exon (gene:exon_number)."""
+        if self._exon_pr is None:
+            return None
+
+        # Normalize chromosome name
+        chrom_str = str(chrom)
+        if not chrom_str.startswith('chr'):
+            chrom_str = f'chr{chrom_str}'
+
+        # Query overlapping exons
+        import pyranges as pr
+        query = pr.PyRanges(chromosomes=[chrom_str], starts=[pos - 1], ends=[pos])
+        overlaps = self._exon_pr.join(query)
+
+        if len(overlaps) == 0:
+            return None
+
+        # Get the first overlapping exon
+        df = overlaps.df
+        gene_name = df.iloc[0].get('gene_name', 'unknown')
+        exon_number = df.iloc[0].get('exon_number', '1')
+        return f"{gene_name}:exon{exon_number}"
 
     def _load_cgc_gene_lists(self, cgc_path, hcm_path):
         """Load CGC and HCM gene lists from CSV files."""
@@ -611,12 +658,13 @@ class ClinVarGroupedDataWrapper:
 
         Grouping modes:
             - 'gene': group_name is gene symbol (e.g., 'MYBPC3') - all genes
+            - 'exon': group_name is gene:exon_number (e.g., 'MYBPC3:exon1')
             - 'cardiac_panel': group_name is CGC category (CM_ARM, AORTOPATHY, CHD, OTHER)
             - 'cardiac_gene': only CGC cardiac genes (647), group_name is gene symbol
             - 'hcm_gene': only HCM genes (168), group_name is gene symbol
         """
-        # First pass: collect variants grouped by gene
-        gene_variants = {}  # gene_name -> {'benign': [], 'pathogenic': []}
+        # First pass: collect variants grouped by gene (or exon if exon mode)
+        gene_variants = {}  # group_name -> {'benign': [], 'pathogenic': []}
 
         for record in tqdm(self.records, desc="Parsing ClinVar records"):
             gene = self._parse_gene_info(record.get('GENEINFO'))
@@ -627,17 +675,28 @@ class ClinVarGroupedDataWrapper:
             if label is None:
                 continue
 
-            if gene not in gene_variants:
-                gene_variants[gene] = {'benign': [], 'pathogenic': []}
+            # Determine group key based on grouping mode
+            if self.grouping == 'exon':
+                chrom = record.get('Chromosome')
+                pos = record.get('Position')
+                group_key = self._get_exon_for_variant(chrom, pos)
+                if group_key is None:
+                    # Fall back to gene if exon not found
+                    group_key = gene
+            else:
+                group_key = gene
+
+            if group_key not in gene_variants:
+                gene_variants[group_key] = {'benign': [], 'pathogenic': []}
 
             if label == 0:
-                gene_variants[gene]['benign'].append(record)
+                gene_variants[group_key]['benign'].append(record)
             else:
-                gene_variants[gene]['pathogenic'].append(record)
+                gene_variants[group_key]['pathogenic'].append(record)
 
         # Filter genes based on grouping mode
         if self.grouping == 'cardiac_gene':
-            # Only keep CGC cardiac genes (647 genes)
+            # Only keep CGC cardiac genes (647 genes), each gene is its own group
             filtered_genes = {}
             for gene, variants in gene_variants.items():
                 if gene not in self.CARDIAC_GENES:
@@ -648,7 +707,7 @@ class ClinVarGroupedDataWrapper:
             print(f"CGC cardiac genes with >= {self.min_variants_per_gene} variants: {len(filtered_genes)} / {len(self.CARDIAC_GENES)} total")
 
         elif self.grouping == 'hcm_gene':
-            # Only keep HCM genes (168 genes)
+            # Only keep HCM genes (168 genes), each gene is its own group
             filtered_genes = {}
             for gene, variants in gene_variants.items():
                 if gene not in self.HCM_GENES:
@@ -678,6 +737,15 @@ class ClinVarGroupedDataWrapper:
             print(f"CGC cardiac panels with >= {self.min_variants_per_gene} variants: {list(filtered_genes.keys())}")
             for panel, variants in filtered_genes.items():
                 print(f"  - {panel}: {len(variants['benign'])} benign, {len(variants['pathogenic'])} pathogenic")
+
+        elif self.grouping == 'exon':
+            # Each exon is its own group (already grouped in first pass)
+            filtered_genes = {}
+            for exon, variants in gene_variants.items():
+                total = len(variants['benign']) + len(variants['pathogenic'])
+                if total >= self.min_variants_per_gene:
+                    filtered_genes[exon] = variants
+            print(f"Exons with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
 
         else:  # 'gene' mode (default)
             filtered_genes = {}
