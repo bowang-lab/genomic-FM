@@ -307,18 +307,194 @@ def split_train_val(dataset_train, val_split=0.1, seed=42):
     return dataset_train_subset, dataset_val_subset
 
 
-def generate_keep_for_lira(dataset_size, pkeep=0.5, expid=None, num_experiments=None, seed=0):
+def generate_keep_for_lira(size, pkeep=0.5, expid=None, num_experiments=None, seed=0, group_ids=None):
+    """
+    Generate keep mask for LiRA membership inference attacks.
+
+    Can operate at sample-level (default) or group-level (when group_ids provided).
+    Group-level ensures all samples from a group are either ALL in or ALL out,
+    respecting biological dependencies (e.g., variants in same gene).
+
+    Args:
+        size: Number of samples (sample-level) or groups (group-level)
+        pkeep: Fraction to keep in training (default 0.5 for LiRA)
+        expid: Experiment ID for reproducible multi-experiment setup
+        num_experiments: Total number of experiments (shadow models)
+        seed: Random seed
+        group_ids: If provided, array mapping each sample to its group ID.
+                   Enables group-level keep decisions expanded to samples.
+
+    Returns:
+        If group_ids is None:
+            keep: Boolean array of shape (size,) for sample membership
+        If group_ids is provided:
+            keep: Boolean array of shape (len(group_ids),) for sample membership
+            keep_groups: Boolean array of shape (size,) for group membership
+    """
     np.random.seed(seed)
-    if num_experiments is not None and expid < num_experiments:
-        keep = np.random.uniform(0, 1, size=(num_experiments, dataset_size))
-        order = keep.argsort(0)
-        keep = order < int(pkeep * num_experiments)
-        keep = np.array(keep[expid], dtype=bool)
+
+    if num_experiments is not None and expid is not None and expid < num_experiments:
+        keep_all = np.random.uniform(0, 1, size=(num_experiments, size))
+        order = keep_all.argsort(0)
+        keep_all = order < int(pkeep * num_experiments)
+        keep = np.array(keep_all[expid], dtype=bool)
     else:
-        keep = np.random.uniform(0, 1, size=dataset_size) <= pkeep
+        keep = np.random.uniform(0, 1, size=size) <= pkeep
+
+    # If group_ids provided, expand group-level decisions to sample-level
+    if group_ids is not None:
+        group_ids = np.array(group_ids)
+        keep_groups = keep
+        keep = keep_groups[group_ids]
+        return keep, keep_groups
 
     return keep
 
+
+def return_clinvar_grouped_lira_dataset(
+    tokenizer: PreTrainedTokenizer,
+    grouping: str = 'gene',
+    seq_length: int = 1024,
+    pkeep: float = 0.5,
+    exp_id: int = 0,
+    num_experiments: int = 64,
+    seed: int = 42,
+    keep_dir: str = None,
+    min_variants_per_gene: int = 5,
+    max_variants_per_gene: int = 50,
+    balance_classes: bool = True,
+    use_default_dir: bool = False,
+    num_records: int = 100000,
+    all_records: bool = True,
+):
+    """
+    Load ClinVar grouped dataset for LiRA membership inference attacks.
+
+    Unlike sample-level LiRA, this keeps/excludes ENTIRE GROUPS (genes, panels, etc.)
+    to respect biological dependencies between variants.
+
+    Args:
+        tokenizer: Tokenizer for DNA sequences
+        grouping: Grouping mode ('gene', 'cardiac_gene', 'hcm_gene', 'cardiac_panel', 'exon')
+        seq_length: Sequence context length
+        pkeep: Fraction of groups to keep in training (default 0.5 for LiRA)
+        exp_id: Experiment ID (0 to num_experiments-1)
+        num_experiments: Total number of shadow models to train
+        seed: Random seed
+        keep_dir: Directory to save/load group keep masks
+        min_variants_per_gene: Minimum variants per gene to include
+        max_variants_per_gene: Maximum variants per gene
+        balance_classes: Whether to balance pathogenic/benign within groups
+        use_default_dir: Use default data directory
+        num_records: Number of records to load
+        all_records: Load all records
+
+    Returns:
+        datasets: Dict with 'train', 'val', 'test', 'full' datasets
+        task_num_classes: Dict with task name -> num classes
+        max_seq_len: Maximum sequence length
+        group_to_id: Dict mapping group names to IDs
+        stats: Dataset statistics including group membership info
+        membership_info: Dict with group-level membership labels for MIA
+    """
+    tokenizer.model_max_length = seq_length
+    task_name = f'CLNSIG_{grouping}'
+
+    # Load grouped data
+    wrapper = ClinVarGroupedDataWrapper(
+        num_records=num_records,
+        all_records=all_records,
+        use_default_dir=use_default_dir,
+        min_variants_per_gene=min_variants_per_gene,
+        max_variants_per_gene=max_variants_per_gene,
+        grouping=grouping,
+    )
+    data, group_to_id, stats = wrapper.get_data(
+        Seq_length=seq_length,
+        balance_classes=balance_classes
+    )
+
+    # Extract group IDs from data
+    # Data format: ([ref, alt, variant_type], label, group_id, group_name)
+    group_ids = np.array([item[2] for item in data])
+    num_groups = len(group_to_id)
+
+    # Generate or load group-level keep mask
+    keep_file = None
+    if keep_dir is not None:
+        os.makedirs(keep_dir, exist_ok=True)
+        keep_file = os.path.join(keep_dir, f'keep_groups_{grouping}_exp{exp_id}_of{num_experiments}.npz')
+
+    if keep_file and os.path.exists(keep_file):
+        loaded = np.load(keep_file)
+        keep = loaded['keep_samples']
+        keep_groups = loaded['keep_groups']
+        print(f"Loaded group keep mask from {keep_file}")
+    else:
+        keep, keep_groups = generate_keep_for_lira(
+            size=num_groups,
+            pkeep=pkeep,
+            expid=exp_id,
+            num_experiments=num_experiments,
+            seed=seed,
+            group_ids=group_ids  # Enables group-level decisions
+        )
+        if keep_file:
+            np.savez(keep_file, keep_samples=keep, keep_groups=keep_groups)
+            print(f"Saved group keep mask to {keep_file}")
+
+    # Split data based on group membership
+    train_data = [data[i] for i in range(len(data)) if keep[i]]
+    out_data = [data[i] for i in range(len(data)) if not keep[i]]
+
+    # Further split out_data into val/test
+    random.seed(seed)
+    random.shuffle(out_data)
+    val_size = len(out_data) // 2
+    val_data = out_data[:val_size]
+    test_data = out_data[val_size:]
+
+    # Label mapping
+    label_to_id = {0: 0, 1: 1}
+    num_labels = 2
+
+    # Stats
+    train_groups = set(item[2] for item in train_data)
+    out_groups = set(item[2] for item in out_data)
+
+    print(f"\nGrouped LiRA Dataset ({grouping} grouping):")
+    print(f"  Experiment: {exp_id}/{num_experiments}")
+    print(f"  Total groups: {num_groups}, In training: {len(train_groups)}, Out: {len(out_groups)}")
+    print(f"  Total samples: {len(data)}, Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+
+    # Create datasets (handle empty splits gracefully)
+    datasets = {}
+    if train_data:
+        datasets['train'] = ClinVarGroupedDataset(train_data, tokenizer, task_name, label_to_id)
+    if val_data:
+        datasets[f'{task_name}_val'] = ClinVarGroupedDataset(val_data, tokenizer, task_name, label_to_id)
+    if test_data:
+        datasets[f'{task_name}_test'] = ClinVarGroupedDataset(test_data, tokenizer, task_name, label_to_id)
+    datasets[f'{task_name}_full'] = ClinVarGroupedDataset(data, tokenizer, task_name, label_to_id)
+
+    task_num_classes = {task_name: num_labels}
+
+    # Membership info for MIA evaluation
+    membership_info = {
+        'group_membership': keep_groups,  # Which groups are in training
+        'sample_membership': keep,  # Which samples are in training
+        'group_to_id': group_to_id,
+        'id_to_group': {v: k for k, v in group_to_id.items()},
+        'train_groups': list(train_groups),
+        'out_groups': list(out_groups),
+    }
+
+    stats['membership_info'] = membership_info
+    stats['exp_id'] = exp_id
+    stats['num_experiments'] = num_experiments
+    stats['pkeep'] = pkeep
+
+    return datasets, task_num_classes, seq_length, group_to_id, stats
 
 
 def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLNDN', disease_subset_file=None,
