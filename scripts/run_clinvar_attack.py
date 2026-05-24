@@ -64,6 +64,8 @@ from collections import defaultdict
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, Subset
+from tqdm import tqdm
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -73,6 +75,7 @@ from src.attacks.attribute_inference import run_attack
 from src.pack_tunable_model.hf_dataloader import return_clinvar_grouped_lira_dataset
 from src.pack_tunable_model.wrap_model import WrappedModelWithClassificationHead
 from transformers import AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM, AutoTokenizer
+from transformers import get_cosine_schedule_with_warmup
 
 
 def load_model_and_tokenizer(
@@ -133,6 +136,229 @@ def load_model_and_tokenizer(
     return wrapped_model.to(device), tokenizer
 
 
+def collate_fn(batch):
+    """Collate function for DataLoader."""
+    ref_input_ids = torch.stack([item["ref_input_ids"] for item in batch])
+    alt_input_ids = torch.stack([item["alt_input_ids"] for item in batch])
+    labels = torch.tensor([item["labels"] for item in batch], dtype=torch.long)
+    group_ids = torch.tensor([item["group_id"] for item in batch], dtype=torch.long)
+
+    result = {
+        "ref_input_ids": ref_input_ids,
+        "alt_input_ids": alt_input_ids,
+        "labels": labels,
+        "group_ids": group_ids,
+    }
+
+    if "ref_attention_mask" in batch[0]:
+        result["ref_attention_mask"] = torch.stack([item["ref_attention_mask"] for item in batch])
+    if "alt_attention_mask" in batch[0]:
+        result["alt_attention_mask"] = torch.stack([item["alt_attention_mask"] for item in batch])
+
+    return result
+
+
+def train_model(
+    model,
+    train_dataset,
+    val_dataset,
+    device,
+    output_dir,
+    epochs=50,
+    batch_size=8,
+    learning_rate=1e-4,
+    weight_decay=0.01,
+    warmup_ratio=0.1,
+    patience=10,
+    freeze_backbone=True,
+):
+    """
+    Train the classification head on the training set.
+
+    Args:
+        model: WrappedModelWithClassificationHead
+        train_dataset: Training dataset
+        val_dataset: Validation dataset
+        device: torch device
+        output_dir: Directory to save checkpoints
+        epochs: Number of training epochs
+        batch_size: Batch size
+        learning_rate: Learning rate for classification head
+        weight_decay: Weight decay
+        warmup_ratio: Warmup ratio for scheduler
+        patience: Early stopping patience
+        freeze_backbone: Whether to freeze the backbone (train head only)
+
+    Returns:
+        Dict with training results
+    """
+    # Freeze backbone if requested
+    if freeze_backbone:
+        for param in model.base_model.parameters():
+            param.requires_grad = False
+        print("Backbone frozen, training classification head only")
+
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=4,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=4,
+        pin_memory=True
+    )
+
+    # Set up optimizer - only train parameters that require grad
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=weight_decay)
+
+    # Scheduler
+    total_steps = len(train_loader) * epochs
+    warmup_steps = int(total_steps * warmup_ratio)
+    scheduler = get_cosine_schedule_with_warmup(optimizer, warmup_steps, total_steps)
+
+    # Loss function
+    loss_fn = nn.CrossEntropyLoss()
+
+    # Training loop
+    best_val_loss = float("inf")
+    best_val_acc = 0.0
+    no_improve = 0
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        epoch_loss = 0.0
+        epoch_correct = 0
+        epoch_total = 0
+
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}")
+        for batch in pbar:
+            # Move to device
+            ref_input_ids = batch["ref_input_ids"].to(device)
+            alt_input_ids = batch["alt_input_ids"].to(device)
+            labels = batch["labels"].to(device)
+            ref_attention_mask = batch.get("ref_attention_mask")
+            alt_attention_mask = batch.get("alt_attention_mask")
+            if ref_attention_mask is not None:
+                ref_attention_mask = ref_attention_mask.to(device)
+            if alt_attention_mask is not None:
+                alt_attention_mask = alt_attention_mask.to(device)
+
+            # Forward pass
+            optimizer.zero_grad()
+            outputs = model(
+                ref_input_ids=ref_input_ids,
+                ref_attention_mask=ref_attention_mask,
+                alt_input_ids=alt_input_ids,
+                alt_attention_mask=alt_attention_mask,
+                labels=labels,
+            )
+
+            loss = outputs["loss"]
+            logits = outputs["logits"]
+
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            # Track metrics
+            epoch_loss += loss.item() * len(labels)
+            preds = logits.argmax(dim=-1)
+            epoch_correct += (preds == labels).sum().item()
+            epoch_total += len(labels)
+
+            pbar.set_postfix({"loss": loss.item(), "acc": epoch_correct / epoch_total})
+
+        train_loss = epoch_loss / epoch_total
+        train_acc = epoch_correct / epoch_total
+
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+                ref_input_ids = batch["ref_input_ids"].to(device)
+                alt_input_ids = batch["alt_input_ids"].to(device)
+                labels = batch["labels"].to(device)
+                ref_attention_mask = batch.get("ref_attention_mask")
+                alt_attention_mask = batch.get("alt_attention_mask")
+                if ref_attention_mask is not None:
+                    ref_attention_mask = ref_attention_mask.to(device)
+                if alt_attention_mask is not None:
+                    alt_attention_mask = alt_attention_mask.to(device)
+
+                outputs = model(
+                    ref_input_ids=ref_input_ids,
+                    ref_attention_mask=ref_attention_mask,
+                    alt_input_ids=alt_input_ids,
+                    alt_attention_mask=alt_attention_mask,
+                    labels=labels,
+                )
+
+                loss = outputs["loss"]
+                logits = outputs["logits"]
+                val_loss += loss.item() * len(labels)
+                preds = logits.argmax(dim=-1)
+                val_correct += (preds == labels).sum().item()
+                val_total += len(labels)
+
+        val_loss = val_loss / val_total
+        val_acc = val_correct / val_total
+
+        print(f"Epoch {epoch:>3}/{epochs}  |  "
+              f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  |  "
+              f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
+
+        # Checkpointing and early stopping
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_val_acc = val_acc
+            no_improve = 0
+
+            # Save checkpoint
+            ckpt_path = os.path.join(output_dir, "best_model.pt")
+            torch.save({
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "val_loss": val_loss,
+                "val_acc": val_acc,
+            }, ckpt_path)
+            print(f"  ✓ Checkpoint saved → {ckpt_path}")
+        else:
+            no_improve += 1
+            if patience and no_improve >= patience:
+                print(f"Early stopping after {epoch} epochs (no improvement for {patience} epochs)")
+                break
+
+    # Save final model
+    final_path = os.path.join(output_dir, "final_model.pt")
+    torch.save({
+        "epoch": epoch,
+        "model_state": model.state_dict(),
+        "val_loss": val_loss,
+        "val_acc": val_acc,
+    }, final_path)
+    print(f"Final model saved → {final_path}")
+
+    return {
+        "best_val_loss": best_val_loss,
+        "best_val_acc": best_val_acc,
+        "final_epoch": epoch,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="ClinVar grouped attribute inference attack")
 
@@ -170,9 +396,21 @@ def main():
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
 
-    # Attack parameters
+    # Training parameters
     parser.add_argument("--eval_only", type=int, default=1,
                         help="Only run attack evaluation (no training)")
+    parser.add_argument("--epochs", type=int, default=50,
+                        help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=8,
+                        help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=1e-4,
+                        help="Learning rate")
+    parser.add_argument("--patience", type=int, default=10,
+                        help="Early stopping patience")
+    parser.add_argument("--freeze_backbone", type=int, default=1,
+                        help="Freeze backbone and only train head (1) or fine-tune all (0)")
+
+    # Attack parameters
     parser.add_argument("--use_embedding", type=int, default=0,
                         help="Use embedding-based attack instead of likelihood-based (0 or 1)")
 
@@ -237,8 +475,58 @@ def main():
     print(f"  Training samples: {sum(train_mask)}")
     print(f"  Validation samples: {len(train_mask) - sum(train_mask)}")
 
-    # Run attack
-    if args.eval_only:
+    # Create train/val splits from the full dataset using train_mask
+    train_indices = [i for i, m in enumerate(train_mask) if m]
+    val_indices = [i for i, m in enumerate(train_mask) if not m]
+    train_dataset = Subset(full_dataset, train_indices)
+    val_dataset = Subset(full_dataset, val_indices)
+
+    # Training or evaluation
+    if not args.eval_only:
+        # Training mode: train the classification head
+        print("\n" + "="*70)
+        print(f"Training Classification Head (expid={args.expid}/{args.num_experiments})")
+        print("="*70)
+
+        train_results = train_model(
+            model=model,
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            device=device,
+            output_dir=args.output_dir,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            learning_rate=args.lr,
+            patience=args.patience,
+            freeze_backbone=bool(args.freeze_backbone),
+        )
+
+        print("\n" + "="*70)
+        print("TRAINING COMPLETE")
+        print("="*70)
+        print(f"Best validation loss: {train_results['best_val_loss']:.4f}")
+        print(f"Best validation accuracy: {train_results['best_val_acc']:.4f}")
+        print(f"Stopped at epoch: {train_results['final_epoch']}")
+        print("="*70)
+
+        # Save train mask for later attack evaluation
+        mask_path = os.path.join(args.output_dir, "train_mask.npy")
+        np.save(mask_path, train_mask)
+        print(f"Train mask saved → {mask_path}")
+
+        return train_results
+
+    else:
+        # Evaluation mode: load checkpoint if exists, then run attack
+        ckpt_path = os.path.join(args.output_dir, "best_model.pt")
+        if os.path.exists(ckpt_path):
+            print(f"\nLoading checkpoint from {ckpt_path}")
+            checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
+            model.load_state_dict(checkpoint["model_state"])
+            print(f"Loaded model from epoch {checkpoint['epoch']} (val_acc={checkpoint['val_acc']:.4f})")
+        else:
+            print(f"\nNo checkpoint found at {ckpt_path}, using randomly initialized head")
+
         attack_type = "Embedding-based" if args.use_embedding else "Likelihood-based"
         print("\n" + "="*70)
         print(f"Running {attack_type} Attribute Inference Attack ({args.target} target)")
@@ -276,7 +564,7 @@ def main():
               f"advantage: {results['full']['advantage']:.4f})")
         print("="*70)
 
-    return results
+        return results
 
 
 if __name__ == "__main__":
