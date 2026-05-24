@@ -747,7 +747,7 @@ def main():
 
     # Training hyperparameters
     parser.add_argument("--learning_rate", type=float, default=0.000005)
-    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_epochs", type=int, default=10)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--num_workers", type=int, default=8)

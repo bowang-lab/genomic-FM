@@ -30,7 +30,7 @@ wandb offline
 
 # Training parameters
 MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
-BATCH_SIZE=8
+BATCH_SIZE=32
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then

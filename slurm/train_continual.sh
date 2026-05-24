@@ -44,7 +44,7 @@ wandb offline
 # Configuration
 MODEL="nt"  # Options: nt, omni_dna_116m, dnabert2, hyenadna, etc.
 SEED=127
-BATCH_SIZE=8
+BATCH_SIZE=32
 NUM_EPOCHS=10
 LEARNING_RATE=1e-4
 LORA_R=8

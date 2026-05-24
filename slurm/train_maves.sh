@@ -167,7 +167,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --task MAVES \
     --seed 127 \
     --learning_rate 0.000005 \
-    --batch_size 8 \
+    --batch_size 32 \
     --num_epochs 10 \
     --max_grad_norm 1.0 \
     --num_workers 8 \

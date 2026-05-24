@@ -7,20 +7,50 @@ Runs attribute inference attack on grouped ClinVar data to test whether
 variants can be re-identified based on model behavior within their
 biological group (e.g., gene, exon, cardiac panel).
 
-Supports two prediction targets:
+Prediction targets:
     - CLNSIG: Pathogenicity classification (benign/pathogenic) - 2 classes
     - CLNDN: Disease prediction (multi-class) - N disease classes
 
+Grouping modes:
+    - gene: Each gene is a group (all genes in ClinVar)
+    - exon: Each exon is a group (gene:exon_number)
+    - cardiac_panel: Groups by CGC cardiac category (CM_ARM, AORTOPATHY, CHD, OTHER)
+    - cardiac_gene: Only CGC cardiac genes (647 genes), each gene is a group
+    - hcm_gene: Only HCM genes (168 genes), each gene is a group
+
+Attack modes:
+    - likelihood-based (default): Uses model's softmax probabilities
+    - embedding-based: Uses cosine similarity of model embeddings
+
 Usage:
-    # Pathogenicity attack (default)
+    # Basic pathogenicity attack
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping gene --target CLNSIG
 
     # Disease prediction attack
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping gene --target CLNDN
 
+    # Different grouping modes
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping exon
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_panel
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_gene
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping hcm_gene
+
     # Disease prediction with heart disease subset
-    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_gene --target CLNDN \
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_gene --target CLNDN \\
         --disease_subset_file ./root/data/heart_related_diseases.txt
+
+    # Embedding-based attack (instead of likelihood-based)
+    python scripts/run_clinvar_attack.py --checkpoint ./model --use_embedding 1
+
+    # Custom data parameters
+    python scripts/run_clinvar_attack.py --checkpoint ./model \\
+        --seq_length 512 \\
+        --min_variants_per_gene 3 \\
+        --max_variants_per_gene 100 \\
+        --balance_classes 0
+
+    # LiRA multi-experiment setup
+    python scripts/run_clinvar_attack.py --checkpoint ./model --expid 0 --num_experiments 64
 """
 
 from __future__ import annotations
@@ -46,73 +76,61 @@ from transformers import AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM, 
 
 
 def load_model_and_tokenizer(
-    checkpoint_path: str,
-    model_type: str = None,
+    model: str,
+    num_classes: int = 2,
     device: str = 'cuda'
 ):
     """
-    Load a trained model and tokenizer from checkpoint.
+    Load model and tokenizer from HuggingFace or local checkpoint.
+
+    Auto-detects whether path is a local checkpoint or HuggingFace model.
 
     Args:
-        checkpoint_path: Path to model checkpoint directory
-        model_type: Base model type (e.g., 'nt', 'omni_dna_116m', 'dnabert2')
+        model: HuggingFace model name (e.g., 'InstaDeepAI/nucleotide-transformer-v2-50m-multi-species')
+               or local checkpoint path
+        num_classes: Number of output classes
         device: Device to load model on
 
     Returns:
         Tuple of (model, tokenizer)
     """
-    # Try to load using WrappedModelWithClassificationHead.from_pretrained
-    try:
-        model = WrappedModelWithClassificationHead.from_pretrained(checkpoint_path)
-        tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, trust_remote_code=True)
-        print(f"Loaded wrapped model from {checkpoint_path}")
-        return model.to(device), tokenizer
-    except Exception as e:
-        print(f"Could not load wrapped model directly: {e}")
+    # Check if it's a local path with a saved model
+    is_local = os.path.isdir(model)
 
-    # Fall back to loading base model + classification head separately
-    if model_type is None:
-        raise ValueError("model_type must be provided when loading from separate components")
+    if is_local:
+        # Try to load as WrappedModelWithClassificationHead first
+        try:
+            loaded_model = WrappedModelWithClassificationHead.from_pretrained(model)
+            tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+            print(f"Loaded wrapped model from {model}")
+            return loaded_model.to(device), tokenizer
+        except Exception as e:
+            print(f"Could not load as wrapped model: {e}")
+            # Try loading as base model
+            print(f"Trying to load as base model from {model}...")
 
-    # Determine model path
-    local_model_base = f"./root/models/{model_type}"
-    if model_type == 'omni_dna_116m':
-        model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-116M"
-    elif model_type == 'nt':
-        model_path = local_model_base if os.path.exists(local_model_base) else "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
-    elif model_type == 'dnabert2':
-        model_path = local_model_base if os.path.exists(local_model_base) else "zhihan1996/DNABERT-2-117M"
+    # Load from HuggingFace or local base model
+    print(f"Loading model from {model}...")
+    tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+
+    # Auto-detect model type based on name
+    model_lower = model.lower()
+    if 'nucleotide-transformer' in model_lower or '/nt' in model_lower:
+        base_model = AutoModelForMaskedLM.from_pretrained(model, trust_remote_code=True)
+    elif 'omni' in model_lower:
+        base_model = AutoModelForCausalLM.from_pretrained(model, trust_remote_code=True)
     else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-
-    # Load base model
-    use_local = os.path.exists(model_path)
-    if model_type in ['gpn-star', 'nt']:
-        base_model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
-    elif model_type == 'omni_dna_116m':
-        base_model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
-    else:
-        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
-
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
+        # Default: try AutoModel
+        try:
+            base_model = AutoModel.from_pretrained(model, trust_remote_code=True)
+        except Exception:
+            base_model = AutoModelForMaskedLM.from_pretrained(model, trust_remote_code=True)
 
     # Create wrapped model with classification head
-    model = WrappedModelWithClassificationHead(base_model, num_classes=2)
+    wrapped_model = WrappedModelWithClassificationHead(base_model, num_classes=num_classes)
+    print(f"Created model with {num_classes}-class classification head (randomly initialized)")
 
-    # Load checkpoint weights if available
-    checkpoint_weights = os.path.join(checkpoint_path, "pytorch_model.bin")
-    if os.path.exists(checkpoint_weights):
-        state_dict = torch.load(checkpoint_weights, map_location='cpu')
-        model.load_state_dict(state_dict, strict=False)
-        print(f"Loaded weights from {checkpoint_weights}")
-    else:
-        # Try classification head only
-        head_weights = os.path.join(checkpoint_path, "classification_head.bin")
-        if os.path.exists(head_weights):
-            model.classification_head.load_state_dict(torch.load(head_weights, map_location='cpu'))
-            print(f"Loaded classification head from {head_weights}")
-
-    return model.to(device), tokenizer
+    return wrapped_model.to(device), tokenizer
 
 
 def main():
@@ -131,13 +149,18 @@ def main():
                         help="Number of records to load")
     parser.add_argument("--all_records", type=int, default=1,
                         help="Load all records (1) or use num_records (0)")
+    parser.add_argument("--seq_length", type=int, default=1024,
+                        help="Sequence context length around variant")
+    parser.add_argument("--min_variants_per_gene", type=int, default=5,
+                        help="Minimum variants per gene to include")
+    parser.add_argument("--max_variants_per_gene", type=int, default=50,
+                        help="Maximum variants per gene")
+    parser.add_argument("--balance_classes", type=int, default=1,
+                        help="Balance pathogenic/benign within groups (1) or not (0)")
 
     # Model parameters
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to model checkpoint")
-    parser.add_argument("--model_type", type=str, default="nt",
-                        choices=["nt", "omni_dna_116m", "dnabert2"],
-                        help="Base model type")
+    parser.add_argument("--model", type=str, default="InstaDeepAI/nucleotide-transformer-500m-human-ref",
+                        help="HuggingFace model name or local checkpoint path")
 
     # LiRA parameters
     parser.add_argument("--expid", type=int, default=0,
@@ -150,6 +173,8 @@ def main():
     # Attack parameters
     parser.add_argument("--eval_only", type=int, default=1,
                         help="Only run attack evaluation (no training)")
+    parser.add_argument("--use_embedding", type=int, default=0,
+                        help="Use embedding-based attack instead of likelihood-based (0 or 1)")
 
     # Output parameters
     parser.add_argument("--output_dir", type=str, default="./attack_results",
@@ -175,8 +200,8 @@ def main():
     # Load model and tokenizer
     print("\nLoading model...")
     model, tokenizer = load_model_and_tokenizer(
-        args.checkpoint,
-        model_type=args.model_type,
+        model=args.model,
+        num_classes=2,  # Default for CLNSIG, will be updated for CLNDN after data loading
         device=str(device)
     )
 
@@ -186,12 +211,16 @@ def main():
         tokenizer,
         grouping=args.grouping,
         target=args.target,
+        seq_length=args.seq_length,
         exp_id=args.expid,
         num_experiments=args.num_experiments,
         seed=args.seed,
         num_records=args.num_records,
         all_records=bool(args.all_records),
         disease_subset_file=args.disease_subset_file,
+        min_variants_per_gene=args.min_variants_per_gene,
+        max_variants_per_gene=args.max_variants_per_gene,
+        balance_classes=bool(args.balance_classes),
     )
 
     # Get the full dataset
@@ -210,8 +239,9 @@ def main():
 
     # Run attack
     if args.eval_only:
+        attack_type = "Embedding-based" if args.use_embedding else "Likelihood-based"
         print("\n" + "="*70)
-        print(f"Running Attribute Inference Attack ({args.target} target)")
+        print(f"Running {attack_type} Attribute Inference Attack ({args.target} target)")
         print("="*70)
 
         results = run_attack(
@@ -221,7 +251,8 @@ def main():
             group_to_id=group_to_id,
             train_mask=train_mask,
             device=str(device),
-            verbose=True
+            verbose=True,
+            use_embedding=bool(args.use_embedding)
         )
 
         # Save results

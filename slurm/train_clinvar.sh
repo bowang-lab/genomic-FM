@@ -41,7 +41,7 @@ echo "=================================="
 # Training parameters
 MODEL="lucaone"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone
 WANDB_PROJECT="genomic-finetune-clinvar"
-BATCH_SIZE=8  # Batch size per GPU
+BATCH_SIZE=32  # Batch size per GPU
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then

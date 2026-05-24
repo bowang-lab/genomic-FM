@@ -45,6 +45,27 @@ def pi_classification(y_true: int, probs: np.ndarray) -> float:
     return probs[y_true]
 
 
+def pi_classification_confidence(y_true: int, probs: np.ndarray) -> float:
+    """
+    Likelihood combining correctness with model confidence.
+    Trained samples often have higher confidence.
+    """
+    confidence = np.max(probs)
+    correctness = probs[y_true]
+    entropy = -np.sum(probs * np.log(probs + 1e-10))
+    # Higher score = more likely training sample
+    return correctness * confidence * np.exp(-entropy)
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors."""
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return np.dot(a, b) / (norm_a * norm_b)
+
+
 def marginal_weight(candidate: dict) -> float:
     """
     Calculate the prior weight for a candidate.
@@ -152,6 +173,74 @@ class ClinVarAttributeInference:
         )
         return outputs['logits']
 
+    @torch.no_grad()
+    def get_embeddings(self, batch: Dict) -> np.ndarray:
+        """
+        Extract model embeddings before the classification head.
+
+        Args:
+            batch: Dictionary with batched input tensors
+
+        Returns:
+            Embeddings as numpy array of shape [batch_size, hidden_dim]
+        """
+        self.model.eval()
+
+        # Try to get embeddings from the model
+        # Different model architectures may have different ways to access embeddings
+        try:
+            # For WrappedModelWithClassificationHead
+            if hasattr(self.model, 'base_model'):
+                ref_outputs = self.model.base_model(
+                    input_ids=batch['ref_input_ids'].to(self.device),
+                    attention_mask=batch['ref_attention_mask'].to(self.device),
+                    output_hidden_states=True,
+                )
+                alt_outputs = self.model.base_model(
+                    input_ids=batch['alt_input_ids'].to(self.device),
+                    attention_mask=batch['alt_attention_mask'].to(self.device),
+                    output_hidden_states=True,
+                )
+
+                # Get last hidden state and pool (mean over sequence)
+                if hasattr(ref_outputs, 'last_hidden_state'):
+                    ref_embed = ref_outputs.last_hidden_state.mean(dim=1)
+                    alt_embed = alt_outputs.last_hidden_state.mean(dim=1)
+                elif hasattr(ref_outputs, 'hidden_states'):
+                    ref_embed = ref_outputs.hidden_states[-1].mean(dim=1)
+                    alt_embed = alt_outputs.hidden_states[-1].mean(dim=1)
+                else:
+                    # Fallback: use logits as pseudo-embeddings
+                    outputs = self.model(
+                        ref_input_ids=batch['ref_input_ids'].to(self.device),
+                        ref_attention_mask=batch['ref_attention_mask'].to(self.device),
+                        alt_input_ids=batch['alt_input_ids'].to(self.device),
+                        alt_attention_mask=batch['alt_attention_mask'].to(self.device),
+                    )
+                    return outputs['logits'].cpu().numpy()
+
+                # Concatenate ref and alt embeddings
+                embeddings = torch.cat([ref_embed, alt_embed], dim=-1)
+                return embeddings.cpu().numpy()
+            else:
+                # Fallback: use logits as pseudo-embeddings
+                outputs = self.model(
+                    ref_input_ids=batch['ref_input_ids'].to(self.device),
+                    ref_attention_mask=batch['ref_attention_mask'].to(self.device),
+                    alt_input_ids=batch['alt_input_ids'].to(self.device),
+                    alt_attention_mask=batch['alt_attention_mask'].to(self.device),
+                )
+                return outputs['logits'].cpu().numpy()
+        except Exception as e:
+            print(f"Warning: Could not extract embeddings: {e}. Using logits as fallback.")
+            outputs = self.model(
+                ref_input_ids=batch['ref_input_ids'].to(self.device),
+                ref_attention_mask=batch['ref_attention_mask'].to(self.device),
+                alt_input_ids=batch['alt_input_ids'].to(self.device),
+                alt_attention_mask=batch['alt_attention_mask'].to(self.device),
+            )
+            return outputs['logits'].cpu().numpy()
+
     def attack_A_pi(self, idx: int) -> Tuple[Optional[int], Dict, Optional[int]]:
         """
         Run the A_pi attribute inference attack (analogous to DMS attack_A_pi).
@@ -216,40 +305,118 @@ class ClinVarAttributeInference:
 
         return predicted_idx, scores, true_idx, top_n
 
+    def attack_embedding(self, idx: int, reference_embeddings: np.ndarray = None) -> Tuple[Optional[int], Dict, Optional[int]]:
+        """
+        Embedding similarity-based attack.
+
+        Instead of using class probabilities, compare embeddings directly.
+        This can distinguish variants even when they have the same label.
+
+        Args:
+            idx: Index of the target sample
+            reference_embeddings: Pre-computed embeddings for reference (optional)
+
+        Returns:
+            Tuple of (predicted_idx, scores_dict, true_idx)
+        """
+        candidates = self.build_feasible_set(idx)
+
+        if len(candidates['indices']) < 2:
+            return None, {}, None
+
+        # Get embeddings for all candidates
+        embeddings = self.get_embeddings(candidates)
+
+        # Find target embedding index in batch
+        target_batch_idx = candidates['curr'].index(True)
+        target_embedding = embeddings[target_batch_idx]
+
+        # Score each candidate by embedding similarity
+        scores = {}
+        for i, cand_idx in enumerate(candidates['indices']):
+            similarity = cosine_similarity(embeddings[i], target_embedding)
+            scores[cand_idx] = similarity
+
+        predicted_idx = max(scores, key=scores.get)
+        true_idx = np.array(candidates['indices'])[np.array(candidates['curr'])][0]
+
+        return predicted_idx, dict(scores), true_idx
+
+    def attack_embedding_top_n(self, idx: int, n: int = 5) -> Tuple[Optional[int], Dict, Optional[int], List[int]]:
+        """
+        Embedding-based attack returning top-N predictions.
+
+        Args:
+            idx: Index of target sample
+            n: Number of top predictions to return
+
+        Returns:
+            Tuple of (predicted_idx, scores_dict, true_idx, top_n_predictions)
+        """
+        predicted_idx, scores, true_idx = self.attack_embedding(idx)
+
+        if predicted_idx is None:
+            return None, {}, None, []
+
+        top_n = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)[:n]
+
+        return predicted_idx, scores, true_idx, top_n
+
     def attack_dataset(
         self,
         sample_indices: List[int],
         df=None,
-        verbose: bool = True
+        verbose: bool = True,
+        use_embedding: bool = False
     ) -> Dict:
         """
         Run attack on dataset (analogous to DMS eval_only attack loop).
 
         Reports accuracy by group_size (analogous to num_snps in DMS).
+        Also computes granular metrics: same-label vs cross-label accuracy.
 
         Args:
             sample_indices: List of sample indices to attack
             df: Optional dataframe with metadata
             verbose: Print progress
+            use_embedding: Use embedding-based attack instead of likelihood-based
 
         Returns:
-            Dictionary with attack results
+            Dictionary with attack results including granular metrics
         """
         all_predicted = defaultdict(list)
         all_true = defaultdict(list)
         all_top_n_predicted = defaultdict(list)
         all_scores = []
 
+        # Granular metrics tracking
+        same_label_correct = 0
+        same_label_total = 0
+        cross_label_correct = 0
+        cross_label_total = 0
+        same_label_group_sizes = []
+        cross_label_group_sizes = []
+
         for i, idx in enumerate(sample_indices):
             if verbose and (i + 1) % 100 == 0:
                 print(f"Attacking sample {i + 1}/{len(sample_indices)}")
 
-            # Get group size for this sample
+            # Get group info for this sample
             group_id = self.full_dataset.group_ids[idx]
             group_size = len(self.group_to_samples[group_id])
+            target_label = self.full_dataset.labels[idx]
+
+            # Check if all candidates in group have same label (same-label scenario)
+            candidate_indices = self.group_to_samples[group_id]
+            candidate_labels = [self.full_dataset.labels[c] for c in candidate_indices]
+            same_label_candidates = sum(1 for l in candidate_labels if l == target_label)
+            is_same_label_group = (same_label_candidates == len(candidate_labels))
 
             # Run attack
-            predicted, scores, true_idx, top_n = self.attack_A_pi_top_n(idx, n=5)
+            if use_embedding:
+                predicted, scores, true_idx, top_n = self.attack_embedding_top_n(idx, n=5)
+            else:
+                predicted, scores, true_idx, top_n = self.attack_A_pi_top_n(idx, n=5)
 
             if predicted is None:
                 continue
@@ -258,6 +425,19 @@ class ClinVarAttributeInference:
             all_true[group_size].append(true_idx)
             all_top_n_predicted[group_size].append(top_n)
             all_scores.append(scores)
+
+            # Track granular metrics
+            is_correct = (predicted == true_idx)
+            if is_same_label_group:
+                same_label_total += 1
+                same_label_group_sizes.append(group_size)
+                if is_correct:
+                    same_label_correct += 1
+            else:
+                cross_label_total += 1
+                cross_label_group_sizes.append(group_size)
+                if is_correct:
+                    cross_label_correct += 1
 
         # Compute metrics by group_size (analogous to num_snps)
         results_by_size = {}
@@ -302,13 +482,33 @@ class ClinVarAttributeInference:
             weight = stats['total'] / total_samples if total_samples > 0 else 0
             random_baseline += weight * stats['random_baseline']
 
+        # Compute granular metrics
+        same_label_accuracy = same_label_correct / same_label_total if same_label_total > 0 else 0
+        cross_label_accuracy = cross_label_correct / cross_label_total if cross_label_total > 0 else 0
+
+        # Random baselines for granular metrics
+        same_label_random = np.mean([1.0 / s for s in same_label_group_sizes]) if same_label_group_sizes else 0
+        cross_label_random = np.mean([1.0 / s for s in cross_label_group_sizes]) if cross_label_group_sizes else 0
+
         return {
             'overall_accuracy': overall_accuracy,
             'random_baseline': random_baseline,
             'advantage': overall_accuracy - random_baseline,
             'by_group_size': results_by_size,
-            'total_samples': total_samples,
+            'num_samples': total_samples,
+            'total_samples': total_samples,  # Keep for backwards compatibility
             'all_scores': all_scores,
+            # Granular metrics
+            'granular': {
+                'same_label_accuracy': same_label_accuracy,
+                'same_label_random': same_label_random,
+                'same_label_advantage': same_label_accuracy - same_label_random,
+                'same_label_total': same_label_total,
+                'cross_label_accuracy': cross_label_accuracy,
+                'cross_label_random': cross_label_random,
+                'cross_label_advantage': cross_label_accuracy - cross_label_random,
+                'cross_label_total': cross_label_total,
+            },
         }
 
     def print_results(self, results: Dict, set_name: str = ""):
@@ -337,7 +537,32 @@ class ClinVarAttributeInference:
         print(f"\nOverall: accuracy={results['overall_accuracy']:.4f}, "
               f"random={results['random_baseline']:.4f}, "
               f"advantage={results['advantage']:.4f}, "
-              f"n={results['total_samples']}")
+              f"n={results['num_samples']}")
+
+        # Print granular metrics if available
+        if 'granular' in results:
+            g = results['granular']
+            print(f"\n{'-'*70}")
+            print("Granular Metrics (Same-Label vs Cross-Label):")
+            print(f"{'-'*70}")
+            print(f"  Same-label accuracy:  {g['same_label_accuracy']:.4f} "
+                  f"(random={g['same_label_random']:.4f}, "
+                  f"advantage={g['same_label_advantage']:.4f}) "
+                  f"n={g['same_label_total']}")
+            print(f"  Cross-label accuracy: {g['cross_label_accuracy']:.4f} "
+                  f"(random={g['cross_label_random']:.4f}, "
+                  f"advantage={g['cross_label_advantage']:.4f}) "
+                  f"n={g['cross_label_total']}")
+
+            # Interpretation
+            if g['same_label_total'] > 0 and g['cross_label_total'] > 0:
+                if g['same_label_advantage'] < 0.05 and g['cross_label_advantage'] > 0.1:
+                    print("\n  [!] Attack success primarily from distinguishing different labels,")
+                    print("      not from identifying specific variants with same label.")
+                elif g['same_label_advantage'] > 0.05:
+                    print("\n  [!] Attack shows real variant-level distinguishing ability")
+                    print("      (success even within same-label groups).")
+
         print(f"{'='*70}")
 
 
@@ -352,7 +577,8 @@ def run_attack(
     group_to_id: Dict[str, int],
     train_mask: np.ndarray,
     device: str = 'cuda',
-    verbose: bool = True
+    verbose: bool = True,
+    use_embedding: bool = False
 ) -> Dict:
     """
     Run full attack pipeline (training set, validation set, full set).
@@ -367,6 +593,7 @@ def run_attack(
         train_mask: Boolean mask indicating training samples
         device: Device to run on
         verbose: Print progress
+        use_embedding: Use embedding-based attack instead of likelihood-based
 
     Returns:
         Dictionary with results for train, val, and full sets
@@ -379,27 +606,31 @@ def run_attack(
         device=device
     )
 
+    attack_type = "embedding-based" if use_embedding else "likelihood-based"
+    if verbose:
+        print(f"\nRunning {attack_type} attribute inference attack...")
+
     results = {}
 
     # Attack training set
     train_indices = [i for i, m in enumerate(train_mask) if m]
     if verbose:
         print(f"\nAttacking {len(train_indices)} training samples...")
-    results['train'] = attack.attack_dataset(train_indices, verbose=verbose)
+    results['train'] = attack.attack_dataset(train_indices, verbose=verbose, use_embedding=use_embedding)
     attack.print_results(results['train'], "training")
 
     # Attack validation set
     val_indices = [i for i, m in enumerate(train_mask) if not m]
     if verbose:
         print(f"\nAttacking {len(val_indices)} validation samples...")
-    results['val'] = attack.attack_dataset(val_indices, verbose=verbose)
+    results['val'] = attack.attack_dataset(val_indices, verbose=verbose, use_embedding=use_embedding)
     attack.print_results(results['val'], "validation")
 
     # Attack full set
     all_indices = list(range(len(full_dataset)))
     if verbose:
         print(f"\nAttacking {len(all_indices)} total samples...")
-    results['full'] = attack.attack_dataset(all_indices, verbose=verbose)
+    results['full'] = attack.attack_dataset(all_indices, verbose=verbose, use_embedding=use_embedding)
     attack.print_results(results['full'], "full")
 
     return results

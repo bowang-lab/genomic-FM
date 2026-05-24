@@ -32,7 +32,7 @@ wandb offline
 # TRAINING PARAMETERS
 # ============================================
 
-MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, luca
+MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone
 
 # Task to train on
 TASK="CLNDN"  # Options: CLNDN (disease), CLNSIG (pathogenicity)
@@ -42,7 +42,7 @@ THRESHOLD=65
 
 # Training hyperparameters
 LEARNING_RATE=0.000005
-BATCH_SIZE=8
+BATCH_SIZE=32
 NUM_EPOCHS=10
 
 # ============================================

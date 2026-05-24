@@ -919,6 +919,11 @@ class ClinVarGroupedDataWrapper:
         if disease_subset is None and DISEASE_SUBSET is not None:
             disease_subset = DISEASE_SUBSET
 
+        # Auto-filter to cardiac diseases for cardiac gene groupings
+        if disease_subset is None and self.grouping in ('cardiac_gene', 'hcm_gene', 'cardiac_panel'):
+            disease_subset = DISEASE_SUBSET_heart
+            print(f"Auto-filtering to {len(disease_subset)} cardiac diseases for '{self.grouping}' grouping")
+
         disease_subset_set = set(disease_subset) if disease_subset else None
 
         # First pass: collect variants with disease labels, grouped by gene

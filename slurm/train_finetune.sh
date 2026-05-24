@@ -58,7 +58,7 @@ TRAINING_MODE="clinvar"  # Options: clinvar, smart
 THRESHOLDS="50.0 60.0 70.0 80.0"
 
 # Batch size
-BATCH_SIZE=8
+BATCH_SIZE=32
 
 # ============================================
 
