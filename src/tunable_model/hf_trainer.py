@@ -646,10 +646,15 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
         # pip uninstall triton
         model = AutoModelForSequenceClassification.from_pretrained("zhihan1996/DNABERT-2-117M", trust_remote_code=True)
         tokenizer = AutoTokenizer.from_pretrained("zhihan1996/DNABERT-2-117M", trust_remote_code=True)
-    elif model_type=='luca':
-        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
-        model = LucaGPLMModel.from_pretrained("LucaGroup/LucaOne-default-step36M")
-        tokenizer = LucaGPLMTokenizer.from_pretrained("LucaGroup/LucaOne-default-step36M")
+    elif model_type=='lucaone':
+        local_luca_path = "./root/models/lucaone"
+        if os.path.exists(local_luca_path):
+            model_path = local_luca_path
+        else:
+            model_path = "AmelieSchreiber/LucaOne"
+        local_files = os.path.exists(model_path)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 

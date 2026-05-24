@@ -194,10 +194,16 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             model_path = "songlab/gpn-star-hg38-v100-200m"
             tokenizer_path = model_path
             print(f"Using HuggingFace GPN-Star model: {model_path}")
-    elif model_type=='luca':
-        model_path = "LucaGroup/LucaOne-default-step36M"
-        tokenizer_path = model_path
-        print(f"Using HuggingFace LucaOne model: {model_path}")
+    elif model_type=='lucaone':
+        local_luca_path = "./root/models/lucaone"
+        if os.path.exists(local_luca_path):
+            model_path = local_luca_path
+            tokenizer_path = model_path
+            print(f"Using local LucaOne model from {model_path}")
+        else:
+            model_path = "AmelieSchreiber/LucaOne"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace LucaOne model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -213,10 +219,10 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             trust_remote_code=True,
             local_files_only=True,
         )
-    elif model_type == 'luca':
-        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
-        base_model = LucaGPLMModel.from_pretrained(model_path)
-        tokenizer = LucaGPLMTokenizer.from_pretrained(tokenizer_path)
+    elif model_type == 'lucaone':
+        local_files = os.path.exists(model_path)
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True, local_files_only=local_files)
     else:
         base_model = AutoModel.from_pretrained(
             model_path,
@@ -224,7 +230,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             local_files_only=True,
         )
 
-    if model_type != 'luca':
+    if model_type != 'lucaone':
         tokenizer = AutoTokenizer.from_pretrained(
             tokenizer_path,
             trust_remote_code=True,

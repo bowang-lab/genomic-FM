@@ -233,9 +233,17 @@ class WrappedModelWithClassificationHead(nn.Module):
             # For decoder models, take the last token from the sequence
             ref_seq_lens = ref_attention_mask.sum(dim=-1)
             alt_seq_lens = alt_attention_mask.sum(dim=-1)
-            batch_index = torch.arange(ref_seq_lens.size(0), device=hidden_states_ref[-1].device)
-            last_hidden_state_ref = hidden_states_ref[-1][batch_index, ref_seq_lens - 1, :]
-            last_hidden_state_alt = hidden_states_alt[-1][batch_index, alt_seq_lens - 1, :]
+            # Use ref_seq_lens.device - HyenaDNA returns nested lists, not tensors
+            batch_index = torch.arange(ref_seq_lens.size(0), device=ref_seq_lens.device)
+            # Handle HyenaDNA's nested list structure
+            hs_ref = hidden_states_ref[-1]
+            hs_alt = hidden_states_alt[-1]
+            if isinstance(hs_ref, (list, tuple)):
+                hs_ref = hs_ref[0]
+            if isinstance(hs_alt, (list, tuple)):
+                hs_alt = hs_alt[0]
+            last_hidden_state_ref = hs_ref[batch_index, ref_seq_lens - 1, :]
+            last_hidden_state_alt = hs_alt[batch_index, alt_seq_lens - 1, :]
             if self.pooler is not None:
                 last_hidden_state_ref = self.pooler(last_hidden_state_ref)
                 last_hidden_state_alt = self.pooler(last_hidden_state_alt)

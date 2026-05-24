@@ -404,7 +404,7 @@ def run_continual_finetune(
         "gpn-star": ("songlab/gpn-star-hg38-v100-200m", AutoModelForMaskedLM),
         "omni_dna_116m": ("zehui127/Omni-DNA-116M", AutoModel),
         "omni_dna_1b": ("zehui127/Omni-DNA-1B", AutoModel),
-        "luca": ("InstaDeepAI/LUCA-GenomeFoundation-v0_5-2B", AutoModel),
+        "lucaone": ("AmelieSchreiber/LucaOne", AutoModel),
     }
 
     if model_type not in model_paths:

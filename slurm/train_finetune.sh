@@ -43,7 +43,7 @@ echo "=================================="
 # ============================================
 
 # Model architecture to use
-MODEL="luca"  # Options: nt, hyenadna, omni_dna_116m, luca, etc.
+MODEL="lucaone"  # Options: nt, hyenadna, omni_dna_116m, lucaone, etc.
 
 # Checkpoint to load from (relative to root/models/ or absolute path)
 CHECKPOINT="pretrain_model_${MODEL}_MAVES_score_DMS"

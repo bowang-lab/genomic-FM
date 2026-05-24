@@ -121,24 +121,22 @@ def get_model_and_tokenizer(model_type: str):
     elif model_type == 'gpn-star':
         local_gpn = "./root/models/gpn-star-hg38-v100-200m"
         model_path = local_gpn if os.path.exists(local_gpn) else "songlab/gpn-star-hg38-v100-200m"
-    elif model_type == 'luca':
-        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
-        model = LucaGPLMModel.from_pretrained("LucaGroup/LucaOne-default-step36M")
-        tokenizer = LucaGPLMTokenizer.from_pretrained("LucaGroup/LucaOne-default-step36M")
-        return model, tokenizer
+    elif model_type == 'lucaone':
+        model_path = local_model_base if os.path.exists(local_model_base) else "AmelieSchreiber/LucaOne"
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
     # Use appropriate model class based on what each model supports
+    local_files = os.path.exists(model_path)
     if model_type in ['gpn-star', 'nt']:
-        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
     elif model_type == 'omni_dna_116m':
-        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
     else:
-        # dnabert2, hyenadna, caduceus, gena-lm support AutoModel
-        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+        # dnabert2, hyenadna, caduceus, gena-lm, lucaone support AutoModel
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
     print(f"Using model from {model_path}")
     return model, tokenizer
 
@@ -267,10 +265,16 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
                 model_path = "songlab/gpn-star-hg38-v100-200m"
                 tokenizer_path = model_path
                 print(f"Using HuggingFace GPN-Star model: {model_path}")
-        elif model_type=='luca':
-            model_path = "LucaGroup/LucaOne-default-step36M"
-            tokenizer_path = model_path
-            print(f"Using HuggingFace LucaOne model: {model_path}")
+        elif model_type=='lucaone':
+            local_luca_path = "./root/models/lucaone"
+            if os.path.exists(local_luca_path):
+                model_path = local_luca_path
+                tokenizer_path = model_path
+                print(f"Using local LucaOne model from {model_path}")
+            else:
+                model_path = "AmelieSchreiber/LucaOne"
+                tokenizer_path = model_path
+                print(f"Using HuggingFace LucaOne model: {model_path}")
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -280,12 +284,17 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         base_model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     elif model_type == 'omni_dna_116m':
         base_model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
-    elif model_type == 'luca':
-        from lucagplm import LucaGPLMModel, LucaGPLMTokenizer
-        base_model = LucaGPLMModel.from_pretrained(model_path)
-        tokenizer = LucaGPLMTokenizer.from_pretrained(tokenizer_path)
-    else:
+    elif model_type == 'lucaone':
+        # Use AmelieSchreiber/LucaOne with trust_remote_code
+        local_files = os.path.exists(model_path)
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True, local_files_only=local_files)
+    elif model_type == 'dnabert2':
+        # DNABERT2 supports add_pooling_layer
         base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True, add_pooling_layer=False)
+    else:
+        # Caduceus, HyenaDNA, GENA-LM don't support add_pooling_layer kwarg
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=True)
     
     # Load checkpoint weights if provided
     if checkpoint_weights_path and os.path.exists(checkpoint_weights_path):
@@ -313,7 +322,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             print(f"Warning: Could not load checkpoint weights: {e}")
             print(f"Continuing with base model weights only")
     
-    if model_type != 'luca':
+    if model_type != 'lucaone':
         tokenizer = AutoTokenizer.from_pretrained(
             tokenizer_path,
             trust_remote_code=True,
@@ -377,7 +386,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
         save_safetensors=False,  # OmniDNA has weight tying (wte/word_embeddings share memory)
         remove_unused_columns=False,
         dataloader_num_workers=num_workers,
-        ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
+        ddp_find_unused_parameters=True,  # Required for single-task mode with unused heads
     )
     print(f"Training arguments prediction loss only: {training_args.prediction_loss_only}")
     # Data Collator
@@ -452,7 +461,7 @@ def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0
             metric_for_best_model="matthews_correlation", greater_is_better=True,
             load_best_model_at_end=True, save_safetensors=False,  # Weight tying issue
             remove_unused_columns=False, dataloader_num_workers=num_workers,
-            ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
+            ddp_find_unused_parameters=True,  # Required for single-task mode with unused heads
         ),
         train_dataset=datasets['train'],
         eval_dataset=eval_ds,
@@ -533,7 +542,7 @@ def run_allheads_multitask_finetune(
             save_safetensors=False,  # Weight tying issue with OmniDNA
             remove_unused_columns=False,
             dataloader_num_workers=num_workers,
-            ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
+            ddp_find_unused_parameters=True,  # Required for single-task mode with unused heads
         ),
         train_dataset=datasets['train'],
         eval_dataset=datasets['val'],
@@ -689,7 +698,7 @@ def run_generative_multitask_finetune(
         neftune_noise_alpha=neftune_noise_alpha if neftune_noise_alpha > 0 else None,
         logging_steps=50,
         report_to="none",
-        ddp_find_unused_parameters=False,  # Set to False for better performance in distributed training
+        ddp_find_unused_parameters=True,  # Required for single-task mode with unused heads
     )
 
     # Create trainer
