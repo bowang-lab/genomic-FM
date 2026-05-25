@@ -66,6 +66,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
+from scipy.stats import norm
+from glob import glob
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -359,6 +361,293 @@ def train_model(
     }
 
 
+def aggregate_lira_results(
+    base_dir: str,
+    target: str,
+    grouping: str,
+    num_experiments: int = 64,
+    output_dir: str = None,
+):
+    """
+    Aggregate LiRA results from all experiments and generate ROC curves.
+
+    Args:
+        base_dir: Base directory containing experiment results
+        target: Prediction target (CLNSIG or CLNDN)
+        grouping: Grouping mode used
+        num_experiments: Number of shadow model experiments
+        output_dir: Directory to save aggregated results and plots
+    """
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import roc_curve, auc, roc_auc_score
+
+    print("\n" + "="*70)
+    print("Aggregating LiRA Results")
+    print("="*70)
+
+    # Find all experiment directories
+    exp_pattern = f"{base_dir}/{target}_{grouping}/exp*_{num_experiments}"
+    exp_dirs = sorted(glob(exp_pattern))
+
+    if not exp_dirs:
+        print(f"No experiment directories found matching: {exp_pattern}")
+        return None
+
+    print(f"Found {len(exp_dirs)} experiment directories")
+
+    # Load results from each experiment
+    all_results = []
+    all_train_masks = []
+
+    for exp_dir in exp_dirs:
+        results_file = os.path.join(exp_dir, f"attack_results_{target}_{grouping}.pkl")
+        mask_file = os.path.join(exp_dir, "train_mask.npy")
+
+        if os.path.exists(results_file):
+            with open(results_file, 'rb') as f:
+                results = pickle.load(f)
+            all_results.append(results)
+
+            if os.path.exists(mask_file):
+                mask = np.load(mask_file)
+                all_train_masks.append(mask)
+            else:
+                all_train_masks.append(None)
+
+    print(f"Loaded {len(all_results)} experiment results")
+
+    if len(all_results) < 2:
+        print("Need at least 2 experiments for LiRA analysis")
+        return None
+
+    # Extract metrics for plotting
+    train_accuracies = [r['train']['overall_accuracy'] for r in all_results]
+    val_accuracies = [r['val']['overall_accuracy'] for r in all_results]
+    train_advantages = [r['train']['advantage'] for r in all_results]
+    val_advantages = [r['val']['advantage'] for r in all_results]
+
+    # Compute membership inference scores using LiRA
+    # For each sample, collect scores across experiments
+    n_samples = len(all_results[0]['full']['all_scores'])
+    n_experiments = len(all_results)
+
+    # Build membership score matrix: [n_experiments, n_samples]
+    # Score = attack accuracy for that sample's group
+    membership_labels = []  # 1 if in training, 0 if not
+    membership_scores_likelihood = []  # scores from likelihood-based attack
+    membership_scores_advantage = []  # advantage over random
+
+    # For LiRA: compute likelihood ratio using shadow model scores
+    in_scores = defaultdict(list)   # scores when sample is IN training
+    out_scores = defaultdict(list)  # scores when sample is OUT of training
+
+    for exp_idx, (results, mask) in enumerate(zip(all_results, all_train_masks)):
+        if mask is None:
+            continue
+
+        # Get per-sample scores from all_scores
+        all_scores = results['full']['all_scores']
+
+        for sample_idx in range(min(len(all_scores), len(mask))):
+            # Get the score for this sample (max similarity to itself in the group)
+            sample_scores = all_scores[sample_idx]
+            if sample_scores:
+                # Self-similarity score (confidence)
+                self_score = max(sample_scores.values()) if sample_scores else 0.5
+
+                if mask[sample_idx]:  # In training
+                    in_scores[sample_idx].append(self_score)
+                else:  # Out of training
+                    out_scores[sample_idx].append(self_score)
+
+    # Compute LiRA membership scores
+    lira_scores = []
+    lira_labels = []
+    lira_offline_scores = []
+
+    for sample_idx in range(n_samples):
+        if sample_idx in in_scores and sample_idx in out_scores:
+            in_vals = np.array(in_scores[sample_idx])
+            out_vals = np.array(out_scores[sample_idx])
+
+            if len(in_vals) > 1 and len(out_vals) > 1:
+                # LiRA online: fit Gaussians to in/out distributions
+                in_mean, in_std = np.mean(in_vals), np.std(in_vals) + 1e-6
+                out_mean, out_std = np.mean(out_vals), np.std(out_vals) + 1e-6
+
+                # For the target experiment (last one), compute likelihood ratio
+                # Assume we're evaluating the last experiment
+                if len(all_train_masks) > 0 and all_train_masks[-1] is not None:
+                    target_mask = all_train_masks[-1]
+                    if sample_idx < len(target_mask):
+                        is_member = target_mask[sample_idx]
+
+                        # Use mean score as the observation
+                        obs = np.mean(in_vals) if is_member else np.mean(out_vals)
+
+                        # LiRA score = log likelihood ratio
+                        log_p_in = norm.logpdf(obs, in_mean, in_std)
+                        log_p_out = norm.logpdf(obs, out_mean, out_std)
+                        lira_score = log_p_in - log_p_out
+
+                        lira_scores.append(lira_score)
+                        lira_labels.append(1 if is_member else 0)
+
+                        # Offline LiRA (fixed variance)
+                        global_std = np.std(np.concatenate([in_vals, out_vals])) + 1e-6
+                        log_p_in_fixed = norm.logpdf(obs, in_mean, global_std)
+                        log_p_out_fixed = norm.logpdf(obs, out_mean, global_std)
+                        lira_offline_scores.append(log_p_in_fixed - log_p_out_fixed)
+
+    # Convert to arrays
+    lira_scores = np.array(lira_scores)
+    lira_labels = np.array(lira_labels)
+    lira_offline_scores = np.array(lira_offline_scores)
+
+    # Create output directory
+    if output_dir is None:
+        output_dir = f"{base_dir}/{target}_{grouping}/aggregate"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Generate plots
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+    # Plot 1: Attack accuracy distribution across experiments
+    ax1 = axes[0, 0]
+    ax1.hist(train_accuracies, bins=15, alpha=0.7, label='Training', color='blue')
+    ax1.hist(val_accuracies, bins=15, alpha=0.7, label='Validation', color='orange')
+    ax1.axvline(np.mean(train_accuracies), color='blue', linestyle='--', label=f'Train mean: {np.mean(train_accuracies):.3f}')
+    ax1.axvline(np.mean(val_accuracies), color='orange', linestyle='--', label=f'Val mean: {np.mean(val_accuracies):.3f}')
+    ax1.set_xlabel('Attack Accuracy')
+    ax1.set_ylabel('Count')
+    ax1.set_title('Attack Accuracy Distribution')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Plot 2: Advantage over random
+    ax2 = axes[0, 1]
+    ax2.hist(train_advantages, bins=15, alpha=0.7, label='Training', color='blue')
+    ax2.hist(val_advantages, bins=15, alpha=0.7, label='Validation', color='orange')
+    ax2.axvline(0, color='red', linestyle='-', linewidth=2, label='Random baseline')
+    ax2.set_xlabel('Advantage over Random')
+    ax2.set_ylabel('Count')
+    ax2.set_title('Attack Advantage Distribution')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    # Plot 3: LiRA ROC curves
+    ax3 = axes[1, 0]
+
+    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
+        # LiRA online ROC
+        fpr_online, tpr_online, _ = roc_curve(lira_labels, lira_scores)
+        auc_online = auc(fpr_online, tpr_online)
+        ax3.plot(fpr_online, tpr_online, 'b-', linewidth=2, label=f'LiRA (online) AUC={auc_online:.3f}')
+
+        # LiRA offline ROC
+        if len(lira_offline_scores) == len(lira_labels):
+            fpr_offline, tpr_offline, _ = roc_curve(lira_labels, lira_offline_scores)
+            auc_offline = auc(fpr_offline, tpr_offline)
+            ax3.plot(fpr_offline, tpr_offline, 'r-', linewidth=2, label=f'LiRA (offline) AUC={auc_offline:.3f}')
+
+        # Random baseline
+        ax3.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Random (AUC=0.500)')
+
+        ax3.set_xlabel('False Positive Rate')
+        ax3.set_ylabel('True Positive Rate')
+        ax3.set_title('LiRA Membership Inference ROC')
+        ax3.legend(loc='lower right')
+        ax3.grid(True, alpha=0.3)
+        ax3.set_xlim([0, 1])
+        ax3.set_ylim([0, 1])
+    else:
+        ax3.text(0.5, 0.5, 'Insufficient data for ROC\n(need more experiments)',
+                ha='center', va='center', fontsize=12)
+        ax3.set_title('LiRA Membership Inference ROC')
+
+    # Plot 4: Summary statistics
+    ax4 = axes[1, 1]
+    ax4.axis('off')
+
+    summary_text = f"""
+    Summary Statistics ({len(all_results)} experiments)
+    {'='*45}
+
+    Attack Accuracy:
+      Training:   {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}
+      Validation: {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}
+
+    Advantage over Random:
+      Training:   {np.mean(train_advantages):.4f} ± {np.std(train_advantages):.4f}
+      Validation: {np.mean(val_advantages):.4f} ± {np.std(val_advantages):.4f}
+
+    LiRA Analysis:
+      Samples analyzed: {len(lira_scores)}
+      Members: {sum(lira_labels)} | Non-members: {len(lira_labels) - sum(lira_labels)}
+    """
+
+    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
+        summary_text += f"""
+      Online AUC:  {auc_online:.4f}
+      Offline AUC: {auc_offline:.4f}
+    """
+
+    ax4.text(0.1, 0.9, summary_text, transform=ax4.transAxes,
+             fontsize=10, verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+    plot_path = os.path.join(output_dir, f'lira_analysis_{target}_{grouping}.png')
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\nPlot saved to: {plot_path}")
+
+    # Save aggregated results
+    agg_results = {
+        'n_experiments': len(all_results),
+        'train_accuracies': train_accuracies,
+        'val_accuracies': val_accuracies,
+        'train_advantages': train_advantages,
+        'val_advantages': val_advantages,
+        'lira_scores': lira_scores.tolist() if len(lira_scores) > 0 else [],
+        'lira_labels': lira_labels.tolist() if len(lira_labels) > 0 else [],
+        'lira_offline_scores': lira_offline_scores.tolist() if len(lira_offline_scores) > 0 else [],
+        'summary': {
+            'mean_train_accuracy': float(np.mean(train_accuracies)),
+            'std_train_accuracy': float(np.std(train_accuracies)),
+            'mean_val_accuracy': float(np.mean(val_accuracies)),
+            'std_val_accuracy': float(np.std(val_accuracies)),
+            'mean_train_advantage': float(np.mean(train_advantages)),
+            'mean_val_advantage': float(np.mean(val_advantages)),
+        }
+    }
+
+    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
+        agg_results['summary']['lira_online_auc'] = float(auc_online)
+        agg_results['summary']['lira_offline_auc'] = float(auc_offline)
+
+    results_path = os.path.join(output_dir, f'aggregate_results_{target}_{grouping}.pkl')
+    with open(results_path, 'wb') as f:
+        pickle.dump(agg_results, f)
+    print(f"Results saved to: {results_path}")
+
+    # Print summary
+    print("\n" + "="*70)
+    print("AGGREGATION SUMMARY")
+    print("="*70)
+    print(f"Experiments analyzed: {len(all_results)}")
+    print(f"Mean training accuracy:   {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}")
+    print(f"Mean validation accuracy: {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}")
+    print(f"Mean training advantage:  {np.mean(train_advantages):.4f}")
+    print(f"Mean validation advantage:{np.mean(val_advantages):.4f}")
+    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
+        print(f"LiRA Online AUC:  {auc_online:.4f}")
+        print(f"LiRA Offline AUC: {auc_offline:.4f}")
+    print("="*70)
+
+    return agg_results
+
+
 def main():
     parser = argparse.ArgumentParser(description="ClinVar grouped attribute inference attack")
 
@@ -396,9 +685,10 @@ def main():
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
 
-    # Training parameters
-    parser.add_argument("--eval_only", type=int, default=1,
-                        help="Only run attack evaluation (no training)")
+    # Mode selection
+    parser.add_argument("--mode", type=str, default="eval",
+                        choices=["train", "eval", "aggregate"],
+                        help="Mode: train (train shadow model), eval (run attack), aggregate (combine results & plot)")
     parser.add_argument("--epochs", type=int, default=50,
                         help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=8,
@@ -420,6 +710,17 @@ def main():
 
     args = parser.parse_args()
 
+    # Handle aggregate mode separately (no model/data needed)
+    if args.mode == "aggregate":
+        base_output_dir = args.output_dir
+        agg_results = aggregate_lira_results(
+            base_dir=base_output_dir,
+            target=args.target,
+            grouping=args.grouping,
+            num_experiments=args.num_experiments,
+        )
+        return agg_results
+
     # Set seeds
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -427,7 +728,8 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
-    # Create output directory
+    # Create output directory (include expid for train/eval modes)
+    base_output_dir = args.output_dir
     args.output_dir = f"{args.output_dir}/{args.target}_{args.grouping}/exp{args.expid}_{args.num_experiments}"
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -482,7 +784,7 @@ def main():
     val_dataset = Subset(full_dataset, val_indices)
 
     # Training or evaluation
-    if not args.eval_only:
+    if args.mode == "train":
         # Training mode: train the classification head
         print("\n" + "="*70)
         print(f"Training Classification Head (expid={args.expid}/{args.num_experiments})")
