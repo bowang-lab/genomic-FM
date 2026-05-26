@@ -17,11 +17,12 @@ set -e
 # USAGE:
 #   sbatch slurm/run_clinvar_attack.sh train    # Train shadow models
 #   sbatch slurm/run_clinvar_attack.sh eval     # Evaluate + run attack
+#   sbatch slurm/run_clinvar_attack.sh all      # Train + eval in one job
 #   python scripts/run_clinvar_attack.py --mode aggregate  # Aggregate results
 # ============================================
 
-# Get mode from command line argument (default: eval)
-MODE=${1:-eval}
+# Get mode from command line argument (default: all)
+MODE=${1:-all}
 
 # Environment setup
 source ~/miniconda3/etc/profile.d/conda.sh
@@ -91,10 +92,8 @@ if [ "$MODE" = "train" ]; then
 fi
 echo "=============================================="
 
-# Build command
-CMD="python scripts/run_clinvar_attack.py \
-    --mode $MODE \
-    --expid $expid \
+# Base command arguments
+BASE_ARGS="--expid $expid \
     --num_experiments $num_experiments \
     --grouping $GROUPING \
     --target $TARGET \
@@ -112,12 +111,28 @@ CMD="python scripts/run_clinvar_attack.py \
 
 # Add disease subset file if specified
 if [ -n "$DISEASE_SUBSET_FILE" ]; then
-    CMD="$CMD --disease_subset_file $DISEASE_SUBSET_FILE"
+    BASE_ARGS="$BASE_ARGS --disease_subset_file $DISEASE_SUBSET_FILE"
 fi
 
-# Run attack
-echo "Running: $CMD"
-eval $CMD
+# Run based on mode
+if [ "$MODE" = "all" ]; then
+    # Run train then eval
+    echo "=== STEP 1: Training ==="
+    CMD="python scripts/run_clinvar_attack.py --mode train $BASE_ARGS"
+    echo "Running: $CMD"
+    eval $CMD
+
+    echo ""
+    echo "=== STEP 2: Evaluation ==="
+    CMD="python scripts/run_clinvar_attack.py --mode eval $BASE_ARGS"
+    echo "Running: $CMD"
+    eval $CMD
+else
+    # Run single mode (train or eval)
+    CMD="python scripts/run_clinvar_attack.py --mode $MODE $BASE_ARGS"
+    echo "Running: $CMD"
+    eval $CMD
+fi
 
 EXIT_CODE=$?
 
