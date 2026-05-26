@@ -160,6 +160,96 @@ def collate_fn(batch):
     return result
 
 
+@torch.no_grad()
+def evaluate_for_lira(
+    model,
+    dataset,
+    device,
+    batch_size=16,
+):
+    """
+    Evaluate model on full dataset and return per-sample predictions/losses.
+
+    This is needed for LiRA membership inference - we need to track
+    each sample's loss when it's IN training vs OUT of training.
+
+    Args:
+        model: Trained model
+        dataset: Full dataset (all samples)
+        device: torch device
+        batch_size: Batch size for evaluation
+
+    Returns:
+        Dict with per-sample predictions, labels, losses, and logits
+    """
+    model.eval()
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=0,  # Avoid multiprocessing issues
+    )
+
+    all_preds = []
+    all_labels = []
+    all_losses = []
+    all_logits = []
+    all_probs = []
+
+    loss_fn = nn.CrossEntropyLoss(reduction='none')  # Per-sample loss
+
+    for batch in tqdm(loader, desc="Evaluating for LiRA"):
+        ref_input_ids = batch["ref_input_ids"].to(device)
+        alt_input_ids = batch["alt_input_ids"].to(device)
+        labels = batch["labels"].to(device)
+        ref_attention_mask = batch.get("ref_attention_mask")
+        alt_attention_mask = batch.get("alt_attention_mask")
+        if ref_attention_mask is not None:
+            ref_attention_mask = ref_attention_mask.to(device)
+        if alt_attention_mask is not None:
+            alt_attention_mask = alt_attention_mask.to(device)
+
+        outputs = model(
+            ref_input_ids=ref_input_ids,
+            ref_attention_mask=ref_attention_mask,
+            alt_input_ids=alt_input_ids,
+            alt_attention_mask=alt_attention_mask,
+        )
+
+        logits = outputs["logits"]
+        probs = torch.softmax(logits, dim=-1)
+        preds = logits.argmax(dim=-1)
+        losses = loss_fn(logits, labels)
+
+        all_preds.append(preds.cpu().numpy())
+        all_labels.append(labels.cpu().numpy())
+        all_losses.append(losses.cpu().numpy())
+        all_logits.append(logits.cpu().numpy())
+        all_probs.append(probs.cpu().numpy())
+
+    all_preds = np.concatenate(all_preds)
+    all_labels = np.concatenate(all_labels)
+    all_losses = np.concatenate(all_losses)
+    all_logits = np.concatenate(all_logits)
+    all_probs = np.concatenate(all_probs)
+
+    # Compute aggregate metrics
+    accuracy = (all_preds == all_labels).mean()
+    mean_loss = all_losses.mean()
+
+    return {
+        "all_preds": all_preds,
+        "all_labels": all_labels,
+        "all_losses": all_losses,
+        "all_logits": all_logits,
+        "all_probs": all_probs,
+        "accuracy": accuracy,
+        "mean_loss": mean_loss,
+    }
+
+
 def train_model(
     model,
     train_dataset,
@@ -371,6 +461,13 @@ def aggregate_lira_results(
     """
     Aggregate LiRA results from all experiments and generate ROC curves.
 
+    Implements all 5 LiRA variants from Carlini et al.:
+    - LiRA (online): per-sample μ, per-sample σ
+    - LiRA (online, fixed variance): per-sample μ, global σ
+    - LiRA (offline): global μ, per-sample σ
+    - LiRA (offline, fixed variance): global μ, global σ
+    - Global Threshold: simple threshold on loss
+
     Args:
         base_dir: Base directory containing experiment results
         target: Prediction target (CLNSIG or CLNDN)
@@ -379,7 +476,7 @@ def aggregate_lira_results(
         output_dir: Directory to save aggregated results and plots
     """
     import matplotlib.pyplot as plt
-    from sklearn.metrics import roc_curve, auc, roc_auc_score
+    from sklearn.metrics import roc_curve, auc
 
     print("\n" + "="*70)
     print("Aggregating LiRA Results")
@@ -396,170 +493,237 @@ def aggregate_lira_results(
     print(f"Found {len(exp_dirs)} experiment directories")
 
     # Load results from each experiment
-    all_results = []
+    all_attack_results = []
+    all_full_metrics = []
     all_train_masks = []
 
     for exp_dir in exp_dirs:
-        results_file = os.path.join(exp_dir, f"attack_results_{target}_{grouping}.pkl")
+        attack_file = os.path.join(exp_dir, f"attack_results_{target}_{grouping}.pkl")
+        metrics_file = os.path.join(exp_dir, f"full_metrics_{target}_{grouping}.pkl")
         mask_file = os.path.join(exp_dir, "train_mask.npy")
 
-        if os.path.exists(results_file):
-            with open(results_file, 'rb') as f:
-                results = pickle.load(f)
-            all_results.append(results)
+        has_attack = os.path.exists(attack_file)
+        has_metrics = os.path.exists(metrics_file)
+        has_mask = os.path.exists(mask_file)
 
-            if os.path.exists(mask_file):
-                mask = np.load(mask_file)
-                all_train_masks.append(mask)
-            else:
-                all_train_masks.append(None)
+        if has_attack:
+            with open(attack_file, 'rb') as f:
+                all_attack_results.append(pickle.load(f))
+        if has_metrics:
+            with open(metrics_file, 'rb') as f:
+                all_full_metrics.append(pickle.load(f))
+        if has_mask:
+            all_train_masks.append(np.load(mask_file))
 
-    print(f"Loaded {len(all_results)} experiment results")
+    print(f"Loaded {len(all_attack_results)} attack results")
+    print(f"Loaded {len(all_full_metrics)} full metrics (for LiRA)")
+    print(f"Loaded {len(all_train_masks)} train masks")
 
-    if len(all_results) < 2:
-        print("Need at least 2 experiments for LiRA analysis")
+    if len(all_full_metrics) < 2 or len(all_train_masks) < 2:
+        print("Need at least 2 experiments with full_metrics for LiRA analysis")
+        if len(all_attack_results) >= 2:
+            print("(Have attack results but missing full_metrics - re-run with --mode eval)")
         return None
 
-    # Extract metrics for plotting
-    train_accuracies = [r['train']['overall_accuracy'] for r in all_results]
-    val_accuracies = [r['val']['overall_accuracy'] for r in all_results]
-    train_advantages = [r['train']['advantage'] for r in all_results]
-    val_advantages = [r['val']['advantage'] for r in all_results]
+    # Extract attack metrics for plotting (if available)
+    train_accuracies = [r['train']['overall_accuracy'] for r in all_attack_results] if all_attack_results else []
+    val_accuracies = [r['val']['overall_accuracy'] for r in all_attack_results] if all_attack_results else []
+    train_advantages = [r['train']['advantage'] for r in all_attack_results] if all_attack_results else []
+    val_advantages = [r['val']['advantage'] for r in all_attack_results] if all_attack_results else []
 
-    # Compute membership inference scores using LiRA
-    # For each sample, collect scores across experiments
-    n_samples = len(all_results[0]['full']['all_scores'])
-    n_experiments = len(all_results)
+    # =========================================================================
+    # LiRA Membership Inference using per-sample losses
+    # =========================================================================
+    n_samples = len(all_full_metrics[0]['all_losses'])
+    n_experiments = len(all_full_metrics)
 
-    # Build membership score matrix: [n_experiments, n_samples]
-    # Score = attack accuracy for that sample's group
-    membership_labels = []  # 1 if in training, 0 if not
-    membership_scores_likelihood = []  # scores from likelihood-based attack
-    membership_scores_advantage = []  # advantage over random
+    print(f"\nComputing LiRA scores for {n_samples} samples across {n_experiments} experiments...")
 
-    # For LiRA: compute likelihood ratio using shadow model scores
-    in_scores = defaultdict(list)   # scores when sample is IN training
-    out_scores = defaultdict(list)  # scores when sample is OUT of training
+    # Collect per-sample losses when IN training vs OUT of training
+    in_losses = defaultdict(list)   # losses when sample is IN training
+    out_losses = defaultdict(list)  # losses when sample is OUT of training
 
-    for exp_idx, (results, mask) in enumerate(zip(all_results, all_train_masks)):
-        if mask is None:
-            continue
+    for exp_idx, (metrics, mask) in enumerate(zip(all_full_metrics, all_train_masks)):
+        losses = metrics['all_losses']
+        for sample_idx in range(min(len(losses), len(mask))):
+            if mask[sample_idx]:  # In training
+                in_losses[sample_idx].append(losses[sample_idx])
+            else:  # Out of training
+                out_losses[sample_idx].append(losses[sample_idx])
 
-        # Get per-sample scores from all_scores
-        all_scores = results['full']['all_scores']
+    # Compute global statistics for offline variants
+    all_in_losses = []
+    all_out_losses = []
+    for sample_idx in range(n_samples):
+        all_in_losses.extend(in_losses.get(sample_idx, []))
+        all_out_losses.extend(out_losses.get(sample_idx, []))
 
-        for sample_idx in range(min(len(all_scores), len(mask))):
-            # Get the score for this sample (max similarity to itself in the group)
-            sample_scores = all_scores[sample_idx]
-            if sample_scores:
-                # Self-similarity score (confidence)
-                self_score = max(sample_scores.values()) if sample_scores else 0.5
+    global_in_mean = np.mean(all_in_losses) if all_in_losses else 0
+    global_out_mean = np.mean(all_out_losses) if all_out_losses else 0
+    global_std = np.std(all_in_losses + all_out_losses) + 1e-6 if (all_in_losses or all_out_losses) else 1.0
 
-                if mask[sample_idx]:  # In training
-                    in_scores[sample_idx].append(self_score)
-                else:  # Out of training
-                    out_scores[sample_idx].append(self_score)
+    print(f"Global stats: IN mean={global_in_mean:.4f}, OUT mean={global_out_mean:.4f}, std={global_std:.4f}")
 
-    # Compute LiRA membership scores
-    lira_scores = []
+    # Compute all 5 LiRA variants
+    # Use the LAST experiment as the "target" model being attacked
+    target_exp_idx = -1
+    target_metrics = all_full_metrics[target_exp_idx]
+    target_mask = all_train_masks[target_exp_idx]
+    target_losses = target_metrics['all_losses']
+
+    lira_online = []
+    lira_online_fixed = []
+    lira_offline = []
+    lira_offline_fixed = []
+    global_threshold = []
     lira_labels = []
-    lira_offline_scores = []
 
     for sample_idx in range(n_samples):
-        if sample_idx in in_scores and sample_idx in out_scores:
-            in_vals = np.array(in_scores[sample_idx])
-            out_vals = np.array(out_scores[sample_idx])
+        if sample_idx not in in_losses or sample_idx not in out_losses:
+            continue
+        if len(in_losses[sample_idx]) < 1 or len(out_losses[sample_idx]) < 1:
+            continue
 
-            if len(in_vals) > 1 and len(out_vals) > 1:
-                # LiRA online: fit Gaussians to in/out distributions
-                in_mean, in_std = np.mean(in_vals), np.std(in_vals) + 1e-6
-                out_mean, out_std = np.mean(out_vals), np.std(out_vals) + 1e-6
+        in_vals = np.array(in_losses[sample_idx])
+        out_vals = np.array(out_losses[sample_idx])
 
-                # For the target experiment (last one), compute likelihood ratio
-                # Assume we're evaluating the last experiment
-                if len(all_train_masks) > 0 and all_train_masks[-1] is not None:
-                    target_mask = all_train_masks[-1]
-                    if sample_idx < len(target_mask):
-                        is_member = target_mask[sample_idx]
+        # Per-sample statistics
+        in_mean = np.mean(in_vals)
+        out_mean = np.mean(out_vals)
+        in_std = np.std(in_vals) + 1e-6 if len(in_vals) > 1 else global_std
+        out_std = np.std(out_vals) + 1e-6 if len(out_vals) > 1 else global_std
 
-                        # Use mean score as the observation
-                        obs = np.mean(in_vals) if is_member else np.mean(out_vals)
+        # Observation: loss from target model
+        obs = target_losses[sample_idx]
+        is_member = target_mask[sample_idx]
 
-                        # LiRA score = log likelihood ratio
-                        log_p_in = norm.logpdf(obs, in_mean, in_std)
-                        log_p_out = norm.logpdf(obs, out_mean, out_std)
-                        lira_score = log_p_in - log_p_out
+        # 1. LiRA Online: per-sample μ, per-sample σ
+        log_p_in = norm.logpdf(obs, in_mean, in_std)
+        log_p_out = norm.logpdf(obs, out_mean, out_std)
+        lira_online.append(log_p_in - log_p_out)
 
-                        lira_scores.append(lira_score)
-                        lira_labels.append(1 if is_member else 0)
+        # 2. LiRA Online Fixed Variance: per-sample μ, global σ
+        log_p_in_fixed = norm.logpdf(obs, in_mean, global_std)
+        log_p_out_fixed = norm.logpdf(obs, out_mean, global_std)
+        lira_online_fixed.append(log_p_in_fixed - log_p_out_fixed)
 
-                        # Offline LiRA (fixed variance)
-                        global_std = np.std(np.concatenate([in_vals, out_vals])) + 1e-6
-                        log_p_in_fixed = norm.logpdf(obs, in_mean, global_std)
-                        log_p_out_fixed = norm.logpdf(obs, out_mean, global_std)
-                        lira_offline_scores.append(log_p_in_fixed - log_p_out_fixed)
+        # 3. LiRA Offline: global μ, per-sample σ
+        log_p_in_global = norm.logpdf(obs, global_in_mean, in_std)
+        log_p_out_global = norm.logpdf(obs, global_out_mean, out_std)
+        lira_offline.append(log_p_in_global - log_p_out_global)
+
+        # 4. LiRA Offline Fixed Variance: global μ, global σ
+        log_p_in_global_fixed = norm.logpdf(obs, global_in_mean, global_std)
+        log_p_out_global_fixed = norm.logpdf(obs, global_out_mean, global_std)
+        lira_offline_fixed.append(log_p_in_global_fixed - log_p_out_global_fixed)
+
+        # 5. Global Threshold: negative loss (lower loss = more likely member)
+        global_threshold.append(-obs)
+
+        lira_labels.append(1 if is_member else 0)
 
     # Convert to arrays
-    lira_scores = np.array(lira_scores)
+    lira_online = np.array(lira_online)
+    lira_online_fixed = np.array(lira_online_fixed)
+    lira_offline = np.array(lira_offline)
+    lira_offline_fixed = np.array(lira_offline_fixed)
+    global_threshold = np.array(global_threshold)
     lira_labels = np.array(lira_labels)
-    lira_offline_scores = np.array(lira_offline_scores)
+
+    print(f"Computed LiRA scores for {len(lira_labels)} samples")
+    print(f"  Members: {sum(lira_labels)}, Non-members: {len(lira_labels) - sum(lira_labels)}")
 
     # Create output directory
     if output_dir is None:
         output_dir = f"{base_dir}/{target}_{grouping}/aggregate"
     os.makedirs(output_dir, exist_ok=True)
 
+    # =========================================================================
     # Generate plots
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    # =========================================================================
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
 
     # Plot 1: Attack accuracy distribution across experiments
     ax1 = axes[0, 0]
-    ax1.hist(train_accuracies, bins=15, alpha=0.7, label='Training', color='blue')
-    ax1.hist(val_accuracies, bins=15, alpha=0.7, label='Validation', color='orange')
-    ax1.axvline(np.mean(train_accuracies), color='blue', linestyle='--', label=f'Train mean: {np.mean(train_accuracies):.3f}')
-    ax1.axvline(np.mean(val_accuracies), color='orange', linestyle='--', label=f'Val mean: {np.mean(val_accuracies):.3f}')
-    ax1.set_xlabel('Attack Accuracy')
-    ax1.set_ylabel('Count')
-    ax1.set_title('Attack Accuracy Distribution')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    if train_accuracies:
+        ax1.hist(train_accuracies, bins=15, alpha=0.7, label='Training', color='blue')
+        ax1.hist(val_accuracies, bins=15, alpha=0.7, label='Validation', color='orange')
+        ax1.axvline(np.mean(train_accuracies), color='blue', linestyle='--', label=f'Train mean: {np.mean(train_accuracies):.3f}')
+        ax1.axvline(np.mean(val_accuracies), color='orange', linestyle='--', label=f'Val mean: {np.mean(val_accuracies):.3f}')
+        ax1.set_xlabel('Attack Accuracy')
+        ax1.set_ylabel('Count')
+        ax1.set_title('Attribute Inference Attack Accuracy')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+    else:
+        ax1.text(0.5, 0.5, 'No attack results available', ha='center', va='center')
+        ax1.set_title('Attribute Inference Attack Accuracy')
 
     # Plot 2: Advantage over random
     ax2 = axes[0, 1]
-    ax2.hist(train_advantages, bins=15, alpha=0.7, label='Training', color='blue')
-    ax2.hist(val_advantages, bins=15, alpha=0.7, label='Validation', color='orange')
-    ax2.axvline(0, color='red', linestyle='-', linewidth=2, label='Random baseline')
-    ax2.set_xlabel('Advantage over Random')
-    ax2.set_ylabel('Count')
-    ax2.set_title('Attack Advantage Distribution')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    if train_advantages:
+        ax2.hist(train_advantages, bins=15, alpha=0.7, label='Training', color='blue')
+        ax2.hist(val_advantages, bins=15, alpha=0.7, label='Validation', color='orange')
+        ax2.axvline(0, color='red', linestyle='-', linewidth=2, label='Random baseline')
+        ax2.set_xlabel('Advantage over Random')
+        ax2.set_ylabel('Count')
+        ax2.set_title('Attack Advantage Distribution')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+    else:
+        ax2.text(0.5, 0.5, 'No attack results available', ha='center', va='center')
+        ax2.set_title('Attack Advantage Distribution')
 
-    # Plot 3: LiRA ROC curves
+    # Plot 3: LiRA ROC curves (log scale, like Emmy's plot)
     ax3 = axes[1, 0]
 
-    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
-        # LiRA online ROC
-        fpr_online, tpr_online, _ = roc_curve(lira_labels, lira_scores)
-        auc_online = auc(fpr_online, tpr_online)
-        ax3.plot(fpr_online, tpr_online, 'b-', linewidth=2, label=f'LiRA (online) AUC={auc_online:.3f}')
+    auc_results = {}
 
-        # LiRA offline ROC
-        if len(lira_offline_scores) == len(lira_labels):
-            fpr_offline, tpr_offline, _ = roc_curve(lira_labels, lira_offline_scores)
-            auc_offline = auc(fpr_offline, tpr_offline)
-            ax3.plot(fpr_offline, tpr_offline, 'r-', linewidth=2, label=f'LiRA (offline) AUC={auc_offline:.3f}')
+    if len(lira_labels) > 10 and len(np.unique(lira_labels)) > 1:
+        # Compute ROC curves for all 5 variants
+        # 1. LiRA Online
+        fpr, tpr, _ = roc_curve(lira_labels, lira_online)
+        auc_val = auc(fpr, tpr)
+        auc_results['online'] = auc_val
+        ax3.plot(fpr, tpr, 'b-', linewidth=2, label=f'LiRA (online) auc={auc_val:.3f}')
 
-        # Random baseline
-        ax3.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Random (AUC=0.500)')
+        # 2. LiRA Online Fixed Variance
+        fpr, tpr, _ = roc_curve(lira_labels, lira_online_fixed)
+        auc_val = auc(fpr, tpr)
+        auc_results['online_fixed'] = auc_val
+        ax3.plot(fpr, tpr, color='orange', linewidth=2, label=f'LiRA (online, fixed variance) auc={auc_val:.3f}')
 
+        # 3. LiRA Offline
+        fpr, tpr, _ = roc_curve(lira_labels, lira_offline)
+        auc_val = auc(fpr, tpr)
+        auc_results['offline'] = auc_val
+        ax3.plot(fpr, tpr, 'g-', linewidth=2, label=f'LiRA (offline) auc={auc_val:.3f}')
+
+        # 4. LiRA Offline Fixed Variance
+        fpr, tpr, _ = roc_curve(lira_labels, lira_offline_fixed)
+        auc_val = auc(fpr, tpr)
+        auc_results['offline_fixed'] = auc_val
+        ax3.plot(fpr, tpr, 'r-', linewidth=2, label=f'LiRA (offline, fixed variance) auc={auc_val:.3f}')
+
+        # 5. Global Threshold
+        fpr, tpr, _ = roc_curve(lira_labels, global_threshold)
+        auc_val = auc(fpr, tpr)
+        auc_results['global_threshold'] = auc_val
+        ax3.plot(fpr, tpr, color='purple', linewidth=2, label=f'Global Threshold auc={auc_val:.3f}')
+
+        # Random baseline (diagonal)
+        ax3.plot([1e-5, 1], [1e-5, 1], 'k--', alpha=0.5)
+
+        # Log scale like Emmy's plot
+        ax3.set_xscale('log')
+        ax3.set_yscale('log')
+        ax3.set_xlim([1e-5, 1])
+        ax3.set_ylim([1e-5, 1])
         ax3.set_xlabel('False Positive Rate')
         ax3.set_ylabel('True Positive Rate')
-        ax3.set_title('LiRA Membership Inference ROC')
-        ax3.legend(loc='lower right')
-        ax3.grid(True, alpha=0.3)
-        ax3.set_xlim([0, 1])
-        ax3.set_ylim([0, 1])
+        ax3.set_title(f'{grouping}')
+        ax3.legend(loc='lower right', fontsize=8)
+        ax3.grid(True, alpha=0.3, which='both')
     else:
         ax3.text(0.5, 0.5, 'Insufficient data for ROC\n(need more experiments)',
                 ha='center', va='center', fontsize=12)
@@ -569,31 +733,37 @@ def aggregate_lira_results(
     ax4 = axes[1, 1]
     ax4.axis('off')
 
+    n_exp = len(all_full_metrics)
     summary_text = f"""
-    Summary Statistics ({len(all_results)} experiments)
-    {'='*45}
+    Summary Statistics ({n_exp} experiments)
+    {'='*50}
 
-    Attack Accuracy:
-      Training:   {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}
-      Validation: {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}
-
-    Advantage over Random:
-      Training:   {np.mean(train_advantages):.4f} ± {np.std(train_advantages):.4f}
-      Validation: {np.mean(val_advantages):.4f} ± {np.std(val_advantages):.4f}
-
-    LiRA Analysis:
-      Samples analyzed: {len(lira_scores)}
+    LiRA Membership Inference:
+      Samples analyzed: {len(lira_labels)}
       Members: {sum(lira_labels)} | Non-members: {len(lira_labels) - sum(lira_labels)}
     """
 
-    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
+    if auc_results:
         summary_text += f"""
-      Online AUC:  {auc_online:.4f}
-      Offline AUC: {auc_offline:.4f}
+    AUC Scores:
+      LiRA (online):              {auc_results.get('online', 0):.3f}
+      LiRA (online, fixed var):   {auc_results.get('online_fixed', 0):.3f}
+      LiRA (offline):             {auc_results.get('offline', 0):.3f}
+      LiRA (offline, fixed var):  {auc_results.get('offline_fixed', 0):.3f}
+      Global Threshold:           {auc_results.get('global_threshold', 0):.3f}
     """
 
-    ax4.text(0.1, 0.9, summary_text, transform=ax4.transAxes,
-             fontsize=10, verticalalignment='top', fontfamily='monospace',
+    if train_accuracies:
+        summary_text += f"""
+    Attribute Inference Attack:
+      Train accuracy: {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}
+      Val accuracy:   {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}
+      Train advantage:{np.mean(train_advantages):.4f}
+      Val advantage:  {np.mean(val_advantages):.4f}
+    """
+
+    ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes,
+             fontsize=9, verticalalignment='top', fontfamily='monospace',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
     plt.tight_layout()
@@ -604,27 +774,30 @@ def aggregate_lira_results(
 
     # Save aggregated results
     agg_results = {
-        'n_experiments': len(all_results),
+        'n_experiments': n_exp,
         'train_accuracies': train_accuracies,
         'val_accuracies': val_accuracies,
         'train_advantages': train_advantages,
         'val_advantages': val_advantages,
-        'lira_scores': lira_scores.tolist() if len(lira_scores) > 0 else [],
+        'lira_online': lira_online.tolist() if len(lira_online) > 0 else [],
+        'lira_online_fixed': lira_online_fixed.tolist() if len(lira_online_fixed) > 0 else [],
+        'lira_offline': lira_offline.tolist() if len(lira_offline) > 0 else [],
+        'lira_offline_fixed': lira_offline_fixed.tolist() if len(lira_offline_fixed) > 0 else [],
+        'global_threshold': global_threshold.tolist() if len(global_threshold) > 0 else [],
         'lira_labels': lira_labels.tolist() if len(lira_labels) > 0 else [],
-        'lira_offline_scores': lira_offline_scores.tolist() if len(lira_offline_scores) > 0 else [],
+        'auc_results': auc_results,
         'summary': {
-            'mean_train_accuracy': float(np.mean(train_accuracies)),
-            'std_train_accuracy': float(np.std(train_accuracies)),
-            'mean_val_accuracy': float(np.mean(val_accuracies)),
-            'std_val_accuracy': float(np.std(val_accuracies)),
-            'mean_train_advantage': float(np.mean(train_advantages)),
-            'mean_val_advantage': float(np.mean(val_advantages)),
+            'mean_train_accuracy': float(np.mean(train_accuracies)) if train_accuracies else None,
+            'std_train_accuracy': float(np.std(train_accuracies)) if train_accuracies else None,
+            'mean_val_accuracy': float(np.mean(val_accuracies)) if val_accuracies else None,
+            'std_val_accuracy': float(np.std(val_accuracies)) if val_accuracies else None,
+            'mean_train_advantage': float(np.mean(train_advantages)) if train_advantages else None,
+            'mean_val_advantage': float(np.mean(val_advantages)) if val_advantages else None,
         }
     }
 
-    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
-        agg_results['summary']['lira_online_auc'] = float(auc_online)
-        agg_results['summary']['lira_offline_auc'] = float(auc_offline)
+    if auc_results:
+        agg_results['summary'].update(auc_results)
 
     results_path = os.path.join(output_dir, f'aggregate_results_{target}_{grouping}.pkl')
     with open(results_path, 'wb') as f:
@@ -635,14 +808,22 @@ def aggregate_lira_results(
     print("\n" + "="*70)
     print("AGGREGATION SUMMARY")
     print("="*70)
-    print(f"Experiments analyzed: {len(all_results)}")
-    print(f"Mean training accuracy:   {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}")
-    print(f"Mean validation accuracy: {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}")
-    print(f"Mean training advantage:  {np.mean(train_advantages):.4f}")
-    print(f"Mean validation advantage:{np.mean(val_advantages):.4f}")
-    if len(lira_scores) > 10 and len(np.unique(lira_labels)) > 1:
-        print(f"LiRA Online AUC:  {auc_online:.4f}")
-        print(f"LiRA Offline AUC: {auc_offline:.4f}")
+    print(f"Experiments analyzed: {n_exp}")
+    print(f"Samples with LiRA scores: {len(lira_labels)}")
+    print(f"  Members: {sum(lira_labels)}, Non-members: {len(lira_labels) - sum(lira_labels)}")
+
+    if auc_results:
+        print("\nLiRA AUC Scores:")
+        print(f"  LiRA (online):              {auc_results.get('online', 0):.4f}")
+        print(f"  LiRA (online, fixed var):   {auc_results.get('online_fixed', 0):.4f}")
+        print(f"  LiRA (offline):             {auc_results.get('offline', 0):.4f}")
+        print(f"  LiRA (offline, fixed var):  {auc_results.get('offline_fixed', 0):.4f}")
+        print(f"  Global Threshold:           {auc_results.get('global_threshold', 0):.4f}")
+
+    if train_accuracies:
+        print("\nAttribute Inference Attack:")
+        print(f"  Mean train accuracy: {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}")
+        print(f"  Mean val accuracy:   {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}")
     print("="*70)
 
     return agg_results
@@ -828,6 +1009,27 @@ def main():
             print(f"Loaded model from epoch {checkpoint['epoch']} (val_acc={checkpoint['val_acc']:.4f})")
         else:
             print(f"\nNo checkpoint found at {ckpt_path}, using randomly initialized head")
+
+        # Evaluate on full dataset and save per-sample metrics (for LiRA)
+        print("\n" + "="*70)
+        print("Evaluating on Full Dataset (for LiRA membership inference)")
+        print("="*70)
+
+        full_metrics = evaluate_for_lira(
+            model=model,
+            dataset=full_dataset,
+            device=device,
+            batch_size=args.batch_size * 2,
+        )
+
+        # Save full metrics for LiRA aggregation
+        metrics_path = os.path.join(args.output_dir, f"full_metrics_{args.target}_{args.grouping}.pkl")
+        with open(metrics_path, 'wb') as f:
+            pickle.dump(full_metrics, f)
+        print(f"Full metrics saved to: {metrics_path}")
+        print(f"  Accuracy: {full_metrics['accuracy']:.4f}")
+        print(f"  Mean loss: {full_metrics['mean_loss']:.4f}")
+        print(f"  Samples: {len(full_metrics['all_preds'])}")
 
         attack_type = "Embedding-based" if args.use_embedding else "Likelihood-based"
         print("\n" + "="*70)
