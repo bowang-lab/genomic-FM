@@ -13,6 +13,16 @@
 
 set -e
 
+# ============================================
+# USAGE:
+#   sbatch slurm/run_clinvar_attack.sh train    # Train shadow models
+#   sbatch slurm/run_clinvar_attack.sh eval     # Evaluate + run attack
+#   python scripts/run_clinvar_attack.py --mode aggregate  # Aggregate results
+# ============================================
+
+# Get mode from command line argument (default: eval)
+MODE=${1:-eval}
+
 # Environment setup
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate genomic-fm
@@ -40,6 +50,13 @@ TARGET="CLNSIG"
 # Attack mode: 0 = likelihood-based, 1 = embedding-based
 USE_EMBEDDING=0
 
+# Training parameters
+EPOCHS=50
+BATCH_SIZE=16
+LR=1e-4
+PATIENCE=10
+FREEZE_BACKBONE=1
+
 # Data parameters
 SEQ_LENGTH=1024
 MIN_VARIANTS=5
@@ -57,6 +74,7 @@ echo "Array Task ID: $SLURM_ARRAY_TASK_ID"
 echo "Node: $SLURM_NODELIST"
 echo "=============================================="
 echo "Configuration:"
+echo "  Mode: $MODE"
 echo "  Experiment: $expid / $num_experiments"
 echo "  Target: $TARGET"
 echo "  Grouping: $GROUPING"
@@ -65,10 +83,17 @@ echo "  Seq length: $SEQ_LENGTH"
 echo "  Min/Max variants: $MIN_VARIANTS / $MAX_VARIANTS"
 echo "  Balance classes: $BALANCE_CLASSES"
 echo "  Use embedding: $USE_EMBEDDING"
+if [ "$MODE" = "train" ]; then
+    echo "  Epochs: $EPOCHS"
+    echo "  Batch size: $BATCH_SIZE"
+    echo "  Learning rate: $LR"
+    echo "  Freeze backbone: $FREEZE_BACKBONE"
+fi
 echo "=============================================="
 
 # Build command
 CMD="python scripts/run_clinvar_attack.py \
+    --mode $MODE \
     --expid $expid \
     --num_experiments $num_experiments \
     --grouping $GROUPING \
@@ -79,7 +104,11 @@ CMD="python scripts/run_clinvar_attack.py \
     --max_variants_per_gene $MAX_VARIANTS \
     --balance_classes $BALANCE_CLASSES \
     --use_embedding $USE_EMBEDDING \
-    --eval_only 1"
+    --epochs $EPOCHS \
+    --batch_size $BATCH_SIZE \
+    --lr $LR \
+    --patience $PATIENCE \
+    --freeze_backbone $FREEZE_BACKBONE"
 
 # Add disease subset file if specified
 if [ -n "$DISEASE_SUBSET_FILE" ]; then
