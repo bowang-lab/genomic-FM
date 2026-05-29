@@ -18,7 +18,16 @@ set -e
 #   sbatch slurm/run_clinvar_attack.sh train    # Train shadow models
 #   sbatch slurm/run_clinvar_attack.sh eval     # Evaluate + run attack
 #   sbatch slurm/run_clinvar_attack.sh all      # Train + eval in one job
-#   python scripts/run_clinvar_attack.py --mode aggregate  # Aggregate results
+#
+# AGGREGATE (after all jobs complete):
+#   python scripts/run_clinvar_attack.py --mode aggregate \
+#       --target CLNSIG --grouping cardiac_gene \
+#       --model ./root/models/pretrain_model_nt_CLNSIG \
+#       --use_embedding 0 --freeze_backbone 0 \
+#       --min_variants_per_gene 5 --max_variants_per_gene 50 \
+#       --num_experiments 64
+#
+# OUTPUT: attack_results/{TARGET}_{GROUPING}_{MODEL}_{lik|emb}_{head|full}[_v{MIN}-{MAX}][_{SUBSET}]/
 # ============================================
 
 # Get mode from command line argument (default: all)
@@ -40,7 +49,10 @@ num_experiments=64
 # CONFIGURATION
 # ============================================
 # Model: HuggingFace model name or local checkpoint path
-MODEL="InstaDeepAI/nucleotide-transformer-500m-human-ref"
+# Base model (not trained on ClinVar):
+# MODEL="./root/models/nucleotide-transformer-500m-human-ref"
+# Pretrained on ClinVar CLNSIG (auto-loads best checkpoint):
+MODEL="./root/models/pretrain_model_nt_CLNSIG"
 
 # Grouping mode: gene, exon, cardiac_panel, cardiac_gene, hcm_gene
 GROUPING="cardiac_gene"
@@ -56,7 +68,7 @@ EPOCHS=50
 BATCH_SIZE=16
 LR=1e-4
 PATIENCE=10
-FREEZE_BACKBONE=1
+FREEZE_BACKBONE=0
 
 # Data parameters
 SEQ_LENGTH=1024

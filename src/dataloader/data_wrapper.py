@@ -462,9 +462,9 @@ class ClinVarGroupedDataWrapper:
         - 'hcm_gene': Only HCM genes (168), each gene is a group
     """
 
-    # Default gene list paths
-    DEFAULT_CGC_GENE_LIST = os.path.expanduser('~/Documents/cgc/CardiacGVRep/root/GeneListCGC.csv')
-    DEFAULT_HCM_GENE_LIST = os.path.expanduser('~/Documents/cgc/CardiacGVRep/root/GeneListHCM.csv')
+    # Default gene list paths (relative to project root)
+    DEFAULT_CGC_GENE_LIST = './root/data/GeneListCGC.csv'
+    DEFAULT_HCM_GENE_LIST = './root/data/GeneListHCM.csv'
 
     def __init__(self, num_records=100000, all_records=False, use_default_dir=True,
                  min_variants_per_gene=5, max_variants_per_gene=50,

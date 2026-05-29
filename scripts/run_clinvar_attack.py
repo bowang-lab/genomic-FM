@@ -76,33 +76,127 @@ from src.attacks import ClinVarAttributeInference
 from src.attacks.attribute_inference import run_attack
 from src.pack_tunable_model.hf_dataloader import return_clinvar_grouped_lira_dataset
 from src.pack_tunable_model.wrap_model import WrappedModelWithClassificationHead
+from src.pack_tunable_model.checkpoint_utils import load_checkpoint_into_model
 from transformers import AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM, AutoTokenizer
 from transformers import get_cosine_schedule_with_warmup
+
+
+def resolve_base_model_path(model_path: str) -> str:
+    """Resolve the base model path - prefer local models over HuggingFace.
+
+    Supported models (from genomic-FM):
+        - nt_transformer_v2_500m: NT v2 500m multi-species (default)
+        - nt_transformer_human_ref: NT 500m human ref
+        - nt_transformer_1000g: NT 500m 1000g
+        - dnabert2: DNABERT-2-117M
+        - hyenadna variants
+        - gena-lm variants
+        - grover
+    """
+    model_lower = model_path.lower()
+
+    # Local paths -> HuggingFace fallbacks
+    # Format: (local_path, huggingface_id)
+    MODEL_REGISTRY = {
+        'nt_v2_500m': ('./root/models/nt', 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species'),
+        'nt_human_ref': ('./root/models/nucleotide-transformer-500m-human-ref', 'InstaDeepAI/nucleotide-transformer-500m-human-ref'),
+        'nt_1000g': ('./root/models/nucleotide-transformer-500m-1000g', 'InstaDeepAI/nucleotide-transformer-500m-1000g'),
+        'dnabert2': ('./root/models/dnabert2', 'zhihan1996/DNABERT-2-117M'),
+        'gpn': ('./root/models/gpn-msa-sapiens', 'songlab/gpn-msa-sapiens'),
+        'lucaone': ('./root/models/lucaone', None),
+        'evo2': ('./root/models/evo2', None),
+    }
+
+    # Match checkpoint name to model key
+    if 'human-ref' in model_lower or 'human_ref' in model_lower:
+        key = 'nt_human_ref'
+    elif '1000g' in model_lower:
+        key = 'nt_1000g'
+    elif 'dnabert' in model_lower:
+        key = 'dnabert2'
+    elif 'gpn' in model_lower:
+        key = 'gpn'
+    elif 'lucaone' in model_lower or 'luca' in model_lower:
+        key = 'lucaone'
+    elif 'evo' in model_lower:
+        key = 'evo2'
+    elif 'nt' in model_lower or 'nucleotide' in model_lower:
+        key = 'nt_v2_500m'  # Default NT is v2 multispecies
+    else:
+        key = 'nt_v2_500m'  # Default
+
+    local_path, hf_id = MODEL_REGISTRY[key]
+
+    # Try local path first (no internet needed)
+    if os.path.isdir(local_path):
+        print(f"Using local base model: {local_path}")
+        return local_path
+
+    # Fallback to HuggingFace
+    if hf_id:
+        print(f"Local model not found, using HuggingFace: {hf_id}")
+        return hf_id
+
+    raise FileNotFoundError(f"Model not found locally at {local_path} and no HuggingFace fallback available")
+
+
+def find_best_checkpoint(model_dir: Path) -> Path:
+    """Find the best checkpoint in a directory based on trainer_state.json."""
+    checkpoint_dirs = sorted(
+        [d for d in model_dir.iterdir() if d.is_dir() and d.name.startswith('checkpoint-')],
+        key=lambda x: int(x.name.split('-')[1])
+    )
+
+    if not checkpoint_dirs:
+        raise ValueError(f"No checkpoint directories found in {model_dir}")
+
+    # Try to find best from trainer_state.json
+    for ckpt_dir in reversed(checkpoint_dirs):  # Start from latest
+        trainer_state = ckpt_dir / "trainer_state.json"
+        if trainer_state.exists():
+            import json
+            with open(trainer_state) as f:
+                state = json.load(f)
+            if "best_model_checkpoint" in state and state["best_model_checkpoint"]:
+                best_path = Path(state["best_model_checkpoint"])
+                if best_path.exists():
+                    return best_path
+                # Try relative path
+                best_name = best_path.name
+                for d in checkpoint_dirs:
+                    if d.name == best_name:
+                        return d
+
+    # Default to latest checkpoint
+    return checkpoint_dirs[-1]
 
 
 def load_model_and_tokenizer(
     model: str,
     num_classes: int = 2,
-    device: str = 'cuda'
+    device: str = 'cuda',
+    base_model_id: str = None
 ):
     """
     Load model and tokenizer from HuggingFace or local checkpoint.
 
-    Auto-detects whether path is a local checkpoint or HuggingFace model.
+    For local checkpoints without config.json, loads base architecture from HuggingFace
+    and then loads checkpoint weights.
 
     Args:
-        model: HuggingFace model name (e.g., 'InstaDeepAI/nucleotide-transformer-v2-50m-multi-species')
-               or local checkpoint path
+        model: HuggingFace model name or local checkpoint path
         num_classes: Number of output classes
         device: Device to load model on
+        base_model_id: Optional HuggingFace ID for base model (auto-detected if None)
 
     Returns:
         Tuple of (model, tokenizer)
     """
-    # Check if it's a local path with a saved model
     is_local = os.path.isdir(model)
 
     if is_local:
+        model_path = Path(model)
+
         # Try to load as WrappedModelWithClassificationHead first
         try:
             loaded_model = WrappedModelWithClassificationHead.from_pretrained(model)
@@ -111,7 +205,67 @@ def load_model_and_tokenizer(
             return loaded_model.to(device), tokenizer
         except Exception as e:
             print(f"Could not load as wrapped model: {e}")
-            # Try loading as base model
+
+        # Check if this is a checkpoint directory with subdirectories
+        checkpoint_dirs = [d for d in model_path.iterdir() if d.is_dir() and d.name.startswith('checkpoint-')]
+
+        if checkpoint_dirs:
+            print(f"Found {len(checkpoint_dirs)} checkpoint directories")
+
+            # Resolve base model path (local or HuggingFace)
+            hf_id = base_model_id or resolve_base_model_path(model)
+            print(f"Using base model: {hf_id}")
+
+            # Load tokenizer and base model architecture
+            tokenizer = AutoTokenizer.from_pretrained(hf_id, trust_remote_code=True)
+
+            # Detect model type (check both path and original model name)
+            model_lower = hf_id.lower()
+            orig_lower = model.lower()
+            is_nt = 'nucleotide-transformer' in model_lower or '/nt' in model_lower or 'root/models/nt' in orig_lower
+            is_omni = 'omni' in model_lower or 'omni' in orig_lower
+
+            if is_nt:
+                base_model = AutoModelForMaskedLM.from_pretrained(hf_id, trust_remote_code=True)
+            elif is_omni:
+                base_model = AutoModelForCausalLM.from_pretrained(hf_id, trust_remote_code=True)
+            else:
+                base_model = AutoModelForMaskedLM.from_pretrained(hf_id, trust_remote_code=True)
+
+            # Find best checkpoint and load weights
+            best_ckpt = find_best_checkpoint(model_path)
+            print(f"Loading weights from: {best_ckpt}")
+
+            weights_path = best_ckpt / "pytorch_model.bin"
+            if weights_path.exists():
+                state_dict = torch.load(weights_path, map_location="cpu")
+
+                # Filter to matching keys (handle potential prefix mismatches)
+                model_keys = set(base_model.state_dict().keys())
+                filtered = {}
+                for k, v in state_dict.items():
+                    # Try original key
+                    if k in model_keys:
+                        filtered[k] = v
+                    # Try without 'base_model.' prefix
+                    elif k.replace("base_model.", "", 1) in model_keys:
+                        filtered[k.replace("base_model.", "", 1)] = v
+                    # Try without 'model.' prefix
+                    elif k.replace("model.", "", 1) in model_keys:
+                        filtered[k.replace("model.", "", 1)] = v
+
+                if filtered:
+                    base_model.load_state_dict(filtered, strict=False)
+                    print(f"Loaded {len(filtered)}/{len(state_dict)} weights from checkpoint")
+                else:
+                    print("Warning: No matching weights found, using base model weights")
+            else:
+                print(f"Warning: No pytorch_model.bin found at {weights_path}")
+
+            # Create wrapped model with classification head
+            wrapped_model = WrappedModelWithClassificationHead(base_model, num_classes=num_classes)
+            return wrapped_model.to(device), tokenizer
+        else:
             print(f"Trying to load as base model from {model}...")
 
     # Load from HuggingFace or local base model
@@ -455,6 +609,12 @@ def aggregate_lira_results(
     base_dir: str,
     target: str,
     grouping: str,
+    model: str = None,
+    use_embedding: int = 0,
+    freeze_backbone: int = 1,
+    min_variants_per_gene: int = 5,
+    max_variants_per_gene: int = 50,
+    disease_subset_file: str = None,
     num_experiments: int = 64,
     output_dir: str = None,
 ):
@@ -472,6 +632,11 @@ def aggregate_lira_results(
         base_dir: Base directory containing experiment results
         target: Prediction target (CLNSIG or CLNDN)
         grouping: Grouping mode used
+        model: Model name/path (used to construct experiment directory name)
+        use_embedding: Whether embedding-based attack was used (0 or 1)
+        min_variants_per_gene: Min variants per gene filter used
+        max_variants_per_gene: Max variants per gene filter used
+        disease_subset_file: Disease subset file used (if any)
         num_experiments: Number of shadow model experiments
         output_dir: Directory to save aggregated results and plots
     """
@@ -482,8 +647,24 @@ def aggregate_lira_results(
     print("Aggregating LiRA Results")
     print("="*70)
 
+    # Construct experiment name to match train/eval naming
+    if model:
+        model_name = os.path.basename(model.rstrip('/'))
+        emb_suffix = "_emb" if use_embedding else "_lik"
+        freeze_suffix = "_head" if freeze_backbone else "_full"
+        data_suffix = ""
+        if min_variants_per_gene != 5 or max_variants_per_gene != 50:
+            data_suffix += f"_v{min_variants_per_gene}-{max_variants_per_gene}"
+        if disease_subset_file:
+            subset_name = os.path.basename(disease_subset_file).replace('.txt', '').replace('_related_diseases', '')
+            data_suffix += f"_{subset_name}"
+        experiment_name = f"{target}_{grouping}_{model_name}{emb_suffix}{freeze_suffix}{data_suffix}"
+    else:
+        # Fallback for legacy runs without model in path
+        experiment_name = f"{target}_{grouping}"
+
     # Find all experiment directories
-    exp_pattern = f"{base_dir}/{target}_{grouping}/exp*_{num_experiments}"
+    exp_pattern = f"{base_dir}/{experiment_name}/exp*_{num_experiments}"
     exp_dirs = sorted(glob(exp_pattern))
 
     if not exp_dirs:
@@ -635,7 +816,7 @@ def aggregate_lira_results(
 
     # Create output directory
     if output_dir is None:
-        output_dir = f"{base_dir}/{target}_{grouping}/aggregate"
+        output_dir = f"{base_dir}/{experiment_name}/aggregate"
     os.makedirs(output_dir, exist_ok=True)
 
     # =========================================================================
@@ -857,6 +1038,8 @@ def main():
     # Model parameters
     parser.add_argument("--model", type=str, default="InstaDeepAI/nucleotide-transformer-500m-human-ref",
                         help="HuggingFace model name or local checkpoint path")
+    parser.add_argument("--base_model", type=str, default=None,
+                        help="HuggingFace base model ID for loading checkpoint weights (auto-detected if not specified)")
 
     # LiRA parameters
     parser.add_argument("--expid", type=int, default=0,
@@ -898,6 +1081,12 @@ def main():
             base_dir=base_output_dir,
             target=args.target,
             grouping=args.grouping,
+            model=args.model,
+            use_embedding=args.use_embedding,
+            freeze_backbone=args.freeze_backbone,
+            min_variants_per_gene=args.min_variants_per_gene,
+            max_variants_per_gene=args.max_variants_per_gene,
+            disease_subset_file=args.disease_subset_file,
             num_experiments=args.num_experiments,
         )
         return agg_results
@@ -910,8 +1099,22 @@ def main():
         torch.cuda.manual_seed_all(args.seed)
 
     # Create output directory (include expid for train/eval modes)
+    # Extract model name from path (e.g., "./root/models/nt-500m" -> "nt-500m")
+    model_name = os.path.basename(args.model.rstrip('/'))
+    emb_suffix = "_emb" if args.use_embedding else "_lik"
+    freeze_suffix = "_head" if args.freeze_backbone else "_full"
+
+    # Add data filtering parameters to experiment name (only if non-default)
+    data_suffix = ""
+    if args.min_variants_per_gene != 5 or args.max_variants_per_gene != 50:
+        data_suffix += f"_v{args.min_variants_per_gene}-{args.max_variants_per_gene}"
+    if args.disease_subset_file:
+        subset_name = os.path.basename(args.disease_subset_file).replace('.txt', '').replace('_related_diseases', '')
+        data_suffix += f"_{subset_name}"
+
     base_output_dir = args.output_dir
-    args.output_dir = f"{args.output_dir}/{args.target}_{args.grouping}/exp{args.expid}_{args.num_experiments}"
+    experiment_name = f"{args.target}_{args.grouping}_{model_name}{emb_suffix}{freeze_suffix}{data_suffix}"
+    args.output_dir = f"{args.output_dir}/{experiment_name}/exp{args.expid}_{args.num_experiments}"
     os.makedirs(args.output_dir, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -923,7 +1126,8 @@ def main():
     model, tokenizer = load_model_and_tokenizer(
         model=args.model,
         num_classes=2,  # Default for CLNSIG, will be updated for CLNDN after data loading
-        device=str(device)
+        device=str(device),
+        base_model_id=args.base_model
     )
 
     # Load data with grouped LiRA function
@@ -949,6 +1153,25 @@ def main():
     full_dataset = datasets[f'{task_name}_full']
     train_mask = stats['membership_info']['sample_membership']
     num_classes = stats['membership_info']['num_classes']
+
+    # Update classification head if num_classes differs from default (2)
+    if num_classes != 2:
+        print(f"\nReinitializing classification head for {num_classes} classes...")
+        # Replace the final layer of the classification head
+        old_head = model.classification_head
+        # Get input features from the second-to-last layer (Linear -> ReLU -> Dropout -> Linear)
+        # The last layer is at index -1, it's nn.Linear(128, old_num_classes)
+        model.classification_head = nn.Sequential(
+            old_head[0],  # nn.Linear(hidden_size, 128)
+            old_head[1],  # nn.ReLU()
+            old_head[2],  # nn.Dropout(0.1)
+            nn.Linear(128, num_classes)  # New final layer with correct num_classes
+        )
+        # Initialize the new final layer
+        nn.init.xavier_uniform_(model.classification_head[-1].weight)
+        nn.init.constant_(model.classification_head[-1].bias, 0.0)
+        model = model.to(device)
+        print(f"Classification head updated: 2 -> {num_classes} classes")
 
     print(f"\nDataset loaded:")
     print(f"  Target: {args.target}")
