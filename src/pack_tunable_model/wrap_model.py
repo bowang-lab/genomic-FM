@@ -200,13 +200,13 @@ class WrappedModelWithClassificationHead(nn.Module):
 
         # Handle models that return tuples instead of objects (e.g., DNABERT2)
         # Extract hidden states properly based on output type
+        # Keep as list/tuple to preserve layer indexing - don't wrap in extra tuple!
         if isinstance(outputs_ref, tuple):
             # For models returning tuples, the last hidden state is typically the first element
             hidden_states_ref = (outputs_ref[0],)
         elif hasattr(outputs_ref, 'hidden_states') and outputs_ref.hidden_states is not None:
             hidden_states_ref = outputs_ref.hidden_states
-            if not isinstance(hidden_states_ref, tuple):
-                hidden_states_ref = (hidden_states_ref,)
+            # Don't wrap lists in tuples - we need [-1] to get last LAYER, not last element of wrapper
         elif hasattr(outputs_ref, 'last_hidden_state'):
             hidden_states_ref = (outputs_ref.last_hidden_state,)
         else:
@@ -216,16 +216,24 @@ class WrappedModelWithClassificationHead(nn.Module):
             hidden_states_alt = (outputs_alt[0],)
         elif hasattr(outputs_alt, 'hidden_states') and outputs_alt.hidden_states is not None:
             hidden_states_alt = outputs_alt.hidden_states
-            if not isinstance(hidden_states_alt, tuple):
-                hidden_states_alt = (hidden_states_alt,)
+            # Don't wrap lists in tuples - we need [-1] to get last LAYER, not last element of wrapper
         elif hasattr(outputs_alt, 'last_hidden_state'):
             hidden_states_alt = (outputs_alt.last_hidden_state,)
         else:
             raise ValueError(f"Cannot extract hidden states from model output: {type(outputs_alt)}")
+
         if not self.decoder:
             # For encoder models, apply pooling strategy (cls or mean)
-            last_hidden_state_ref = self._apply_pooling(hidden_states_ref[-1], ref_attention_mask)
-            last_hidden_state_alt = self._apply_pooling(hidden_states_alt[-1], alt_attention_mask)
+            # Get the last layer's hidden states
+            hs_ref = hidden_states_ref[-1]
+            hs_alt = hidden_states_alt[-1]
+            # Handle Caduceus bidirectional output: tuple of (fwd, bwd) tensors - use forward
+            if isinstance(hs_ref, (list, tuple)):
+                hs_ref = hs_ref[0]
+            if isinstance(hs_alt, (list, tuple)):
+                hs_alt = hs_alt[0]
+            last_hidden_state_ref = self._apply_pooling(hs_ref, ref_attention_mask)
+            last_hidden_state_alt = self._apply_pooling(hs_alt, alt_attention_mask)
             if self.pooler is not None:
                 last_hidden_state_ref = self.pooler(last_hidden_state_ref)
                 last_hidden_state_alt = self.pooler(last_hidden_state_alt)
@@ -233,11 +241,11 @@ class WrappedModelWithClassificationHead(nn.Module):
             # For decoder models, take the last token from the sequence
             ref_seq_lens = ref_attention_mask.sum(dim=-1)
             alt_seq_lens = alt_attention_mask.sum(dim=-1)
-            # Use ref_seq_lens.device - HyenaDNA returns nested lists, not tensors
             batch_index = torch.arange(ref_seq_lens.size(0), device=ref_seq_lens.device)
-            # Handle HyenaDNA's nested list structure
+            # Get the last layer's hidden states
             hs_ref = hidden_states_ref[-1]
             hs_alt = hidden_states_alt[-1]
+            # Handle Caduceus bidirectional output: tuple of (fwd, bwd) tensors - use forward
             if isinstance(hs_ref, (list, tuple)):
                 hs_ref = hs_ref[0]
             if isinstance(hs_alt, (list, tuple)):

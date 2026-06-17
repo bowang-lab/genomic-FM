@@ -43,7 +43,7 @@ echo "=================================="
 # ============================================
 
 # Model architecture to use
-MODEL="lucaone"  # Options: nt, hyenadna, omni_dna_116m, lucaone, etc.
+MODEL="omni_dna_116m"  # Options: nt, hyenadna, omni_dna_116m, lucaone, etc.
 
 # Checkpoint to load from (relative to root/models/ or absolute path)
 CHECKPOINT="pretrain_model_${MODEL}_MAVES_score_DMS"
@@ -60,13 +60,18 @@ THRESHOLDS="50.0 60.0 70.0 80.0"
 # Batch size
 BATCH_SIZE=32
 
+# Pooling strategy for encoder models (ignored for decoder models)
+POOLING="mean"  # Options: cls, mean, last, cov
+
 # ============================================
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
     DECODER_FLAG="--decoder"
+    POOLING_FLAG="--pooling last"
 else
     DECODER_FLAG=""
+    POOLING_FLAG="--pooling $POOLING"
 fi
 
 echo "============================================"
@@ -111,6 +116,7 @@ if [ "$TRAINING_MODE" == "clinvar" ]; then
             --batch_size $BATCH_SIZE \
             --pretrained_model "$CHECKPOINT" \
             $DECODER_FLAG \
+            $POOLING_FLAG \
             2>&1 | tee logs/${TASK}_from_$(basename ${CHECKPOINT})_${SLURM_JOB_ID}.log
 
         if [ $? -eq 0 ]; then
@@ -149,6 +155,7 @@ elif [ "$TRAINING_MODE" == "smart" ]; then
                 --threshold "$THRESHOLD" \
                 --checkpoint_path "$CHECKPOINT" \
                 $DECODER_FLAG \
+                $POOLING_FLAG \
                 2>&1 | tee logs/smart_${TASK}_threshold_${THRESHOLD}_from_$(basename ${CHECKPOINT})_${SLURM_JOB_ID}.log
 
             if [ $? -eq 0 ]; then

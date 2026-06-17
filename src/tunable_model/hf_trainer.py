@@ -342,24 +342,27 @@ class MultitaskTrainer(transformers.Trainer):
         task_names = inputs.pop("task_names", None)
         labels = inputs.get("labels")
 
+        # Unwrap DDP model if needed
+        unwrapped_model = model.module if hasattr(model, 'module') else model
+
         # Dynamic task-specific classification head
         if task_names is not None and len(task_names) > 0:
             unique_tasks = list(set(task_names))
 
             # Create task-specific classification heads if not exists
-            if not hasattr(model, 'task_classification_heads'):
-                model.task_classification_heads = torch.nn.ModuleDict()
+            if not hasattr(unwrapped_model, 'task_classification_heads'):
+                unwrapped_model.task_classification_heads = torch.nn.ModuleDict()
 
             for task in unique_tasks:
-                if task not in model.task_classification_heads:
+                if task not in unwrapped_model.task_classification_heads:
                     num_classes = self.task_num_classes.get(task, 2)  # Default to binary if not specified
                     # MLP head (matches Single-Task and AllHeads for consistency)
-                    model.task_classification_heads[task] = torch.nn.Sequential(
-                        torch.nn.Linear(model.config.hidden_size, 128),
+                    unwrapped_model.task_classification_heads[task] = torch.nn.Sequential(
+                        torch.nn.Linear(unwrapped_model.config.hidden_size, 128),
                         torch.nn.ReLU(),
                         torch.nn.Dropout(0.1),
                         torch.nn.Linear(128, num_classes)
-                    ).to(model.device)
+                    ).to(unwrapped_model.device)
 
             # Route inputs to task-specific heads
             # Check if model doesn't support attention_mask (HyenaDNA, Caduceus/Mamba)
@@ -394,7 +397,7 @@ class MultitaskTrainer(transformers.Trainer):
                 # Use list to handle different output sizes per task
                 logits_list = []
                 for i, (task, hidden_state) in enumerate(zip(task_names, last_hidden_state)):
-                    logits_list.append(model.task_classification_heads[task](hidden_state))
+                    logits_list.append(unwrapped_model.task_classification_heads[task](hidden_state))
                 logits = torch.stack(logits_list, dim=0)
             else:
                 # Decoder-only models (HyenaDNA, OmniDNA): use last token
@@ -422,7 +425,7 @@ class MultitaskTrainer(transformers.Trainer):
                 # run each sample's difference vector through its task head
                 logits_list = []
                 for i, task in enumerate(task_names):
-                    logits_list.append(model.task_classification_heads[task](last_hidden_state[i]))
+                    logits_list.append(unwrapped_model.task_classification_heads[task](last_hidden_state[i]))
                 logits = torch.stack(logits_list, dim=0)
 
             # Compute per-sample loss based on task type (handles mixed batches)
@@ -569,7 +572,7 @@ class MultitaskTrainer(transformers.Trainer):
                 # run each sample's difference vector through its task head
                 logits_list = []
                 for i, task in enumerate(task_names):
-                    logits_list.append(model.task_classification_heads[task](last_hidden_state[i]))
+                    logits_list.append(unwrapped_model.task_classification_heads[task](last_hidden_state[i]))
                 logits = torch.stack(logits_list, dim=0)
 
             # Always compute loss (per-sample to handle mixed batches)

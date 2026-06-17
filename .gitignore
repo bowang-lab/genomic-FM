@@ -84,3 +84,7 @@ slurm-*
 
 # privacy
 attack_results
+
+# Local analysis plots #
+########################
+plots/

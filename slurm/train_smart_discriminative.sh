@@ -64,7 +64,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --data_source "$DATA_SOURCE" \
     --clndn \
     --clnsig \
-    --threshold 65 \
+    --threshold 70 \
     --learning_rate 0.000005 \
     --batch_size 2 \
     --num_epochs 10 \

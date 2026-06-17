@@ -48,7 +48,7 @@ MODEL="omni_dna_116m"  # Options: omni_dna_116m, omni_dna_1b
 LEARNING_RATE=1e-5
 BATCH_SIZE=4  # Lower batch size for generative (more memory intensive)
 NUM_EPOCHS=10
-THRESHOLD=65
+THRESHOLD=70  # Options: 50, 60, 70, 80
 
 # NEFTune noise for regularization (0 to disable)
 NEFTUNE_ALPHA=5.0

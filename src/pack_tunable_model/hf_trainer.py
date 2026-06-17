@@ -119,7 +119,7 @@ def compute_metrics(eval_pred, task_type="classification"):
     predictions, labels = eval_pred
     return calculate_metric_with_sklearn(predictions, labels, task_type)
 
-def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
+def run_single_task_finetune(task, seed, model_type='nt', decoder=False, pooling='cls', test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
                             max_grad_norm=1.0, num_workers=8, gradient_checkpointing=False,
                             filter_genes=None, experimental_methods=None, region_type='all',
@@ -292,8 +292,8 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
     # Create wrapped model with classification head
     model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder,
-                                                comparison_mode=comparison_mode)
-    accelerator.print(f"Using comparison mode: {comparison_mode}")
+                                                comparison_mode=comparison_mode, pooling=pooling)
+    accelerator.print(f"Using comparison mode: {comparison_mode}, pooling: {pooling}")
 
     # Enable gradient checkpointing if requested
     if gradient_checkpointing and hasattr(model, 'gradient_checkpointing_enable'):
@@ -418,6 +418,8 @@ def main():
                         help="Random seed value for training")
     parser.add_argument("--decoder", action="store_true",
                         help="Whether the model has a decoder architecture")
+    parser.add_argument("--pooling", type=str, default="cls", choices=["cls", "mean", "last"],
+                        help="Pooling strategy: cls (first token), mean (mean pooling), last (last token)")
     parser.add_argument("--test_only", action="store_true",
                         help="Only run evaluation on the test set")
     parser.add_argument("--task", type=str, default="CLNSIG",
@@ -509,7 +511,7 @@ def main():
     normalize_scores = args.normalize_scores
 
     # Run with specified task and essential filters
-    run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.test_only,
+    run_single_task_finetune(args.task, args.seed, args.model, args.decoder, args.pooling, args.test_only,
                             learning_rate=args.learning_rate,
                             batch_size=args.batch_size,
                             num_epochs=args.num_epochs,

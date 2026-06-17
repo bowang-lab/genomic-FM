@@ -13,8 +13,8 @@
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=vallisubasri@gmail.com
 
-# Exit on any error
-set -e
+# Exit on any error (pipefail ensures pipe failures are caught)
+set -eo pipefail
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
@@ -30,13 +30,18 @@ wandb offline
 
 # Training parameters
 MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
-BATCH_SIZE=32
+BATCH_SIZE=64
+
+# Pooling strategy for encoder models (ignored for decoder models)
+POOLING="mean"  # Options: cls, mean, last, cov
 
 # Set decoder flag for autoregressive models
 if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
     DECODER_FLAG="--decoder"
+    POOLING_FLAG="--pooling last"
 else
     DECODER_FLAG=""
+    POOLING_FLAG="--pooling $POOLING"
 fi
 
 # Checkpoint paths
@@ -110,6 +115,7 @@ for CHECKPOINT_NAME in "CLNDN" "CLNSIG" "MAVES_DMS" "MAVES_REGULATORY"; do
                 --checkpoint_path "$CHECKPOINT" \
                 --batch_size "$BATCH_SIZE" \
                 $DECODER_FLAG \
+                $POOLING_FLAG \
                 2>&1 | tee logs/smart_from_${CHECKPOINT_NAME}_to_${TASK}_threshold_${THRESHOLD}_${SLURM_JOB_ID}.log
 
             if [ $? -eq 0 ]; then

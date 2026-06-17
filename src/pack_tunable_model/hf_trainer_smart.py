@@ -141,9 +141,9 @@ def get_model_and_tokenizer(model_type: str):
     return model, tokenizer
 
 
-def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_only=False,
+def run_single_task_finetune(task, seed, model_type='nt', decoder=False, pooling='cls', test_only=False,
                             learning_rate=0.000005, batch_size=8, num_epochs=10,
-                            max_grad_norm=1.0, num_workers=8, threshold=65.0, checkpoint_path=None, checkpoint_step=None,
+                            max_grad_norm=1.0, num_workers=2, threshold=65.0, checkpoint_path=None, checkpoint_step=None,
                             min_samples_per_class=2):
     set_seed(seed)
     accelerator = Accelerator()
@@ -329,43 +329,19 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
             local_files_only=True,
         )
 
-    ########### Load Dataset old ##################
-        # dangerous zone: so we need to use main_process_first
-        # Code in this block is executed by rank-0 first,
-        # all other ranks are blocked until rank-0 exits the block.
-    # datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-    #     tokenizer, task, seed=seed
-    # )
-    # Map task to target for cleaner interface
+    ########### Load Dataset ##################
     target = 'disease' if task == 'CLNDN' else 'score'
-    
+
     datasets, task_num_classes, max_seq_len = return_smart_dataset(
         tokenizer, 'root/data/unfiltered_variants.csv',
-        target=target, task_name=task, threshold=threshold, min_samples_per_class=min_samples_per_class
+        target=target, task_name=task, threshold=threshold,
+        min_samples_per_class=min_samples_per_class
     )
     tokenizer.model_max_length = max_seq_len
-        # << all ranks continue here >>
     num_classes = task_num_classes[task]
-    ################### Main Process Only ###########################
-    # if accelerator.is_main_process:
-    #     accelerator.print(f"Loading dataset for task {task} on main process")
-    #     datasets, task_num_classes, max_seq_len = return_clinvar_multitask_dataset(
-    #         tokenizer, task, seed=seed
-    #     )
-    #     num_classes = task_num_classes[task]
-    # else:
-    #     # Dummy values for non-main processes
-    #     datasets = {}
-    #     task_num_classes = {task: 2}  # Default to binary classification
-    #     max_seq_len = 1000
-    #     num_classes = 2
-    # # Broadcast num_classes from main process to all processes
-    # num_classes = accelerator.prepare(torch.tensor([num_classes], device=accelerator.device))[0].item()
-    # accelerator.print(f"Loading base model from {model_path}")
-    ##############################################
 
     # Create wrapped model with classification head
-    model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder)
+    model = WrappedModelWithClassificationHead(base_model, num_classes, decoder=decoder, pooling=pooling)
 
     # Model is already loaded with the appropriate checkpoint or base model
     # Prepare Training Arguments
@@ -427,7 +403,7 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, test_on
 
 
 def run_multitask_finetune(seed, model_type='nt', decoder=False, learning_rate=0.000005, batch_size=8,
-                           num_epochs=10, max_grad_norm=1.0, num_workers=8, threshold=65.0,
+                           num_epochs=10, max_grad_norm=1.0, num_workers=2, threshold=65.0,
                            include_clndn=True, include_clnsig=True, include_maves=False,
                            data_source='smart'):
     """Run multi-task training with any combination of CLNDN, CLNSIG, MAVES (task-routing style)."""
@@ -486,7 +462,7 @@ def run_allheads_multitask_finetune(
     batch_size=8,
     num_epochs=10,
     max_grad_norm=1.0,
-    num_workers=8,
+    num_workers=2,
     threshold=65.0,
     csv_path='root/data/unfiltered_variants.csv',
     data_source='smart',
@@ -502,12 +478,8 @@ def run_allheads_multitask_finetune(
     path_prefix = "./root/models"
     model, tokenizer = get_model_and_tokenizer(model_type)
 
-    # Load multi-label dataset (paired CLNDN + CLNSIG)
     datasets, task_num_classes, task_configs, seq_length = return_multilabel_dataset(
-        tokenizer,
-        csv_path=csv_path,
-        threshold=threshold,
-        seed=seed,
+        tokenizer, csv_path=csv_path, threshold=threshold, seed=seed,
     )
 
     task_names = list(task_num_classes.keys())
@@ -622,7 +594,15 @@ def run_generative_multitask_finetune(
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
 
+    # Add [MASK] token if not present (required for completion-only loss)
+    if '[MASK]' not in tokenizer.get_vocab():
+        tokenizer.add_special_tokens({'additional_special_tokens': ['[MASK]']})
+        print(f"Added [MASK] token to tokenizer. New vocab size: {len(tokenizer)}")
+
     model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=use_local)
+
+    # Resize embeddings if we added new tokens
+    model.resize_token_embeddings(len(tokenizer))
 
     # Define label mappings
     disease_labels = ['Aortopathy', 'Arrhythmia', 'Cardiomyopathy', 'Structural_defect']
@@ -673,8 +653,9 @@ def run_generative_multitask_finetune(
     print(f"Train: {len(train_dataset)}, Eval: {len(eval_dataset)}")
 
     # Formatting function for SFTTrainer (Omni-DNA style)
+    # Must return a list of strings per TRL SFTTrainer requirements
     def formatting_prompts_func(example):
-        return f"{example['instruction']}[MASK]{example['output']}"
+        return [f"{example['instruction']}[MASK]{example['output']}"]
 
     # Completion-only loss (only compute loss on output after [MASK])
     response_template = "[MASK]"
@@ -728,6 +709,8 @@ def main():
     parser.add_argument("--model", type=str, default='nt', help="Model type")
     parser.add_argument("--seed", type=int, default=127, help="Random seed")
     parser.add_argument("--decoder", action="store_true", help="Decoder architecture")
+    parser.add_argument("--pooling", type=str, default="cls", choices=["cls", "mean", "last"],
+                        help="Pooling strategy: cls (first token), mean (mean pooling), last (last token)")
     parser.add_argument("--test_only", action="store_true", help="Only evaluate")
 
     # Task selection
@@ -811,7 +794,7 @@ def main():
         )
     else:
         run_single_task_finetune(
-            args.task, args.seed, args.model, args.decoder, args.test_only,
+            args.task, args.seed, args.model, args.decoder, args.pooling, args.test_only,
             learning_rate=args.learning_rate, batch_size=args.batch_size,
             num_epochs=args.num_epochs, max_grad_norm=args.max_grad_norm,
             num_workers=args.num_workers, threshold=args.threshold,

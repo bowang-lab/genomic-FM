@@ -79,6 +79,50 @@ from src.pack_tunable_model.wrap_model import WrappedModelWithClassificationHead
 from src.pack_tunable_model.checkpoint_utils import load_checkpoint_into_model
 from transformers import AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM, AutoTokenizer
 from transformers import get_cosine_schedule_with_warmup
+from scipy.special import logsumexp as scipy_logsumexp
+
+
+def compute_lira_scores(logits: np.ndarray, labels: np.ndarray) -> np.ndarray:
+    """
+    Compute LiRA membership inference scores: log(p_correct / sum(p_wrong)).
+
+    This is the proper score from TensorFlow Privacy's LiRA implementation:
+    https://github.com/tensorflow/privacy/blob/master/research/mi_lira_2021/score.py
+
+    For binary classification (2 classes):
+        score = log(p_correct / p_wrong) = logit of p_correct
+
+    For multi-class (N classes):
+        score = log(p_correct / sum(p_wrong))
+        Uses logsumexp for numerical stability
+
+    Args:
+        logits: Raw model outputs, shape (N, num_classes)
+        labels: Ground truth class indices, shape (N,)
+
+    Returns:
+        scores: LiRA scores, shape (N,). Higher = more confident = more likely member.
+    """
+    n_samples = len(labels)
+
+    # Convert logits to log probabilities (log-softmax)
+    log_probs = logits - scipy_logsumexp(logits, axis=-1, keepdims=True)
+
+    # log(p_correct)
+    log_p_correct = log_probs[np.arange(n_samples), labels]
+
+    # log(sum(p_wrong)) via masking + logsumexp
+    log_probs_masked = log_probs.copy()
+    log_probs_masked[np.arange(n_samples), labels] = -np.inf
+    log_p_wrong = scipy_logsumexp(log_probs_masked, axis=-1)
+
+    # score = log(p_correct) - log(sum(p_wrong))
+    scores = log_p_correct - log_p_wrong
+
+    # Clip extreme values for numerical stability
+    scores = np.clip(scores, -50, 50)
+
+    return scores
 
 
 def resolve_base_model_path(model_path: str) -> str:
@@ -393,12 +437,15 @@ def evaluate_for_lira(
     accuracy = (all_preds == all_labels).mean()
     mean_loss = all_losses.mean()
 
+    # Compute LiRA scores: log(p_correct / sum(p_wrong))
+    # From TensorFlow Privacy's LiRA implementation
+    all_scores = compute_lira_scores(all_logits, all_labels)
+
     return {
         "all_preds": all_preds,
         "all_labels": all_labels,
-        "all_losses": all_losses,
-        "all_logits": all_logits,
-        "all_probs": all_probs,
+        "all_scores": all_scores,  # LiRA scores for membership inference
+        "all_logits": all_logits,  # Keep logits for recomputation if needed
         "accuracy": accuracy,
         "mean_loss": mean_loss,
     }
@@ -713,69 +760,101 @@ def aggregate_lira_results(
     val_advantages = [r['val']['advantage'] for r in all_attack_results] if all_attack_results else []
 
     # =========================================================================
-    # LiRA Membership Inference using per-sample losses
+    # LiRA Membership Inference
     # =========================================================================
-    n_samples = len(all_full_metrics[0]['all_losses'])
-    n_experiments = len(all_full_metrics)
+    #
+    # Uses the proper LiRA score: log(p_correct / sum(p_wrong))
+    # From TensorFlow Privacy: https://github.com/tensorflow/privacy/blob/master/research/mi_lira_2021/score.py
+    #
+    # For binary (2 classes): equivalent to logit of p_correct
+    # For multi-class (N classes): accounts for all incorrect class probabilities
+    #
+    # The attack fits Gaussians to score distributions when sample is
+    # IN training vs OUT of training, then uses likelihood ratio for inference.
+    # =========================================================================
 
+    # Determine sample count from first metrics
+    first_metrics = all_full_metrics[0]
+    if 'all_scores' in first_metrics:
+        n_samples = len(first_metrics['all_scores'])
+    elif 'all_logits' in first_metrics:
+        n_samples = len(first_metrics['all_logits'])
+    else:
+        raise ValueError("Metrics must contain 'all_scores' or 'all_logits'")
+
+    n_experiments = len(all_full_metrics)
     print(f"\nComputing LiRA scores for {n_samples} samples across {n_experiments} experiments...")
 
-    # Collect per-sample losses when IN training vs OUT of training
-    in_losses = defaultdict(list)   # losses when sample is IN training
-    out_losses = defaultdict(list)  # losses when sample is OUT of training
+    # Collect per-sample scores when IN training vs OUT of training
+    in_scores = defaultdict(list)
+    out_scores = defaultdict(list)
 
     for exp_idx, (metrics, mask) in enumerate(zip(all_full_metrics, all_train_masks)):
-        losses = metrics['all_losses']
-        for sample_idx in range(min(len(losses), len(mask))):
+        # Get or compute LiRA scores
+        if 'all_scores' in metrics:
+            scores = metrics['all_scores']
+        elif 'all_logits' in metrics and 'all_labels' in metrics:
+            scores = compute_lira_scores(metrics['all_logits'], metrics['all_labels'])
+        else:
+            raise ValueError(f"Experiment {exp_idx} missing 'all_scores' or 'all_logits'/'all_labels'")
+
+        for sample_idx in range(min(len(scores), len(mask))):
             if mask[sample_idx]:  # In training
-                in_losses[sample_idx].append(losses[sample_idx])
+                in_scores[sample_idx].append(scores[sample_idx])
             else:  # Out of training
-                out_losses[sample_idx].append(losses[sample_idx])
+                out_scores[sample_idx].append(scores[sample_idx])
 
-    # Compute global statistics for offline variants
-    all_in_losses = []
-    all_out_losses = []
+    # Compute global statistics for offline LiRA variants
+    all_in_scores = []
+    all_out_scores = []
     for sample_idx in range(n_samples):
-        all_in_losses.extend(in_losses.get(sample_idx, []))
-        all_out_losses.extend(out_losses.get(sample_idx, []))
+        all_in_scores.extend(in_scores.get(sample_idx, []))
+        all_out_scores.extend(out_scores.get(sample_idx, []))
 
-    global_in_mean = np.mean(all_in_losses) if all_in_losses else 0
-    global_out_mean = np.mean(all_out_losses) if all_out_losses else 0
-    global_std = np.std(all_in_losses + all_out_losses) + 1e-6 if (all_in_losses or all_out_losses) else 1.0
+    global_in_mean = np.mean(all_in_scores) if all_in_scores else 0
+    global_out_mean = np.mean(all_out_scores) if all_out_scores else 0
+    global_std = np.std(all_in_scores + all_out_scores) + 1e-6 if (all_in_scores or all_out_scores) else 1.0
 
     print(f"Global stats: IN mean={global_in_mean:.4f}, OUT mean={global_out_mean:.4f}, std={global_std:.4f}")
 
-    # Compute all 5 LiRA variants
+    # Compute LiRA variants
     # Use the LAST experiment as the "target" model being attacked
     target_exp_idx = -1
     target_metrics = all_full_metrics[target_exp_idx]
     target_mask = all_train_masks[target_exp_idx]
-    target_losses = target_metrics['all_losses']
 
-    lira_online = []
-    lira_online_fixed = []
-    lira_offline = []
-    lira_offline_fixed = []
-    global_threshold = []
+    # Get target model's scores
+    if 'all_scores' in target_metrics:
+        target_scores = target_metrics['all_scores']
+    elif 'all_logits' in target_metrics and 'all_labels' in target_metrics:
+        target_scores = compute_lira_scores(target_metrics['all_logits'], target_metrics['all_labels'])
+    else:
+        raise ValueError("Target metrics missing 'all_scores' or 'all_logits'/'all_labels'")
+
+    # LiRA variants (5 variants from Carlini et al.)
+    lira_online = []         # per-sample μ, per-sample σ
+    lira_online_fixed = []   # per-sample μ, global σ
+    lira_offline = []        # global μ, per-sample σ
+    lira_offline_fixed = []  # global μ, global σ
+    lira_threshold = []      # simple threshold on score
     lira_labels = []
 
     for sample_idx in range(n_samples):
-        if sample_idx not in in_losses or sample_idx not in out_losses:
+        if sample_idx not in in_scores or sample_idx not in out_scores:
             continue
-        if len(in_losses[sample_idx]) < 1 or len(out_losses[sample_idx]) < 1:
+        if len(in_scores[sample_idx]) < 1 or len(out_scores[sample_idx]) < 1:
             continue
-
-        in_vals = np.array(in_losses[sample_idx])
-        out_vals = np.array(out_losses[sample_idx])
 
         # Per-sample statistics
+        in_vals = np.array(in_scores[sample_idx])
+        out_vals = np.array(out_scores[sample_idx])
         in_mean = np.mean(in_vals)
         out_mean = np.mean(out_vals)
         in_std = np.std(in_vals) + 1e-6 if len(in_vals) > 1 else global_std
         out_std = np.std(out_vals) + 1e-6 if len(out_vals) > 1 else global_std
 
-        # Observation: loss from target model
-        obs = target_losses[sample_idx]
+        # Observation from target model
+        obs = target_scores[sample_idx]
         is_member = target_mask[sample_idx]
 
         # 1. LiRA Online: per-sample μ, per-sample σ
@@ -798,8 +877,8 @@ def aggregate_lira_results(
         log_p_out_global_fixed = norm.logpdf(obs, global_out_mean, global_std)
         lira_offline_fixed.append(log_p_in_global_fixed - log_p_out_global_fixed)
 
-        # 5. Global Threshold: negative loss (lower loss = more likely member)
-        global_threshold.append(-obs)
+        # 5. Threshold: raw score (higher = more confident = more likely member)
+        lira_threshold.append(obs)
 
         lira_labels.append(1 if is_member else 0)
 
@@ -808,7 +887,7 @@ def aggregate_lira_results(
     lira_online_fixed = np.array(lira_online_fixed)
     lira_offline = np.array(lira_offline)
     lira_offline_fixed = np.array(lira_offline_fixed)
-    global_threshold = np.array(global_threshold)
+    lira_threshold = np.array(lira_threshold)
     lira_labels = np.array(lira_labels)
 
     print(f"Computed LiRA scores for {len(lira_labels)} samples")
@@ -855,54 +934,53 @@ def aggregate_lira_results(
         ax2.text(0.5, 0.5, 'No attack results available', ha='center', va='center')
         ax2.set_title('Attack Advantage Distribution')
 
-    # Plot 3: LiRA ROC curves (log scale, like Emmy's plot)
+    # Plot 3: LiRA ROC curves (using log(p_correct/sum(p_wrong)) score)
     ax3 = axes[1, 0]
 
     auc_results = {}
 
     if len(lira_labels) > 10 and len(np.unique(lira_labels)) > 1:
-        # Compute ROC curves for all 5 variants
-        # 1. LiRA Online
+        # 1. LiRA Online: per-sample μ, per-sample σ
         fpr, tpr, _ = roc_curve(lira_labels, lira_online)
         auc_val = auc(fpr, tpr)
         auc_results['online'] = auc_val
-        ax3.plot(fpr, tpr, 'b-', linewidth=2, label=f'LiRA (online) auc={auc_val:.3f}')
+        ax3.plot(fpr, tpr, 'b-', linewidth=2, label=f'Online auc={auc_val:.3f}')
 
-        # 2. LiRA Online Fixed Variance
+        # 2. LiRA Online Fixed Variance: per-sample μ, global σ
         fpr, tpr, _ = roc_curve(lira_labels, lira_online_fixed)
         auc_val = auc(fpr, tpr)
         auc_results['online_fixed'] = auc_val
-        ax3.plot(fpr, tpr, color='orange', linewidth=2, label=f'LiRA (online, fixed variance) auc={auc_val:.3f}')
+        ax3.plot(fpr, tpr, color='orange', linewidth=2, label=f'Online fixed-var auc={auc_val:.3f}')
 
-        # 3. LiRA Offline
+        # 3. LiRA Offline: global μ, per-sample σ
         fpr, tpr, _ = roc_curve(lira_labels, lira_offline)
         auc_val = auc(fpr, tpr)
         auc_results['offline'] = auc_val
-        ax3.plot(fpr, tpr, 'g-', linewidth=2, label=f'LiRA (offline) auc={auc_val:.3f}')
+        ax3.plot(fpr, tpr, 'g-', linewidth=2, label=f'Offline auc={auc_val:.3f}')
 
-        # 4. LiRA Offline Fixed Variance
+        # 4. LiRA Offline Fixed Variance: global μ, global σ
         fpr, tpr, _ = roc_curve(lira_labels, lira_offline_fixed)
         auc_val = auc(fpr, tpr)
         auc_results['offline_fixed'] = auc_val
-        ax3.plot(fpr, tpr, 'r-', linewidth=2, label=f'LiRA (offline, fixed variance) auc={auc_val:.3f}')
+        ax3.plot(fpr, tpr, 'r-', linewidth=2, label=f'Offline fixed-var auc={auc_val:.3f}')
 
-        # 5. Global Threshold
-        fpr, tpr, _ = roc_curve(lira_labels, global_threshold)
+        # 5. Threshold: raw score
+        fpr, tpr, _ = roc_curve(lira_labels, lira_threshold)
         auc_val = auc(fpr, tpr)
-        auc_results['global_threshold'] = auc_val
-        ax3.plot(fpr, tpr, color='purple', linewidth=2, label=f'Global Threshold auc={auc_val:.3f}')
+        auc_results['threshold'] = auc_val
+        ax3.plot(fpr, tpr, color='purple', linewidth=2, label=f'Threshold auc={auc_val:.3f}')
 
         # Random baseline (diagonal)
         ax3.plot([1e-5, 1], [1e-5, 1], 'k--', alpha=0.5)
 
-        # Log scale like Emmy's plot
+        # Log scale
         ax3.set_xscale('log')
         ax3.set_yscale('log')
         ax3.set_xlim([1e-5, 1])
         ax3.set_ylim([1e-5, 1])
         ax3.set_xlabel('False Positive Rate')
         ax3.set_ylabel('True Positive Rate')
-        ax3.set_title(f'{grouping}')
+        ax3.set_title(f'LiRA Membership Inference ({grouping})\nScore: log(p_correct/Σp_wrong)')
         ax3.legend(loc='lower right', fontsize=8)
         ax3.grid(True, alpha=0.3, which='both')
     else:
@@ -915,33 +993,30 @@ def aggregate_lira_results(
     ax4.axis('off')
 
     n_exp = len(all_full_metrics)
-    summary_text = f"""
-    Summary Statistics ({n_exp} experiments)
-    {'='*50}
+    summary_text = f"""Summary Statistics ({n_exp} experiments)
+{'='*52}
 
-    LiRA Membership Inference:
-      Samples analyzed: {len(lira_labels)}
-      Members: {sum(lira_labels)} | Non-members: {len(lira_labels) - sum(lira_labels)}
-    """
+LiRA Membership Inference:
+  Samples analyzed: {len(lira_labels)}
+  Members: {sum(lira_labels)} | Non-members: {len(lira_labels) - sum(lira_labels)}
+"""
 
     if auc_results:
         summary_text += f"""
-    AUC Scores:
-      LiRA (online):              {auc_results.get('online', 0):.3f}
-      LiRA (online, fixed var):   {auc_results.get('online_fixed', 0):.3f}
-      LiRA (offline):             {auc_results.get('offline', 0):.3f}
-      LiRA (offline, fixed var):  {auc_results.get('offline_fixed', 0):.3f}
-      Global Threshold:           {auc_results.get('global_threshold', 0):.3f}
-    """
+LiRA AUC (score: log(p_correct/Σp_wrong)):
+  Online:           {auc_results.get('online', 0):.3f}
+  Online fixed-var: {auc_results.get('online_fixed', 0):.3f}
+  Offline:          {auc_results.get('offline', 0):.3f}
+  Offline fixed-var:{auc_results.get('offline_fixed', 0):.3f}
+  Threshold:        {auc_results.get('threshold', 0):.3f}
+"""
 
     if train_accuracies:
         summary_text += f"""
-    Attribute Inference Attack:
-      Train accuracy: {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}
-      Val accuracy:   {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}
-      Train advantage:{np.mean(train_advantages):.4f}
-      Val advantage:  {np.mean(val_advantages):.4f}
-    """
+Attribute Inference Attack:
+  Train acc: {np.mean(train_accuracies):.4f} ± {np.std(train_accuracies):.4f}
+  Val acc:   {np.mean(val_accuracies):.4f} ± {np.std(val_accuracies):.4f}
+"""
 
     ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes,
              fontsize=9, verticalalignment='top', fontfamily='monospace',
@@ -960,11 +1035,12 @@ def aggregate_lira_results(
         'val_accuracies': val_accuracies,
         'train_advantages': train_advantages,
         'val_advantages': val_advantages,
+        # LiRA variants (using log(p_correct/sum(p_wrong)) score)
         'lira_online': lira_online.tolist() if len(lira_online) > 0 else [],
         'lira_online_fixed': lira_online_fixed.tolist() if len(lira_online_fixed) > 0 else [],
         'lira_offline': lira_offline.tolist() if len(lira_offline) > 0 else [],
         'lira_offline_fixed': lira_offline_fixed.tolist() if len(lira_offline_fixed) > 0 else [],
-        'global_threshold': global_threshold.tolist() if len(global_threshold) > 0 else [],
+        'lira_threshold': lira_threshold.tolist() if len(lira_threshold) > 0 else [],
         'lira_labels': lira_labels.tolist() if len(lira_labels) > 0 else [],
         'auc_results': auc_results,
         'summary': {
@@ -978,7 +1054,7 @@ def aggregate_lira_results(
     }
 
     if auc_results:
-        agg_results['summary'].update(auc_results)
+        agg_results['summary']['best_auc'] = max(auc_results.values())
 
     results_path = os.path.join(output_dir, f'aggregate_results_{target}_{grouping}.pkl')
     with open(results_path, 'wb') as f:
@@ -994,12 +1070,12 @@ def aggregate_lira_results(
     print(f"  Members: {sum(lira_labels)}, Non-members: {len(lira_labels) - sum(lira_labels)}")
 
     if auc_results:
-        print("\nLiRA AUC Scores:")
-        print(f"  LiRA (online):              {auc_results.get('online', 0):.4f}")
-        print(f"  LiRA (online, fixed var):   {auc_results.get('online_fixed', 0):.4f}")
-        print(f"  LiRA (offline):             {auc_results.get('offline', 0):.4f}")
-        print(f"  LiRA (offline, fixed var):  {auc_results.get('offline_fixed', 0):.4f}")
-        print(f"  Global Threshold:           {auc_results.get('global_threshold', 0):.4f}")
+        print("\nLiRA AUC (score: log(p_correct/Σp_wrong)):")
+        print(f"  Online:              {auc_results.get('online', 0):.4f}")
+        print(f"  Online fixed-var:    {auc_results.get('online_fixed', 0):.4f}")
+        print(f"  Offline:             {auc_results.get('offline', 0):.4f}")
+        print(f"  Offline fixed-var:   {auc_results.get('offline_fixed', 0):.4f}")
+        print(f"  Threshold:           {auc_results.get('threshold', 0):.4f}")
 
     if train_accuracies:
         print("\nAttribute Inference Attack:")
