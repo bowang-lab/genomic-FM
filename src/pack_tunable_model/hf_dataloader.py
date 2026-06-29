@@ -562,6 +562,8 @@ def return_clinvar_multitask_dataset(tokenizer: PreTrainedTokenizer, target='CLN
     else:
         keep = generate_keep_for_lira(len(data), pkeep=1-val_split-test_split, expid=exp_id, num_experiments=num_experiments, seed=0)
         if keep_dir is not None:
+            # Create parent directory if it doesn't exist
+            os.makedirs(os.path.dirname(keep_dir), exist_ok=True)
             np.save(keep_dir, keep)
         else:
             print("keep dir is not provided")

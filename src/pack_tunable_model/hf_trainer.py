@@ -528,7 +528,7 @@ def main():
                             disease_subset_file=args.disease_subset_file,
                             pretrained_model=args.pretrained_model,
                             comparison_mode=args.comparison_mode,
-                            exp_id=args.exp_id, num_experiments=args.num_experiments)
+                            exp_id=args.expid, num_experiments=args.num_experiments)
 
 if __name__ == "__main__":
     main()

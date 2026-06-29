@@ -35,49 +35,49 @@ MODE=${1:-all}
 
 # Environment setup
 source ~/miniconda3/etc/profile.d/conda.sh
-conda activate genomic-fm
+conda activate gvrep-b200
 cd /cluster/projects/bwanggroup/vsubasri/genomic-FM
 
 # Create logs directory
 mkdir -p logs
 
-# Get experiment ID from array task
-expid=$SLURM_ARRAY_TASK_ID
+# Get experiment ID from array task (default to 0 for local runs)
+expid=${SLURM_ARRAY_TASK_ID:-0}
 num_experiments=64
 
 # ============================================
-# CONFIGURATION
+# CONFIGURATION (can be overridden via environment variables)
 # ============================================
 # Model: HuggingFace model name or local checkpoint path
 # Base model (not trained on ClinVar):
 # MODEL="./root/models/nucleotide-transformer-500m-human-ref"
 # Pretrained on ClinVar CLNSIG (auto-loads best checkpoint):
-MODEL="./root/models/pretrain_model_nt_CLNSIG"
+MODEL="${MODEL:-./root/models/pretrain_model_nt_CLNSIG}"
 
 # Grouping mode: gene, exon, cardiac_panel, cardiac_gene, hcm_gene
-GROUPING="cardiac_gene"
+GROUPING="${GROUPING:-cardiac_gene}"
 
 # Prediction target: CLNSIG (pathogenicity) or CLNDN (disease)
-TARGET="CLNSIG"
+TARGET="${TARGET:-CLNSIG}"
 
 # Attack mode: 0 = likelihood-based, 1 = embedding-based
-USE_EMBEDDING=0
+USE_EMBEDDING="${USE_EMBEDDING:-0}"
 
 # Training parameters
-EPOCHS=50
-BATCH_SIZE=16
-LR=1e-4
-PATIENCE=10
-FREEZE_BACKBONE=0
+EPOCHS="${EPOCHS:-50}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
+LR="${LR:-1e-4}"
+PATIENCE="${PATIENCE:-10}"
+FREEZE_BACKBONE="${FREEZE_BACKBONE:-0}"
 
 # Data parameters
-SEQ_LENGTH=1024
-MIN_VARIANTS=5
-MAX_VARIANTS=50
-BALANCE_CLASSES=1
+SEQ_LENGTH="${SEQ_LENGTH:-1024}"
+MIN_VARIANTS="${MIN_VARIANTS:-5}"
+MAX_VARIANTS="${MAX_VARIANTS:-50}"
+BALANCE_CLASSES="${BALANCE_CLASSES:-1}"
 
 # Optional: disease subset file (for CLNDN target)
-DISEASE_SUBSET_FILE=""
+DISEASE_SUBSET_FILE="${DISEASE_SUBSET_FILE:-}"
 
 # Job information
 echo "===== ClinVar Attribute Inference Attack ====="
@@ -156,3 +156,40 @@ echo "Exit code: $EXIT_CODE"
 echo "========================"
 
 exit $EXIT_CODE
+
+# ============================================
+# OTHER EXPERIMENTS TO RUN
+# ============================================
+# After completing the current experiment, run these additional configurations.
+# Use --export to pass environment variables to sbatch:
+#
+# 1. CLNSIG with embedding-based attack (instead of likelihood):
+#    sbatch --export=ALL,USE_EMBEDDING=1 slurm/run_clinvar_attack.sh all
+#
+# 2. CLNSIG with frozen backbone (head-only training):
+#    sbatch --export=ALL,FREEZE_BACKBONE=1 slurm/run_clinvar_attack.sh all
+#
+# 3. CLNSIG on HCM genes subset:
+#    sbatch --export=ALL,GROUPING=hcm_gene slurm/run_clinvar_attack.sh all
+#
+# 4. CLNDN (disease prediction) on cardiac genes:
+#    sbatch --export=ALL,TARGET=CLNDN,MODEL=./root/models/pretrain_model_nt_CLNDN slurm/run_clinvar_attack.sh all
+#
+# 5. CLNDN on HCM genes:
+#    sbatch --export=ALL,TARGET=CLNDN,MODEL=./root/models/pretrain_model_nt_CLNDN,GROUPING=hcm_gene slurm/run_clinvar_attack.sh all
+#
+# 6. Base model (not fine-tuned) - measures pre-training memorization:
+#    sbatch --export=ALL,MODEL=./root/models/nt slurm/run_clinvar_attack.sh all
+#
+# 7. All genes (not just cardiac):
+#    sbatch --export=ALL,GROUPING=gene slurm/run_clinvar_attack.sh all
+#
+# For local/interactive runs (single experiment):
+#    USE_EMBEDDING=1 bash slurm/run_clinvar_attack.sh all
+#    TARGET=CLNDN MODEL=./root/models/pretrain_model_nt_CLNDN bash slurm/run_clinvar_attack.sh all
+#
+# AGGREGATION (run after all 64 experiments complete for each config):
+#    python scripts/run_clinvar_attack.py --mode aggregate --target CLNSIG --grouping cardiac_gene \
+#        --model ./root/models/pretrain_model_nt_CLNSIG --use_embedding 0 --freeze_backbone 0 \
+#        --min_variants_per_gene 5 --max_variants_per_gene 50 --num_experiments 64
+# ============================================

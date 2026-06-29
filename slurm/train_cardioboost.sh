@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -t 1-00:0:0
 #SBATCH -J train_cardioboost
-#SBATCH -p gpu_bwanggroup
-#SBATCH --account=bwanggroup_gpu
+#SBATCH -p gpu_pmcc_ai_team
+#SBATCH --account=pmcc_ai_team_gpu
 #SBATCH --mem=80G
 #SBATCH -c 8
 #SBATCH -N 1
@@ -23,7 +23,7 @@ cd /cluster/projects/bwanggroup/vsubasri/genomic-FM
 
 source ~/miniconda3/etc/profile.d/conda.sh
 
-conda activate genomic-fm
+conda activate gvrep-b200
 
 # Disable wandb syncing for now
 wandb offline

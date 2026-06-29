@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -t 4-00:0:0
 #SBATCH -J train_maves
-#SBATCH -p gpu_bwanggroup
-#SBATCH --account=bwanggroup_gpu
+#SBATCH -p gpu_pmcc_ai_team
+#SBATCH --account=pmcc_ai_team_gpu
 #SBATCH --mem=450G # at most 450G
 #SBATCH -c 8 # at most 60
 #SBATCH -N 1 # number of node
@@ -23,7 +23,7 @@ cd /cluster/projects/bwanggroup/vsubasri/genomic-FM
 
 source ~/miniconda3/etc/profile.d/conda.sh
 
-conda activate genomic-fm
+conda activate gvrep-b200
 
 # Disable wandb syncing for now
 wandb offline
@@ -167,7 +167,7 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
     --task MAVES \
     --seed 127 \
     --learning_rate 0.000005 \
-    --batch_size 32 \
+    --batch_size 4 \
     --num_epochs 10 \
     --max_grad_norm 1.0 \
     --num_workers 8 \
