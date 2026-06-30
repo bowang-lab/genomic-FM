@@ -204,37 +204,102 @@ def run_single_task_finetune(task, seed, model_type='nt', decoder=False, pooling
             model_path = "AmelieSchreiber/LucaOne"
             tokenizer_path = model_path
             print(f"Using HuggingFace LucaOne model: {model_path}")
+    elif model_type == 'ntv3':
+        # NTv3-650M: Nucleotide Transformer v3 from InstaDeep
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local NTv3 model from {model_path}")
+        else:
+            model_path = "InstaDeepAI/NTv3_650M_pre"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace NTv3 model: {model_path}")
+    elif model_type == 'aido_dna':
+        # AIDO.DNA-300M from genbio-ai (uses modelgenerator API)
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local AIDO.DNA model from {model_path}")
+        else:
+            model_path = "genbio-ai/AIDO.DNA-300M"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace AIDO.DNA model: {model_path}")
+    elif model_type == 'omni_dna_300m':
+        # Omni-DNA-300M: larger version of Omni-DNA
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local Omni-DNA-300M model from {model_path}")
+        else:
+            model_path = "zehui127/Omni-DNA-300M"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace Omni-DNA-300M model: {model_path}")
+    elif model_type == 'carbon':
+        # Carbon-3B: HuggingFace genomic foundation model (6-mer tokenization)
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local Carbon model from {model_path}")
+        else:
+            model_path = "HuggingFaceBio/Carbon-3B"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace Carbon model: {model_path}")
+    elif model_type == 'orthrus':
+        # Orthrus: RNA foundation model with Mamba backbone
+        if os.path.exists(local_model_base):
+            model_path = local_model_base
+            tokenizer_path = model_path
+            print(f"Using local Orthrus model from {model_path}")
+        else:
+            model_path = "quietflamingo/orthrus-base-4-track"
+            tokenizer_path = model_path
+            print(f"Using HuggingFace Orthrus model: {model_path}")
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
-    if model_type in ['gpn-star', 'nt']:
+    # Determine if we should use local files only (True if local model exists)
+    local_files_only = os.path.exists(model_path)
+
+    if model_type in ['gpn-star', 'nt', 'ntv3']:
         base_model = AutoModelForMaskedLM.from_pretrained(
             model_path,
             trust_remote_code=True,
-            local_files_only=True,
+            local_files_only=local_files_only,
         )
-    elif model_type == 'omni_dna_116m':
+    elif model_type in ['omni_dna_116m', 'omni_dna_300m', 'carbon']:
         base_model = AutoModelForCausalLM.from_pretrained(
             model_path,
             trust_remote_code=True,
-            local_files_only=True,
+            local_files_only=local_files_only,
         )
     elif model_type == 'lucaone':
-        local_files = os.path.exists(model_path)
-        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True, local_files_only=local_files)
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files_only)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True, local_files_only=local_files_only)
+    elif model_type == 'orthrus':
+        # Orthrus uses Mamba backbone with one-hot encoding
+        base_model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files_only)
+    elif model_type == 'aido_dna':
+        # AIDO.DNA uses modelgenerator API
+        from modelgenerator.tasks import Embed
+        base_model = Embed.from_config({"model.backbone": "aido_dna_300m"}).eval()
     else:
         base_model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            local_files_only=True,
+            local_files_only=local_files_only,
         )
 
-    if model_type != 'lucaone':
+    if model_type == 'orthrus':
+        # Orthrus uses one-hot encoding via model.seq_to_oh()
+        tokenizer = base_model
+    elif model_type == 'aido_dna':
+        # AIDO.DNA uses model.transform()
+        tokenizer = base_model
+    elif model_type != 'lucaone':
         tokenizer = AutoTokenizer.from_pretrained(
             tokenizer_path,
             trust_remote_code=True,
-            local_files_only=True,
+            local_files_only=local_files_only,
         )
 
     # Load checkpoint weights if provided

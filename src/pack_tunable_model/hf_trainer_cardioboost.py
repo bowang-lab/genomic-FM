@@ -85,18 +85,29 @@ def get_model_and_tokenizer(model_type: str):
         model_path = "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"
     elif model_type == 'gena-lm':
         model_path = "AIRI-Institute/gena-lm-bert-base-t2t"
+    elif model_type == 'ntv3':
+        model_path = local_model_base if os.path.exists(local_model_base) else "InstaDeepAI/NTv3_650M_pre"
+    elif model_type == 'aido_dna':
+        model_path = local_model_base if os.path.exists(local_model_base) else "genbio-ai/AIDO.DNA-300M"
+    elif model_type == 'omni_dna_300m':
+        model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-300M"
+    elif model_type == 'carbon':
+        model_path = local_model_base if os.path.exists(local_model_base) else "HuggingFaceBio/Carbon-3B"
+    elif model_type == 'orthrus':
+        model_path = local_model_base if os.path.exists(local_model_base) else "quietflamingo/orthrus-base-4-track"
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
     # Load model with appropriate class
-    if model_type in ['nt']:
-        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True)
-    elif model_type == 'omni_dna_116m':
-        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True)
+    local_files_only = os.path.exists(model_path)
+    if model_type in ['nt', 'ntv3']:
+        model = AutoModelForMaskedLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files_only)
+    elif model_type in ['omni_dna_116m', 'omni_dna_300m', 'carbon']:
+        model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files_only)
     else:
-        model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files_only)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files_only)
     print(f"Loaded model from {model_path}")
 
     return model, tokenizer

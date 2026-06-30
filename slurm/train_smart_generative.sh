@@ -41,8 +41,8 @@ wandb offline
 # Configuration
 # =============================================================================
 
-# Model (must be OmniDNA for generative training)
-MODEL="omni_dna_116m"  # Options: omni_dna_116m, omni_dna_1b
+# Model (must be decoder/CausalLM for generative training)
+MODEL="omni_dna_300m"  # Options: omni_dna_116m, omni_dna_1b, omni_dna_300m, carbon
 
 # Training hyperparameters
 LEARNING_RATE=1e-5

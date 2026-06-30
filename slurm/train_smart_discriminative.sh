@@ -37,10 +37,10 @@ conda activate gvrep-b200
 wandb offline
 
 # Training parameters
-MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, luca
+MODEL="ntv3"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone, ntv3, aido_dna, omni_dna_300m, carbon, orthrus
 
 # Set decoder flag for autoregressive models
-if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
+if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" || "$MODEL" == "omni_dna_300m" || "$MODEL" == "carbon" ]]; then
     DECODER_FLAG="--decoder"
 else
     DECODER_FLAG=""

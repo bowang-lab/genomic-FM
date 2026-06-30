@@ -32,7 +32,7 @@ wandb offline
 # TRAINING PARAMETERS
 # ============================================
 
-MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone
+MODEL="omni_dna_300m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone, ntv3*, omni_dna_300m, carbon, orthrus, aido_dna (*ntv3=gated, orthrus/aido_dna=custom API)
 
 # Task to train on
 TASK="CLNDN"  # Options: CLNDN (disease), CLNSIG (pathogenicity)
@@ -51,7 +51,7 @@ POOLING="mean"  # Options: cls, mean, last, cov
 # ============================================
 
 # Set decoder flag for autoregressive models
-if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" ]]; then
+if [[ "$MODEL" == "hyenadna" || "$MODEL" == "omni_dna_116m" || "$MODEL" == "omni_dna_300m" || "$MODEL" == "carbon" ]]; then
     DECODER_FLAG="--decoder"
     POOLING_FLAG="--pooling last"
 else
@@ -66,7 +66,7 @@ echo "Task: $TASK"
 echo "Threshold: $THRESHOLD"
 echo "============================================"
 
-accelerate launch --config_file configs/ddp.yaml --main_process_port 29500 \
+accelerate launch --config_file configs/ddp.yaml --main_process_port 28500 \
     -m src.pack_tunable_model.hf_trainer_smart \
     --model "$MODEL" \
     --task "$TASK" \

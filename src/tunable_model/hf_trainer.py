@@ -658,6 +658,30 @@ def run_multitask_finetune(tasks, seed, model_type='nt'):
         local_files = os.path.exists(model_path)
         model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+    elif model_type == 'ntv3':
+        local_model_base = f"./root/models/{model_type}"
+        model_path = local_model_base if os.path.exists(local_model_base) else "InstaDeepAI/NTv3_650M_pre"
+        local_files = os.path.exists(model_path)
+        model = AutoModelForSequenceClassification.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+    elif model_type == 'omni_dna_300m':
+        local_model_base = f"./root/models/{model_type}"
+        model_path = local_model_base if os.path.exists(local_model_base) else "zehui127/Omni-DNA-300M"
+        local_files = os.path.exists(model_path)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+    elif model_type == 'carbon':
+        local_model_base = f"./root/models/{model_type}"
+        model_path = local_model_base if os.path.exists(local_model_base) else "HuggingFaceBio/Carbon-3B"
+        local_files = os.path.exists(model_path)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+    elif model_type == 'orthrus':
+        local_model_base = f"./root/models/{model_type}"
+        model_path = local_model_base if os.path.exists(local_model_base) else "quietflamingo/orthrus-base-4-track"
+        local_files = os.path.exists(model_path)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, local_files_only=local_files)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 

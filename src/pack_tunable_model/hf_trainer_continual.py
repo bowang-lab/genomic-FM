@@ -31,6 +31,7 @@ import sklearn.metrics
 from transformers import (
     AutoModel,
     AutoModelForMaskedLM,
+    AutoModelForCausalLM,
     TrainingArguments,
     AutoTokenizer,
     Trainer,
@@ -405,6 +406,12 @@ def run_continual_finetune(
         "omni_dna_116m": ("zehui127/Omni-DNA-116M", AutoModel),
         "omni_dna_1b": ("zehui127/Omni-DNA-1B", AutoModel),
         "lucaone": ("AmelieSchreiber/LucaOne", AutoModel),
+        # New models
+        "ntv3": ("InstaDeepAI/NTv3_650M_pre", AutoModelForMaskedLM),
+        "omni_dna_300m": ("zehui127/Omni-DNA-300M", AutoModelForCausalLM),
+        "carbon": ("HuggingFaceBio/Carbon-3B", AutoModelForCausalLM),
+        "orthrus": ("quietflamingo/orthrus-base-4-track", AutoModel),
+        "aido_dna": ("genbio-ai/AIDO.DNA-300M", AutoModel),
     }
 
     if model_type not in model_paths:

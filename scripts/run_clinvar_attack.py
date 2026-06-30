@@ -149,6 +149,11 @@ def resolve_base_model_path(model_path: str) -> str:
         'gpn': ('./root/models/gpn-msa-sapiens', 'songlab/gpn-msa-sapiens'),
         'lucaone': ('./root/models/lucaone', None),
         'evo2': ('./root/models/evo2', None),
+        # New models
+        'ntv3': ('./root/models/ntv3', 'InstaDeepAI/NTv3_650M_pre'),
+        'omni_dna_300m': ('./root/models/omni_dna_300m', 'zehui127/Omni-DNA-300M'),
+        'carbon': ('./root/models/carbon', 'HuggingFaceBio/Carbon-3B'),
+        'orthrus': ('./root/models/orthrus', 'quietflamingo/orthrus-base-4-track'),
     }
 
     # Match checkpoint name to model key
@@ -164,6 +169,14 @@ def resolve_base_model_path(model_path: str) -> str:
         key = 'lucaone'
     elif 'evo' in model_lower:
         key = 'evo2'
+    elif 'ntv3' in model_lower:
+        key = 'ntv3'
+    elif 'omni' in model_lower and '300' in model_lower:
+        key = 'omni_dna_300m'
+    elif 'carbon' in model_lower:
+        key = 'carbon'
+    elif 'orthrus' in model_lower:
+        key = 'orthrus'
     elif 'nt' in model_lower or 'nucleotide' in model_lower:
         key = 'nt_v2_500m'  # Default NT is v2 multispecies
     else:
