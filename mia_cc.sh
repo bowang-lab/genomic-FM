@@ -1,6 +1,7 @@
 #!/bin/bash
-#SBATCH --account aip-wanglab
-#SBATCH --gres=gpu:l40s:1
+#SBATCH --account=pmcc_ai_team_gpu
+#SBATCH -p gpu_pmcc_ai_team
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=120GB
 #SBATCH --array=0-64

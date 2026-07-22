@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=clinvar_attack
-#SBATCH --account=bwanggroup_gpu
-#SBATCH --partition=gpu_short
+#SBATCH --account=pmcc_ai_team_gpu
+#SBATCH --partition=gpu_pmcc_ai_team
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1

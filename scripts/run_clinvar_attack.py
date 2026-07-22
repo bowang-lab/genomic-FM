@@ -377,6 +377,7 @@ def evaluate_for_lira(
     dataset,
     device,
     batch_size=16,
+    extract_embeddings=True,
 ):
     """
     Evaluate model on full dataset and return per-sample predictions/losses.
@@ -389,9 +390,10 @@ def evaluate_for_lira(
         dataset: Full dataset (all samples)
         device: torch device
         batch_size: Batch size for evaluation
+        extract_embeddings: Whether to extract embeddings for embedding-based LiRA
 
     Returns:
-        Dict with per-sample predictions, labels, losses, and logits
+        Dict with per-sample predictions, labels, losses, logits, and embeddings
     """
     model.eval()
 
@@ -408,6 +410,7 @@ def evaluate_for_lira(
     all_losses = []
     all_logits = []
     all_probs = []
+    all_embeddings = []
 
     loss_fn = nn.CrossEntropyLoss(reduction='none')  # Per-sample loss
 
@@ -440,11 +443,58 @@ def evaluate_for_lira(
         all_logits.append(logits.cpu().numpy())
         all_probs.append(probs.cpu().numpy())
 
+        # Extract embeddings from base model (before classification head)
+        if extract_embeddings and hasattr(model, 'base_model'):
+            try:
+                # Check model type to handle attention mask properly
+                model_class_name = str(model.base_model.__class__)
+                skip_attention_mask = any(name in model_class_name for name in ['HyenaDNA', 'Caduceus', 'Mamba'])
+
+                if skip_attention_mask:
+                    ref_outputs = model.base_model(input_ids=ref_input_ids, output_hidden_states=True)
+                    alt_outputs = model.base_model(input_ids=alt_input_ids, output_hidden_states=True)
+                else:
+                    ref_outputs = model.base_model(
+                        input_ids=ref_input_ids,
+                        attention_mask=ref_attention_mask,
+                        output_hidden_states=True
+                    )
+                    alt_outputs = model.base_model(
+                        input_ids=alt_input_ids,
+                        attention_mask=alt_attention_mask,
+                        output_hidden_states=True
+                    )
+
+                # Get last hidden state and mean pool over sequence
+                if hasattr(ref_outputs, 'last_hidden_state'):
+                    ref_embed = ref_outputs.last_hidden_state.mean(dim=1)
+                    alt_embed = alt_outputs.last_hidden_state.mean(dim=1)
+                elif hasattr(ref_outputs, 'hidden_states') and ref_outputs.hidden_states is not None:
+                    ref_embed = ref_outputs.hidden_states[-1].mean(dim=1)
+                    alt_embed = alt_outputs.hidden_states[-1].mean(dim=1)
+                else:
+                    # Fallback: skip embeddings for this batch
+                    continue
+
+                # Differential embedding: alt - ref (captures variant effect)
+                diff_embed = alt_embed - ref_embed
+                all_embeddings.append(diff_embed.cpu().numpy())
+            except Exception as e:
+                # If embedding extraction fails, continue without embeddings
+                if len(all_embeddings) == 0:
+                    print(f"Warning: Could not extract embeddings: {e}")
+
     all_preds = np.concatenate(all_preds)
     all_labels = np.concatenate(all_labels)
     all_losses = np.concatenate(all_losses)
     all_logits = np.concatenate(all_logits)
     all_probs = np.concatenate(all_probs)
+
+    # Concatenate embeddings if available
+    if all_embeddings:
+        all_embeddings = np.concatenate(all_embeddings)
+    else:
+        all_embeddings = None
 
     # Compute aggregate metrics
     accuracy = (all_preds == all_labels).mean()
@@ -454,7 +504,7 @@ def evaluate_for_lira(
     # From TensorFlow Privacy's LiRA implementation
     all_scores = compute_lira_scores(all_logits, all_labels)
 
-    return {
+    result = {
         "all_preds": all_preds,
         "all_labels": all_labels,
         "all_scores": all_scores,  # LiRA scores for membership inference
@@ -462,6 +512,11 @@ def evaluate_for_lira(
         "accuracy": accuracy,
         "mean_loss": mean_loss,
     }
+
+    if all_embeddings is not None:
+        result["all_embeddings"] = all_embeddings  # Shape: [N, hidden_dim]
+
+    return result
 
 
 def train_model(
@@ -906,6 +961,82 @@ def aggregate_lira_results(
     print(f"Computed LiRA scores for {len(lira_labels)} samples")
     print(f"  Members: {sum(lira_labels)}, Non-members: {len(lira_labels) - sum(lira_labels)}")
 
+    # =========================================================================
+    # Embedding-based LiRA (Shadow Model Embedding Attack)
+    # =========================================================================
+    # For each sample, collect embeddings when IN vs OUT of training across
+    # shadow models, then use cosine similarity to IN/OUT centroids as score.
+
+    lira_embedding = []
+    lira_embedding_labels = []
+
+    # Check if embeddings are available
+    has_embeddings = all(
+        'all_embeddings' in metrics and metrics['all_embeddings'] is not None
+        for metrics in all_full_metrics
+    )
+
+    if has_embeddings:
+        print("\nComputing embedding-based LiRA scores...")
+
+        # Collect IN/OUT embeddings for each sample
+        in_embeddings = defaultdict(list)
+        out_embeddings = defaultdict(list)
+
+        for exp_idx, (metrics, mask) in enumerate(zip(all_full_metrics, all_train_masks)):
+            embeddings = metrics['all_embeddings']
+            for sample_idx in range(min(len(embeddings), len(mask))):
+                if mask[sample_idx]:  # In training
+                    in_embeddings[sample_idx].append(embeddings[sample_idx])
+                else:  # Out of training
+                    out_embeddings[sample_idx].append(embeddings[sample_idx])
+
+        # Get target model's embeddings
+        target_embeddings = target_metrics.get('all_embeddings')
+
+        if target_embeddings is not None:
+            def cosine_sim(a, b):
+                """Compute cosine similarity between two vectors."""
+                norm_a = np.linalg.norm(a)
+                norm_b = np.linalg.norm(b)
+                if norm_a == 0 or norm_b == 0:
+                    return 0.0
+                return np.dot(a, b) / (norm_a * norm_b)
+
+            for sample_idx in range(n_samples):
+                # Need both IN and OUT embeddings to compare
+                if sample_idx not in in_embeddings or sample_idx not in out_embeddings:
+                    continue
+                if len(in_embeddings[sample_idx]) < 1 or len(out_embeddings[sample_idx]) < 1:
+                    continue
+
+                # Compute centroids
+                in_centroid = np.mean(in_embeddings[sample_idx], axis=0)
+                out_centroid = np.mean(out_embeddings[sample_idx], axis=0)
+
+                # Target embedding
+                target_embed = target_embeddings[sample_idx]
+
+                # Score: similarity to IN centroid - similarity to OUT centroid
+                sim_in = cosine_sim(target_embed, in_centroid)
+                sim_out = cosine_sim(target_embed, out_centroid)
+
+                lira_embedding.append(sim_in - sim_out)
+                lira_embedding_labels.append(1 if target_mask[sample_idx] else 0)
+
+            lira_embedding = np.array(lira_embedding)
+            lira_embedding_labels = np.array(lira_embedding_labels)
+            print(f"Computed embedding LiRA scores for {len(lira_embedding_labels)} samples")
+        else:
+            print("Warning: Target model missing embeddings, skipping embedding LiRA")
+            lira_embedding = np.array([])
+            lira_embedding_labels = np.array([])
+    else:
+        print("\nEmbeddings not available in metrics, skipping embedding-based LiRA")
+        print("(Re-run eval with newer code to extract embeddings)")
+        lira_embedding = np.array([])
+        lira_embedding_labels = np.array([])
+
     # Create output directory
     if output_dir is None:
         output_dir = f"{base_dir}/{experiment_name}/aggregate"
@@ -983,6 +1114,13 @@ def aggregate_lira_results(
         auc_results['threshold'] = auc_val
         ax3.plot(fpr, tpr, color='purple', linewidth=2, label=f'Threshold auc={auc_val:.3f}')
 
+        # 6. Embedding-based LiRA (if available)
+        if len(lira_embedding) > 10 and len(np.unique(lira_embedding_labels)) > 1:
+            fpr, tpr, _ = roc_curve(lira_embedding_labels, lira_embedding)
+            auc_val = auc(fpr, tpr)
+            auc_results['embedding'] = auc_val
+            ax3.plot(fpr, tpr, color='cyan', linewidth=2, linestyle='--', label=f'Embedding auc={auc_val:.3f}')
+
         # Random baseline (diagonal)
         ax3.plot([1e-5, 1], [1e-5, 1], 'k--', alpha=0.5)
 
@@ -1022,6 +1160,7 @@ LiRA AUC (score: log(p_correct/Σp_wrong)):
   Offline:          {auc_results.get('offline', 0):.3f}
   Offline fixed-var:{auc_results.get('offline_fixed', 0):.3f}
   Threshold:        {auc_results.get('threshold', 0):.3f}
+  Embedding:        {auc_results.get('embedding', 'N/A')}
 """
 
     if train_accuracies:
@@ -1055,6 +1194,9 @@ Attribute Inference Attack:
         'lira_offline_fixed': lira_offline_fixed.tolist() if len(lira_offline_fixed) > 0 else [],
         'lira_threshold': lira_threshold.tolist() if len(lira_threshold) > 0 else [],
         'lira_labels': lira_labels.tolist() if len(lira_labels) > 0 else [],
+        # Embedding-based LiRA
+        'lira_embedding': lira_embedding.tolist() if len(lira_embedding) > 0 else [],
+        'lira_embedding_labels': lira_embedding_labels.tolist() if len(lira_embedding_labels) > 0 else [],
         'auc_results': auc_results,
         'summary': {
             'mean_train_accuracy': float(np.mean(train_accuracies)) if train_accuracies else None,
@@ -1088,6 +1230,9 @@ Attribute Inference Attack:
         print(f"  Online fixed-var:    {auc_results.get('online_fixed', 0):.4f}")
         print(f"  Offline:             {auc_results.get('offline', 0):.4f}")
         print(f"  Offline fixed-var:   {auc_results.get('offline_fixed', 0):.4f}")
+        print(f"  Threshold:           {auc_results.get('threshold', 0):.4f}")
+        if 'embedding' in auc_results:
+            print(f"  Embedding:           {auc_results.get('embedding', 0):.4f}")
         print(f"  Threshold:           {auc_results.get('threshold', 0):.4f}")
 
     if train_accuracies:

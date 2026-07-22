@@ -16,6 +16,9 @@
 # Exit on any error
 set -e
 
+# Memory optimization for large models
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
@@ -42,7 +45,8 @@ THRESHOLD=70  # Options: 50, 60, 70, 80
 
 # Training hyperparameters
 LEARNING_RATE=0.000005
-BATCH_SIZE=32
+BATCH_SIZE=2                      # Per-device batch size (reduced for large models)
+GRADIENT_ACCUMULATION_STEPS=16    # Effective batch = 2 * 4 GPUs * 16 = 128
 NUM_EPOCHS=10
 
 # Pooling strategy for encoder models (ignored for decoder models)
@@ -74,6 +78,8 @@ accelerate launch --config_file configs/ddp.yaml --main_process_port 28500 \
     --threshold "$THRESHOLD" \
     --learning_rate $LEARNING_RATE \
     --batch_size $BATCH_SIZE \
+    --gradient_accumulation_steps $GRADIENT_ACCUMULATION_STEPS \
+    --gradient_checkpointing \
     --num_epochs $NUM_EPOCHS \
     $DECODER_FLAG \
     $POOLING_FLAG \
