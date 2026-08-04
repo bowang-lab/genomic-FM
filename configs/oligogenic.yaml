@@ -1,0 +1,230 @@
+# Oligogenic Interaction Prediction Configurations
+#
+# These configs are for training models to predict P(oligogenic interaction)
+# for variant pairs using OLIDA data.
+#
+# Usage:
+#   python -m src.finetune.finetune_oligogenic --config configs/oligogenic.yaml --dataset olida_nt
+#
+# Filter files (optional):
+#   - disease_keywords_file: Text file with one disease keyword per line
+#   - gene_list_file: Text file with one gene symbol per line
+#   - If not specified, all OLIDA data is used (no disease/gene filtering)
+
+# ============================================================================
+# NUCLEOTIDE TRANSFORMER CONFIGS
+# ============================================================================
+
+olida_nt:
+  # Model configuration
+  model: nt
+  model_identifier: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
+  local_model_path: ./root/models/nt
+
+  # Task configuration
+  task: classification
+  output_size: 2
+  combine_mode: hadamard  # concat, diff, or hadamard
+  pooling: mean  # cls, mean, or last
+
+  # Data configuration
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  require_disease_match: false  # Set to true and provide disease_keywords_file to filter
+  require_gene_match: false
+
+  # Filter files (uncomment and set paths to enable filtering)
+  # disease_keywords_file: ./root/data/cardiac_disease_keywords.txt
+  # gene_list_file: ./root/data/cardiac_genes.txt
+
+  # Training configuration
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  val_ratio: 0.15
+  num_workers: 4
+
+  # Output
+  output_dir: ./output/oligogenic/nt
+
+
+olida_cardiac_nt:
+  # Cardiac-filtered OLIDA with Nucleotide Transformer
+  # Uses existing CGC gene list for filtering
+  model: nt
+  model_identifier: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
+  local_model_path: ./root/models/nt
+
+  task: classification
+  output_size: 2
+  combine_mode: hadamard
+  pooling: mean
+
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  require_disease_match: false  # Filter by genes instead
+  require_gene_match: true
+
+  # Use existing CGC gene list (supports CSV format)
+  # disease_keywords_file: ./root/data/cardiac_disease_keywords.txt  # Optional
+  gene_list_file: ./root/data/GeneListCGC.csv
+
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  val_ratio: 0.15
+  num_workers: 4
+
+  output_dir: ./output/oligogenic/nt_cardiac
+
+
+olida_hcm_nt:
+  # HCM-filtered OLIDA with Nucleotide Transformer
+  model: nt
+  model_identifier: InstaDeepAI/nucleotide-transformer-v2-500m-multi-species
+  local_model_path: ./root/models/nt
+
+  task: classification
+  output_size: 2
+  combine_mode: hadamard
+  pooling: mean
+
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  require_disease_match: false
+  require_gene_match: true
+
+  gene_list_file: ./root/data/GeneListHCM.csv
+
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  val_ratio: 0.15
+  num_workers: 4
+
+  output_dir: ./output/oligogenic/nt_hcm
+
+
+# ============================================================================
+# DNABERT2 CONFIGS
+# ============================================================================
+
+olida_dnabert2:
+  model: dnabert2
+  model_identifier: zhihan1996/DNABERT-2-117M
+  local_model_path: ./root/models/dnabert2
+
+  task: classification
+  output_size: 2
+  combine_mode: hadamard
+  pooling: mean
+
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  require_disease_match: false
+  require_gene_match: false
+
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  val_ratio: 0.15
+  num_workers: 4
+
+  output_dir: ./output/oligogenic/dnabert2
+
+
+# ============================================================================
+# OMNI-DNA CONFIGS
+# ============================================================================
+
+olida_omni_dna:
+  model: omni_dna_116m
+  model_identifier: zehui127/Omni-DNA-116M
+  local_model_path: ./root/models/omni_dna_116m
+
+  task: classification
+  output_size: 2
+  combine_mode: hadamard
+  pooling: last  # Decoder model uses last token
+
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  require_disease_match: false
+  require_gene_match: false
+
+  epochs: 20
+  batch_size: 32  # Smaller model allows larger batch
+  learning_rate: 1.0e-4
+  val_ratio: 0.15
+  num_workers: 4
+
+  output_dir: ./output/oligogenic/omni_dna
+
+
+# ============================================================================
+# HYENADNA CONFIGS
+# ============================================================================
+
+olida_hyenadna:
+  model: hyenadna
+  model_identifier: LongSafari/hyenadna-medium-160k-seqlen-hf
+
+  task: classification
+  output_size: 2
+  combine_mode: hadamard
+  pooling: last  # Decoder model
+
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  require_disease_match: false
+  require_gene_match: false
+
+  epochs: 20
+  batch_size: 8  # Larger model needs smaller batch
+  learning_rate: 5.0e-5
+  val_ratio: 0.15
+  num_workers: 4
+
+  output_dir: ./output/oligogenic/hyenadna
+
+
+# ============================================================================
+# COMBINE MODE COMPARISON (for ablation studies)
+# ============================================================================
+
+olida_nt_concat:
+  model: nt
+  local_model_path: ./root/models/nt
+  task: classification
+  output_size: 2
+  combine_mode: concat  # [emb1; emb2]
+  pooling: mean
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  output_dir: ./output/oligogenic/nt_concat
+
+
+olida_nt_diff:
+  model: nt
+  local_model_path: ./root/models/nt
+  task: classification
+  output_size: 2
+  combine_mode: diff  # emb1 - emb2
+  pooling: mean
+  seq_length: 1024
+  min_final_meta: 1
+  negative_ratio: 1.0
+  epochs: 20
+  batch_size: 16
+  learning_rate: 1.0e-4
+  output_dir: ./output/oligogenic/nt_diff

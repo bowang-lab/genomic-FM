@@ -305,55 +305,73 @@ class ClinVarAttributeInference:
 
         return predicted_idx, scores, true_idx, top_n
 
-    def attack_embedding(self, idx: int, reference_embeddings: np.ndarray = None) -> Tuple[Optional[int], Dict, Optional[int]]:
+    def attack_embedding(self, idx: int, reference_embeddings: np.ndarray) -> Tuple[Optional[int], Dict, Optional[int]]:
         """
-        Embedding similarity-based attack.
+        Run the embedding-based attribute inference attack (analogous to attack_A_pi).
 
-        Instead of using class probabilities, compare embeddings directly.
-        This can distinguish variants even when they have the same label.
+        Uses model's internal representations (embeddings from last hidden state)
+        to exploit the model's learned feature space directly. For each candidate
+        in the feasible set, compute similarity to training sample embeddings.
+        Predict the candidate with highest score.
+
+        Analogous to likelihood-based attack:
+        - Likelihood: score = P(y_obs | f(candidate)) - how well candidate explains observed label
+        - Embedding: score = sim(embed(candidate), train_embeddings) - how "trained" candidate looks
 
         Args:
             idx: Index of the target sample
-            reference_embeddings: Pre-computed embeddings for reference (optional)
+            reference_embeddings: Pre-computed embeddings from training samples.
+                                  Shape: [N_train, hidden_dim].
 
         Returns:
             Tuple of (predicted_idx, scores_dict, true_idx)
         """
+        # Step 1: build feasible set
         candidates = self.build_feasible_set(idx)
 
         if len(candidates['indices']) < 2:
             return None, {}, None
 
-        # Get embeddings for all candidates
+        # Step 2: get model embeddings for all candidates
         embeddings = self.get_embeddings(candidates)
 
-        # Find target embedding index in batch
-        target_batch_idx = candidates['curr'].index(True)
-        target_embedding = embeddings[target_batch_idx]
-
-        # Score each candidate by embedding similarity
+        # Step 3: compute embedding-based scores for each candidate
         scores = {}
-        for i, cand_idx in enumerate(candidates['indices']):
-            similarity = cosine_similarity(embeddings[i], target_embedding)
-            scores[cand_idx] = similarity
 
+        for i, cand_idx in enumerate(candidates['indices']):
+            # Compute mean cosine similarity to training sample embeddings
+            # Higher similarity indicates the candidate's embedding pattern
+            # is more "familiar" to the model (likely seen during training)
+            similarities = [
+                cosine_similarity(embeddings[i], ref_emb)
+                for ref_emb in reference_embeddings
+            ]
+            scores[cand_idx] = np.mean(similarities)
+
+        # Step 4: predict candidate with highest score
         predicted_idx = max(scores, key=scores.get)
         true_idx = np.array(candidates['indices'])[np.array(candidates['curr'])][0]
 
         return predicted_idx, dict(scores), true_idx
 
-    def attack_embedding_top_n(self, idx: int, n: int = 5) -> Tuple[Optional[int], Dict, Optional[int], List[int]]:
+    def attack_embedding_top_n(
+        self, idx: int, n: int, reference_embeddings: np.ndarray
+    ) -> Tuple[Optional[int], Dict, Optional[int], List[int]]:
         """
-        Embedding-based attack returning top-N predictions.
+        Run embedding-based attack and return top-N predictions (analogous to attack_A_pi_top_n).
 
         Args:
             idx: Index of target sample
             n: Number of top predictions to return
+            reference_embeddings: Pre-computed embeddings from training samples.
+                                  Shape: [N_train, hidden_dim].
 
         Returns:
             Tuple of (predicted_idx, scores_dict, true_idx, top_n_predictions)
         """
-        predicted_idx, scores, true_idx = self.attack_embedding(idx)
+        predicted_idx, scores, true_idx = self.attack_embedding(
+            idx, reference_embeddings=reference_embeddings
+        )
 
         if predicted_idx is None:
             return None, {}, None, []
@@ -367,7 +385,8 @@ class ClinVarAttributeInference:
         sample_indices: List[int],
         df=None,
         verbose: bool = True,
-        use_embedding: bool = False
+        use_embedding: bool = False,
+        reference_embeddings: np.ndarray = None
     ) -> Dict:
         """
         Run attack on dataset (analogous to DMS eval_only attack loop).
@@ -380,6 +399,9 @@ class ClinVarAttributeInference:
             df: Optional dataframe with metadata
             verbose: Print progress
             use_embedding: Use embedding-based attack instead of likelihood-based
+            reference_embeddings: Pre-computed embeddings from training samples.
+                For embedding-based attack, compares candidate embeddings to these
+                reference embeddings. Higher similarity indicates memorization.
 
         Returns:
             Dictionary with attack results including granular metrics
@@ -414,7 +436,9 @@ class ClinVarAttributeInference:
 
             # Run attack
             if use_embedding:
-                predicted, scores, true_idx, top_n = self.attack_embedding_top_n(idx, n=5)
+                predicted, scores, true_idx, top_n = self.attack_embedding_top_n(
+                    idx, n=5, reference_embeddings=reference_embeddings
+                )
             else:
                 predicted, scores, true_idx, top_n = self.attack_A_pi_top_n(idx, n=5)
 
@@ -578,7 +602,8 @@ def run_attack(
     train_mask: np.ndarray,
     device: str = 'cuda',
     verbose: bool = True,
-    use_embedding: bool = False
+    use_embedding: bool = False,
+    reference_embeddings: np.ndarray = None
 ) -> Dict:
     """
     Run full attack pipeline (training set, validation set, full set).
@@ -594,6 +619,9 @@ def run_attack(
         device: Device to run on
         verbose: Print progress
         use_embedding: Use embedding-based attack instead of likelihood-based
+        reference_embeddings: Pre-computed training sample embeddings for
+            embedding-based attack. If None and use_embedding=True, will
+            compute embeddings from training samples.
 
     Returns:
         Dictionary with results for train, val, and full sets
@@ -610,27 +638,59 @@ def run_attack(
     if verbose:
         print(f"\nRunning {attack_type} attribute inference attack...")
 
+    # For embedding-based attack, compute reference embeddings from training samples
+    # if not provided. These serve as the "fingerprint" of what trained embeddings look like.
+    if use_embedding and reference_embeddings is None:
+        if verbose:
+            print("Computing reference embeddings from training samples...")
+        train_indices = [i for i, m in enumerate(train_mask) if m]
+        # Sample subset of training data for efficiency (use up to 1000 samples)
+        sample_size = min(1000, len(train_indices))
+        sampled_indices = np.random.choice(train_indices, size=sample_size, replace=False)
+
+        # Compute embeddings for sampled training samples
+        ref_embeddings_list = []
+        for idx in sampled_indices:
+            batch = attack.build_feasible_set(idx)
+            # Only need the target sample's embedding
+            target_batch_idx = batch['curr'].index(True)
+            embeddings = attack.get_embeddings(batch)
+            ref_embeddings_list.append(embeddings[target_batch_idx])
+
+        reference_embeddings = np.array(ref_embeddings_list)
+        if verbose:
+            print(f"Computed {len(reference_embeddings)} reference embeddings")
+
     results = {}
 
     # Attack training set
     train_indices = [i for i, m in enumerate(train_mask) if m]
     if verbose:
         print(f"\nAttacking {len(train_indices)} training samples...")
-    results['train'] = attack.attack_dataset(train_indices, verbose=verbose, use_embedding=use_embedding)
+    results['train'] = attack.attack_dataset(
+        train_indices, verbose=verbose, use_embedding=use_embedding,
+        reference_embeddings=reference_embeddings
+    )
     attack.print_results(results['train'], "training")
 
     # Attack validation set
     val_indices = [i for i, m in enumerate(train_mask) if not m]
     if verbose:
         print(f"\nAttacking {len(val_indices)} validation samples...")
-    results['val'] = attack.attack_dataset(val_indices, verbose=verbose, use_embedding=use_embedding)
+    results['val'] = attack.attack_dataset(
+        val_indices, verbose=verbose, use_embedding=use_embedding,
+        reference_embeddings=reference_embeddings
+    )
     attack.print_results(results['val'], "validation")
 
     # Attack full set
     all_indices = list(range(len(full_dataset)))
     if verbose:
         print(f"\nAttacking {len(all_indices)} total samples...")
-    results['full'] = attack.attack_dataset(all_indices, verbose=verbose, use_embedding=use_embedding)
+    results['full'] = attack.attack_dataset(
+        all_indices, verbose=verbose, use_embedding=use_embedding,
+        reference_embeddings=reference_embeddings
+    )
     attack.print_results(results['full'], "full")
 
     return results

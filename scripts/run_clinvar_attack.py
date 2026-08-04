@@ -964,8 +964,18 @@ def aggregate_lira_results(
     # =========================================================================
     # Embedding-based LiRA (Shadow Model Embedding Attack)
     # =========================================================================
-    # For each sample, collect embeddings when IN vs OUT of training across
-    # shadow models, then use cosine similarity to IN/OUT centroids as score.
+    # Similar to likelihood-based LiRA, but uses embedding distances as the
+    # per-sample signal instead of confidence scores.
+    #
+    # For each sample:
+    #   1. Compute a scalar "embedding score" = distance to global centroid
+    #   2. Collect these scores when IN vs OUT of training across shadow models
+    #   3. Fit Gaussians to IN/OUT score distributions (same as likelihood LiRA)
+    #   4. Use likelihood ratio for final membership score
+    #
+    # Intuition: When a sample is IN training, the model learns to represent it
+    # in a particular way (often closer to class centroid / more "normalized").
+    # When OUT, the embedding may be more "uncertain" or further from centroid.
 
     lira_embedding = []
     lira_embedding_labels = []
@@ -979,54 +989,90 @@ def aggregate_lira_results(
     if has_embeddings:
         print("\nComputing embedding-based LiRA scores...")
 
-        # Collect IN/OUT embeddings for each sample
-        in_embeddings = defaultdict(list)
-        out_embeddings = defaultdict(list)
+        def cosine_sim(a, b):
+            """Compute cosine similarity between two vectors."""
+            norm_a = np.linalg.norm(a)
+            norm_b = np.linalg.norm(b)
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return np.dot(a, b) / (norm_a * norm_b)
+
+        # Step 1: Compute a global reference centroid from all embeddings
+        # This serves as the "anchor" for computing per-sample embedding scores
+        all_embeds_flat = []
+        for metrics in all_full_metrics:
+            all_embeds_flat.extend(metrics['all_embeddings'])
+        global_centroid = np.mean(all_embeds_flat, axis=0)
+        print(f"  Computed global centroid from {len(all_embeds_flat)} embeddings")
+
+        # Step 2: For each shadow model, compute per-sample embedding scores
+        # Score = cosine similarity to global centroid (higher = more "typical")
+        in_embed_scores = defaultdict(list)   # sample_idx -> list of scores when IN
+        out_embed_scores = defaultdict(list)  # sample_idx -> list of scores when OUT
 
         for exp_idx, (metrics, mask) in enumerate(zip(all_full_metrics, all_train_masks)):
             embeddings = metrics['all_embeddings']
             for sample_idx in range(min(len(embeddings), len(mask))):
-                if mask[sample_idx]:  # In training
-                    in_embeddings[sample_idx].append(embeddings[sample_idx])
-                else:  # Out of training
-                    out_embeddings[sample_idx].append(embeddings[sample_idx])
+                # Compute embedding score: similarity to global centroid
+                embed_score = cosine_sim(embeddings[sample_idx], global_centroid)
 
-        # Get target model's embeddings
+                if mask[sample_idx]:  # In training
+                    in_embed_scores[sample_idx].append(embed_score)
+                else:  # Out of training
+                    out_embed_scores[sample_idx].append(embed_score)
+
+        # Step 3: Compute global statistics for embedding scores (for offline variants)
+        all_in_embed = []
+        all_out_embed = []
+        for sample_idx in range(n_samples):
+            all_in_embed.extend(in_embed_scores.get(sample_idx, []))
+            all_out_embed.extend(out_embed_scores.get(sample_idx, []))
+
+        global_in_embed_mean = np.mean(all_in_embed) if all_in_embed else 0
+        global_out_embed_mean = np.mean(all_out_embed) if all_out_embed else 0
+        global_embed_std = np.std(all_in_embed + all_out_embed) + 1e-6
+
+        print(f"  Embedding score stats: IN mean={global_in_embed_mean:.4f}, "
+              f"OUT mean={global_out_embed_mean:.4f}, std={global_embed_std:.4f}")
+
+        # Step 4: Get target model's embedding scores
         target_embeddings = target_metrics.get('all_embeddings')
 
         if target_embeddings is not None:
-            def cosine_sim(a, b):
-                """Compute cosine similarity between two vectors."""
-                norm_a = np.linalg.norm(a)
-                norm_b = np.linalg.norm(b)
-                if norm_a == 0 or norm_b == 0:
-                    return 0.0
-                return np.dot(a, b) / (norm_a * norm_b)
+            # Compute target model's embedding scores (similarity to same global centroid)
+            target_embed_scores = np.array([
+                cosine_sim(emb, global_centroid) for emb in target_embeddings
+            ])
 
+            # Step 5: Apply LiRA framework (fit Gaussians, compute likelihood ratio)
             for sample_idx in range(n_samples):
-                # Need both IN and OUT embeddings to compare
-                if sample_idx not in in_embeddings or sample_idx not in out_embeddings:
+                if sample_idx not in in_embed_scores or sample_idx not in out_embed_scores:
                     continue
-                if len(in_embeddings[sample_idx]) < 1 or len(out_embeddings[sample_idx]) < 1:
+                if len(in_embed_scores[sample_idx]) < 2 or len(out_embed_scores[sample_idx]) < 2:
                     continue
 
-                # Compute centroids
-                in_centroid = np.mean(in_embeddings[sample_idx], axis=0)
-                out_centroid = np.mean(out_embeddings[sample_idx], axis=0)
+                # Per-sample statistics for embedding scores
+                in_vals = np.array(in_embed_scores[sample_idx])
+                out_vals = np.array(out_embed_scores[sample_idx])
+                in_mean = np.mean(in_vals)
+                out_mean = np.mean(out_vals)
+                in_std = np.std(in_vals) + 1e-6 if len(in_vals) > 1 else global_embed_std
+                out_std = np.std(out_vals) + 1e-6 if len(out_vals) > 1 else global_embed_std
 
-                # Target embedding
-                target_embed = target_embeddings[sample_idx]
+                # Target model's embedding score for this sample
+                obs = target_embed_scores[sample_idx]
+                is_member = target_mask[sample_idx]
 
-                # Score: similarity to IN centroid - similarity to OUT centroid
-                sim_in = cosine_sim(target_embed, in_centroid)
-                sim_out = cosine_sim(target_embed, out_centroid)
+                # LiRA: likelihood ratio using Gaussians
+                log_p_in = norm.logpdf(obs, in_mean, in_std)
+                log_p_out = norm.logpdf(obs, out_mean, out_std)
 
-                lira_embedding.append(sim_in - sim_out)
-                lira_embedding_labels.append(1 if target_mask[sample_idx] else 0)
+                lira_embedding.append(log_p_in - log_p_out)
+                lira_embedding_labels.append(1 if is_member else 0)
 
             lira_embedding = np.array(lira_embedding)
             lira_embedding_labels = np.array(lira_embedding_labels)
-            print(f"Computed embedding LiRA scores for {len(lira_embedding_labels)} samples")
+            print(f"  Computed embedding LiRA scores for {len(lira_embedding_labels)} samples")
         else:
             print("Warning: Target model missing embeddings, skipping embedding LiRA")
             lira_embedding = np.array([])
