@@ -79,6 +79,12 @@ BALANCE_CLASSES="${BALANCE_CLASSES:-1}"
 # Optional: disease subset file (for CLNDN target)
 DISEASE_SUBSET_FILE="${DISEASE_SUBSET_FILE:-}"
 
+# LiRA split mode: 0 = individual variants (default), 1 = entire groups in/out together (patient panel)
+SPLIT_BY_GROUP="${SPLIT_BY_GROUP:-0}"
+
+# ClinVar review status filtering (0-4 stars, default 1 = criteria provided)
+MIN_REVIEW_STARS="${MIN_REVIEW_STARS:-1}"
+
 # Job information
 echo "===== ClinVar Attribute Inference Attack ====="
 echo "Job started at: $(date)"
@@ -96,6 +102,8 @@ echo "  Seq length: $SEQ_LENGTH"
 echo "  Min/Max variants: $MIN_VARIANTS / $MAX_VARIANTS"
 echo "  Balance classes: $BALANCE_CLASSES"
 echo "  Use embedding: $USE_EMBEDDING"
+echo "  Split by group: $SPLIT_BY_GROUP"
+echo "  Min review stars: $MIN_REVIEW_STARS"
 if [ "$MODE" = "train" ]; then
     echo "  Epochs: $EPOCHS"
     echo "  Batch size: $BATCH_SIZE"
@@ -119,7 +127,9 @@ BASE_ARGS="--expid $expid \
     --batch_size $BATCH_SIZE \
     --lr $LR \
     --patience $PATIENCE \
-    --freeze_backbone $FREEZE_BACKBONE"
+    --freeze_backbone $FREEZE_BACKBONE \
+    --split_by_group $SPLIT_BY_GROUP \
+    --min_review_stars $MIN_REVIEW_STARS"
 
 # Add disease subset file if specified
 if [ -n "$DISEASE_SUBSET_FILE" ]; then
@@ -184,8 +194,15 @@ exit $EXIT_CODE
 # 7. All genes (not just cardiac):
 #    sbatch --export=ALL,GROUPING=gene slurm/run_clinvar_attack.sh all
 #
+# 8. Split by group (entire groups in/out together - patient panel scenario):
+#    sbatch --export=ALL,SPLIT_BY_GROUP=1 slurm/run_clinvar_attack.sh all
+#
+# 9. No review status filtering (include all variants regardless of evidence):
+#    sbatch --export=ALL,MIN_REVIEW_STARS=0 slurm/run_clinvar_attack.sh all
+#
 # For local/interactive runs (single experiment):
 #    USE_EMBEDDING=1 bash slurm/run_clinvar_attack.sh all
+#    SPLIT_BY_GROUP=1 bash slurm/run_clinvar_attack.sh all
 #    TARGET=CLNDN MODEL=./root/models/pretrain_model_nt_CLNDN bash slurm/run_clinvar_attack.sh all
 #
 # AGGREGATION (run after all 64 experiments complete for each config):

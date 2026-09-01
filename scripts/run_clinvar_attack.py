@@ -13,10 +13,11 @@ Prediction targets:
 
 Grouping modes:
     - gene: Each gene is a group (all genes in ClinVar)
-    - exon: Each exon is a group (gene:exon_number)
-    - cardiac_panel: Groups by CGC cardiac category (CM_ARM, AORTOPATHY, CHD, OTHER)
-    - cardiac_gene: Only CGC cardiac genes (647 genes), each gene is a group
-    - hcm_gene: Only HCM genes (168 genes), each gene is a group
+    - cardiac_panel: CGC cardiac category is a group (4 groups)
+    - cardiac_gene: Each cardiac gene is a group (~647 genes)
+    - cardiac_exon: Each exon from cardiac genes is a group
+    - hcm_gene: Each HCM gene is a group (~168 genes)
+    - hcm_exon: Each exon from HCM genes is a group
 
 Attack modes:
     - likelihood-based (default): Uses model's softmax probabilities
@@ -30,10 +31,11 @@ Usage:
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping gene --target CLNDN
 
     # Different grouping modes
-    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping exon
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_panel
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_gene
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_exon
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping hcm_gene
+    python scripts/run_clinvar_attack.py --checkpoint ./model --grouping hcm_exon
 
     # Disease prediction with heart disease subset
     python scripts/run_clinvar_attack.py --checkpoint ./model --grouping cardiac_gene --target CLNDN \\
@@ -1295,7 +1297,7 @@ def main():
 
     # Data parameters
     parser.add_argument("--grouping", default="gene",
-                        choices=["gene", "exon", "cardiac_panel", "cardiac_gene", "hcm_gene"],
+                        choices=["gene", "cardiac_panel", "cardiac_gene", "cardiac_exon", "hcm_gene", "hcm_exon"],
                         help="Grouping mode for variants")
     parser.add_argument("--target", default="CLNSIG",
                         choices=["CLNSIG", "CLNDN"],
@@ -1314,6 +1316,8 @@ def main():
                         help="Maximum variants per gene")
     parser.add_argument("--balance_classes", type=int, default=1,
                         help="Balance pathogenic/benign within groups (1) or not (0)")
+    parser.add_argument("--min_review_stars", type=int, default=1,
+                        help="Minimum ClinVar review stars (0-4). Default 1 = criteria provided")
 
     # Model parameters
     parser.add_argument("--model", type=str, default="InstaDeepAI/nucleotide-transformer-500m-human-ref",
@@ -1328,6 +1332,9 @@ def main():
                         help="Total number of LiRA experiments")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed")
+    parser.add_argument("--split_by_group", type=int, default=0,
+                        help="Split by group (1): entire groups IN/OUT together (patient panel scenario). "
+                             "Individual (0, default): each variant independently (baseline LiRA)")
 
     # Mode selection
     parser.add_argument("--mode", type=str, default="eval",
@@ -1392,8 +1399,11 @@ def main():
         subset_name = os.path.basename(args.disease_subset_file).replace('.txt', '').replace('_related_diseases', '')
         data_suffix += f"_{subset_name}"
 
+    # Add split mode to experiment name
+    split_suffix = "_split_by_group" if args.split_by_group else ""
+
     base_output_dir = args.output_dir
-    experiment_name = f"{args.target}_{args.grouping}_{model_name}{emb_suffix}{freeze_suffix}{data_suffix}"
+    experiment_name = f"{args.target}_{args.grouping}_{model_name}{emb_suffix}{freeze_suffix}{data_suffix}{split_suffix}"
     args.output_dir = f"{args.output_dir}/{experiment_name}/exp{args.expid}_{args.num_experiments}"
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -1411,7 +1421,8 @@ def main():
     )
 
     # Load data with grouped LiRA function
-    print(f"\nLoading data with {args.target} target, {args.grouping} grouping...")
+    split_mode = "split_by_group" if args.split_by_group else "individual"
+    print(f"\nLoading data with {args.target} target, {args.grouping} grouping, {split_mode}...")
     datasets, task_num_classes, seq_length, group_to_id, stats = return_clinvar_grouped_lira_dataset(
         tokenizer,
         grouping=args.grouping,
@@ -1426,6 +1437,8 @@ def main():
         min_variants_per_gene=args.min_variants_per_gene,
         max_variants_per_gene=args.max_variants_per_gene,
         balance_classes=bool(args.balance_classes),
+        split_by_group=bool(args.split_by_group),
+        min_review_stars=args.min_review_stars,
     )
 
     # Get the full dataset

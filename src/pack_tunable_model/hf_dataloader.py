@@ -307,48 +307,66 @@ def split_train_val(dataset_train, val_split=0.1, seed=42):
     return dataset_train_subset, dataset_val_subset
 
 
-def generate_keep_for_lira(size, pkeep=0.5, expid=None, num_experiments=None, seed=0, group_ids=None):
+def generate_keep_for_lira(size, pkeep=0.5, expid=None, num_experiments=None, seed=0,
+                           group_ids=None, split_by_group=False):
     """
     Generate keep mask for LiRA membership inference attacks.
 
-    Can operate at sample-level (default) or group-level (when group_ids provided).
-    Group-level ensures all samples from a group are either ALL in or ALL out,
-    respecting biological dependencies (e.g., variants in same gene).
+    Supports two modes:
+    1. split_by_group=True: Entire groups are IN or OUT together (e.g., patient panel)
+    2. split_by_group=False (default): Individual samples, independent
 
     Args:
-        size: Number of samples (sample-level) or groups (group-level)
+        size: Number of samples (if split_by_group=False) or groups (if split_by_group=True)
         pkeep: Fraction to keep in training (default 0.5 for LiRA)
         expid: Experiment ID for reproducible multi-experiment setup
         num_experiments: Total number of experiments (shadow models)
         seed: Random seed
-        group_ids: If provided, array mapping each sample to its group ID.
-                   Enables group-level keep decisions expanded to samples.
+        group_ids: Array mapping each sample to its group ID (required when split_by_group=True)
+        split_by_group: If True, entire groups are IN/OUT together
+                        If False (default), individual samples independently
 
     Returns:
-        If group_ids is None:
-            keep: Boolean array of shape (size,) for sample membership
-        If group_ids is provided:
-            keep: Boolean array of shape (len(group_ids),) for sample membership
-            keep_groups: Boolean array of shape (size,) for group membership
+        If split_by_group=True:
+            keep: Boolean array for sample membership (expanded from groups)
+            keep_groups: Boolean array for group membership
+        If split_by_group=False:
+            keep: Boolean array for sample membership
     """
     np.random.seed(seed)
 
-    if num_experiments is not None and expid is not None and expid < num_experiments:
-        keep_all = np.random.uniform(0, 1, size=(num_experiments, size))
-        order = keep_all.argsort(0)
-        keep_all = order < int(pkeep * num_experiments)
-        keep = np.array(keep_all[expid], dtype=bool)
+    if split_by_group:
+        # Entire groups IN or OUT together (e.g., patient's panel tested together)
+        num_groups = size
+
+        if num_experiments is not None and expid is not None and expid < num_experiments:
+            keep_all = np.random.uniform(0, 1, size=(num_experiments, num_groups))
+            order = keep_all.argsort(0)
+            keep_all = order < int(pkeep * num_experiments)
+            keep_groups = np.array(keep_all[expid], dtype=bool)
+        else:
+            keep_groups = np.random.uniform(0, 1, size=num_groups) <= pkeep
+
+        # Expand group decisions to samples
+        if group_ids is not None:
+            group_ids = np.array(group_ids)
+            keep = keep_groups[group_ids]
+            return keep, keep_groups
+        return keep_groups
+
     else:
-        keep = np.random.uniform(0, 1, size=size) <= pkeep
+        # Individual sample membership (baseline LiRA)
+        num_samples = size
 
-    # If group_ids provided, expand group-level decisions to sample-level
-    if group_ids is not None:
-        group_ids = np.array(group_ids)
-        keep_groups = keep
-        keep = keep_groups[group_ids]
-        return keep, keep_groups
+        if num_experiments is not None and expid is not None and expid < num_experiments:
+            keep_all = np.random.uniform(0, 1, size=(num_experiments, num_samples))
+            order = keep_all.argsort(0)
+            keep_all = order < int(pkeep * num_experiments)
+            keep = np.array(keep_all[expid], dtype=bool)
+        else:
+            keep = np.random.uniform(0, 1, size=num_samples) <= pkeep
 
-    return keep
+        return keep
 
 
 def return_clinvar_grouped_lira_dataset(
@@ -370,23 +388,26 @@ def return_clinvar_grouped_lira_dataset(
     disease_subset: list = None,
     disease_subset_file: str = None,
     min_samples_per_class: int = 10,
+    split_by_group: bool = False,
+    min_review_stars: int = 1,
 ):
     """
     Load ClinVar grouped dataset for LiRA membership inference attacks.
 
-    Unlike sample-level LiRA, this keeps/excludes ENTIRE GROUPS (genes, panels, etc.)
-    to respect biological dependencies between variants.
+    Supports two membership modes:
+    1. split_by_group=False (default): Individual variants, independent (baseline LiRA)
+    2. split_by_group=True: Entire groups are IN or OUT together (e.g., patient panel)
 
     Args:
         tokenizer: Tokenizer for DNA sequences
-        grouping: Grouping mode ('gene', 'cardiac_gene', 'hcm_gene', 'cardiac_panel', 'exon')
+        grouping: Grouping mode ('gene', 'cardiac_panel', 'cardiac_gene', 'cardiac_exon', 'hcm_gene', 'hcm_exon')
         target: Prediction target - 'CLNSIG' (pathogenicity) or 'CLNDN' (disease)
         seq_length: Sequence context length
-        pkeep: Fraction of groups to keep in training (default 0.5 for LiRA)
+        pkeep: Fraction to keep in training (default 0.5 for LiRA)
         exp_id: Experiment ID (0 to num_experiments-1)
         num_experiments: Total number of shadow models to train
         seed: Random seed
-        keep_dir: Directory to save/load group keep masks
+        keep_dir: Directory to save/load keep masks
         min_variants_per_gene: Minimum variants per gene to include
         max_variants_per_gene: Maximum variants per gene
         balance_classes: Whether to balance pathogenic/benign within groups
@@ -396,6 +417,9 @@ def return_clinvar_grouped_lira_dataset(
         disease_subset: List of disease names to filter (for CLNDN target)
         disease_subset_file: Path to file with disease names (for CLNDN target)
         min_samples_per_class: Minimum samples per disease class (for CLNDN target)
+        split_by_group: If True, entire groups IN/OUT together (patient panel scenario)
+                        If False (default), individual variants independently (baseline)
+        min_review_stars: Minimum ClinVar review stars (0-4). Default 2 = multiple submitters.
 
     Returns:
         datasets: Dict with 'train', 'val', 'test', 'full' datasets
@@ -415,6 +439,7 @@ def return_clinvar_grouped_lira_dataset(
         min_variants_per_gene=min_variants_per_gene,
         max_variants_per_gene=max_variants_per_gene,
         grouping=grouping,
+        min_review_stars=min_review_stars,
     )
 
     # Get data based on target
@@ -441,30 +466,52 @@ def return_clinvar_grouped_lira_dataset(
     # Data format: ([ref, alt, variant_type], label, group_id, group_name)
     group_ids = np.array([item[2] for item in data])
     num_groups = len(group_to_id)
+    num_samples = len(data)
 
-    # Generate or load group-level keep mask
+    # Generate or load keep mask
     keep_file = None
     if keep_dir is not None:
         os.makedirs(keep_dir, exist_ok=True)
-        keep_file = os.path.join(keep_dir, f'keep_groups_{target}_{grouping}_exp{exp_id}_of{num_experiments}.npz')
+        mode_str = "bygroup" if split_by_group else "bysample"
+        keep_file = os.path.join(keep_dir, f'keep_{target}_{grouping}_{mode_str}_exp{exp_id}_of{num_experiments}.npz')
 
     if keep_file and os.path.exists(keep_file):
         loaded = np.load(keep_file)
         keep = loaded['keep_samples']
-        keep_groups = loaded['keep_groups']
-        print(f"Loaded group keep mask from {keep_file}")
+        keep_groups = loaded.get('keep_groups', None)
+        print(f"Loaded keep mask from {keep_file}")
+        print(f"  Mode: {'split_by_group' if split_by_group else 'individual samples'}")
     else:
-        keep, keep_groups = generate_keep_for_lira(
-            size=num_groups,
-            pkeep=pkeep,
-            expid=exp_id,
-            num_experiments=num_experiments,
-            seed=seed,
-            group_ids=group_ids  # Enables group-level decisions
-        )
+        if split_by_group:
+            # Entire groups IN or OUT together (patient panel scenario)
+            keep, keep_groups = generate_keep_for_lira(
+                size=num_groups,
+                pkeep=pkeep,
+                expid=exp_id,
+                num_experiments=num_experiments,
+                seed=seed,
+                group_ids=group_ids,
+                split_by_group=True,
+            )
+        else:
+            # Individual samples independently (baseline LiRA)
+            keep = generate_keep_for_lira(
+                size=num_samples,
+                pkeep=pkeep,
+                expid=exp_id,
+                num_experiments=num_experiments,
+                seed=seed,
+                split_by_group=False,
+            )
+            # Compute group membership from sample membership (for stats)
+            keep_groups = np.array([
+                np.any(keep[group_ids == gid]) for gid in range(num_groups)
+            ])
+
         if keep_file:
             np.savez(keep_file, keep_samples=keep, keep_groups=keep_groups)
-            print(f"Saved group keep mask to {keep_file}")
+            print(f"Saved keep mask to {keep_file}")
+            print(f"  Mode: {'split_by_group' if split_by_group else 'individual samples'}")
 
     # Split data based on group membership
     train_data = [data[i] for i in range(len(data)) if keep[i]]
@@ -481,9 +528,10 @@ def return_clinvar_grouped_lira_dataset(
     train_groups = set(item[2] for item in train_data)
     out_groups = set(item[2] for item in out_data)
 
-    print(f"\nGrouped LiRA Dataset ({target} target, {grouping} grouping):")
+    mode_desc = "split_by_group" if split_by_group else "individual"
+    print(f"\nLiRA Dataset ({target} target, {grouping} grouping, {mode_desc}):")
     print(f"  Experiment: {exp_id}/{num_experiments}")
-    print(f"  Total groups: {num_groups}, In training: {len(train_groups)}, Out: {len(out_groups)}")
+    print(f"  Total groups: {num_groups}, With IN samples: {len(train_groups)}, With OUT samples: {len(out_groups)}")
     print(f"  Total samples: {len(data)}, Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
     print(f"  Number of classes: {num_labels}")
 
@@ -501,7 +549,7 @@ def return_clinvar_grouped_lira_dataset(
 
     # Membership info for MIA evaluation
     membership_info = {
-        'group_membership': keep_groups,  # Which groups are in training
+        'group_membership': keep_groups,  # Which groups have any samples in training
         'sample_membership': keep,  # Which samples are in training
         'group_to_id': group_to_id,
         'id_to_group': {v: k for k, v in group_to_id.items()},
@@ -511,6 +559,7 @@ def return_clinvar_grouped_lira_dataset(
         'id_to_label': {v: k for k, v in label_to_id.items()},
         'target': target,
         'num_classes': num_labels,
+        'split_by_group': split_by_group,
     }
 
     stats['membership_info'] = membership_info
@@ -518,6 +567,7 @@ def return_clinvar_grouped_lira_dataset(
     stats['num_experiments'] = num_experiments
     stats['pkeep'] = pkeep
     stats['target'] = target
+    stats['split_by_group'] = split_by_group
 
     return datasets, task_num_classes, seq_length, group_to_id, stats
 

@@ -449,17 +449,18 @@ class ClinVarDataWrapper:
 
 class ClinVarGroupedDataWrapper:
     """
-    ClinVar data wrapper that groups variants by gene or cardiac panel for privacy research.
+    ClinVar data wrapper that groups variants for privacy research.
 
     Returns variants with group_id for studying privacy-utility tradeoffs
     with biologically meaningful dependency structure.
 
     Grouping modes:
-        - 'gene': Each gene is a group (all genes)
-        - 'exon': Each exon is a group (gene:exon_number)
-        - 'cardiac_panel': Groups by CGC cardiac category (CM_ARM, AORTOPATHY, CHD, OTHER)
-        - 'cardiac_gene': Only CGC cardiac genes (647), each gene is a group
-        - 'hcm_gene': Only HCM genes (168), each gene is a group
+        - 'gene': each gene is a group (all genes)
+        - 'cardiac_panel': CGC cardiac category is a group (4 groups)
+        - 'cardiac_gene': each cardiac gene is a group (~647 genes)
+        - 'cardiac_exon': each exon from cardiac genes is a group
+        - 'hcm_gene': each HCM gene is a group (~168 genes)
+        - 'hcm_exon': each exon from HCM genes is a group
     """
 
     # Default gene list paths (relative to project root)
@@ -468,7 +469,8 @@ class ClinVarGroupedDataWrapper:
 
     def __init__(self, num_records=100000, all_records=False, use_default_dir=True,
                  min_variants_per_gene=5, max_variants_per_gene=50,
-                 grouping='gene', cgc_gene_list_path=None, hcm_gene_list_path=None):
+                 grouping='gene', cgc_gene_list_path=None, hcm_gene_list_path=None,
+                 min_review_stars=1):
         """
         Args:
             num_records: Number of ClinVar records to read
@@ -479,6 +481,12 @@ class ClinVarGroupedDataWrapper:
             grouping: Grouping strategy - 'gene', 'exon', 'cardiac_panel', 'cardiac_gene', or 'hcm_gene'
             cgc_gene_list_path: Path to CGC gene list CSV (647 genes)
             hcm_gene_list_path: Path to HCM gene list CSV (168 genes)
+            min_review_stars: Minimum ClinVar review stars (0-4). Default 1 = criteria provided.
+                0 = no assertion criteria (lowest quality)
+                1 = criteria provided (default - includes single/multiple submitters)
+                2 = multiple submitters, no conflicts
+                3 = reviewed by expert panel
+                4 = practice guideline (highest quality)
         """
         if use_default_dir:
             self.clinvar_vcf_path = load_clinvar.download_file()
@@ -497,6 +505,7 @@ class ClinVarGroupedDataWrapper:
         self.min_variants_per_gene = min_variants_per_gene
         self.max_variants_per_gene = max_variants_per_gene
         self.grouping = grouping
+        self.min_review_stars = min_review_stars
 
         # Load CGC gene lists
         self._load_cgc_gene_lists(
@@ -619,6 +628,39 @@ class ClinVarGroupedDataWrapper:
         gene_symbol = first_gene.split(':')[0]
         return gene_symbol if gene_symbol else None
 
+    def _get_review_stars(self, clnrevstat):
+        """
+        Convert CLNREVSTAT to star rating (0-4).
+
+        ClinVar review status mapping:
+            0 stars: no_assertion_criteria_provided, no_assertion_provided
+            1 star:  criteria_provided,_single_submitter, criteria_provided,_conflicting_interpretations
+            2 stars: criteria_provided,_multiple_submitters,_no_conflicts
+            3 stars: reviewed_by_expert_panel
+            4 stars: practice_guideline
+        """
+        if not clnrevstat or clnrevstat == 'NA':
+            return 0
+        if isinstance(clnrevstat, list):
+            clnrevstat = clnrevstat[0] if clnrevstat else ''
+
+        clnrevstat = clnrevstat.lower()
+
+        if 'practice_guideline' in clnrevstat:
+            return 4
+        elif 'reviewed_by_expert_panel' in clnrevstat:
+            return 3
+        elif 'multiple_submitters' in clnrevstat and 'no_conflicts' in clnrevstat:
+            return 2
+        elif 'no_assertion' in clnrevstat:
+            # Explicitly catch no_assertion_criteria_provided, no_assertion_provided
+            return 0
+        elif 'criteria_provided' in clnrevstat:
+            # criteria_provided,_single_submitter or criteria_provided,_conflicting_interpretations
+            return 1
+        else:
+            return 0
+
     def _parse_pathogenicity(self, clnsig):
         """Parse CLNSIG to binary pathogenicity label (0=benign, 1=pathogenic)."""
         if not clnsig or clnsig == 'NA':
@@ -692,11 +734,12 @@ class ClinVarGroupedDataWrapper:
             label_to_id: Dict mapping disease names to integer IDs (CLNDN only)
 
         Grouping modes:
-            - 'gene': group_name is gene symbol (e.g., 'MYBPC3') - all genes
-            - 'exon': group_name is gene:exon_number (e.g., 'MYBPC3:exon1')
-            - 'cardiac_panel': group_name is CGC category (CM_ARM, AORTOPATHY, CHD, OTHER)
-            - 'cardiac_gene': only CGC cardiac genes (647), group_name is gene symbol
-            - 'hcm_gene': only HCM genes (168), group_name is gene symbol
+            - 'gene': each gene is a group (all genes)
+            - 'cardiac_panel': CGC category is a group (4 groups)
+            - 'cardiac_gene': each cardiac gene is a group (~647 genes)
+            - 'cardiac_exon': each exon from cardiac genes is a group
+            - 'hcm_gene': each HCM gene is a group (~168 genes)
+            - 'hcm_exon': each exon from HCM genes is a group
         """
         # Disease prediction mode
         if target == 'CLNDN':
@@ -718,8 +761,13 @@ class ClinVarGroupedDataWrapper:
             if label is None:
                 continue
 
+            # Filter by review stars (default: 2+ = multiple submitters)
+            review_stars = self._get_review_stars(record.get('CLNREVSTAT'))
+            if review_stars < self.min_review_stars:
+                continue
+
             # Determine group key based on grouping mode
-            if self.grouping == 'exon':
+            if self.grouping in ('cardiac_exon', 'hcm_exon'):
                 chrom = record.get('Chromosome')
                 pos = record.get('Position')
                 group_key = self._get_exon_for_variant(chrom, pos)
@@ -781,14 +829,31 @@ class ClinVarGroupedDataWrapper:
             for panel, variants in filtered_genes.items():
                 print(f"  - {panel}: {len(variants['benign'])} benign, {len(variants['pathogenic'])} pathogenic")
 
-        elif self.grouping == 'exon':
-            # Each exon is its own group (already grouped in first pass)
+        elif self.grouping == 'cardiac_exon':
+            # Each exon from cardiac genes is its own group
             filtered_genes = {}
             for exon, variants in gene_variants.items():
+                # Extract gene name from exon key (format: "GENE:exonN")
+                gene_name = exon.split(':')[0] if ':' in exon else exon
+                if gene_name not in self.CARDIAC_GENES:
+                    continue
                 total = len(variants['benign']) + len(variants['pathogenic'])
                 if total >= self.min_variants_per_gene:
                     filtered_genes[exon] = variants
-            print(f"Exons with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
+            print(f"Cardiac exons with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
+
+        elif self.grouping == 'hcm_exon':
+            # Each exon from HCM genes is its own group
+            filtered_genes = {}
+            for exon, variants in gene_variants.items():
+                # Extract gene name from exon key (format: "GENE:exonN")
+                gene_name = exon.split(':')[0] if ':' in exon else exon
+                if gene_name not in self.HCM_GENES:
+                    continue
+                total = len(variants['benign']) + len(variants['pathogenic'])
+                if total >= self.min_variants_per_gene:
+                    filtered_genes[exon] = variants
+            print(f"HCM exons with >= {self.min_variants_per_gene} variants: {len(filtered_genes)}")
 
         else:  # 'gene' mode (default)
             filtered_genes = {}
@@ -817,7 +882,7 @@ class ClinVarGroupedDataWrapper:
                 n_pathogenic = len(variants['pathogenic'])
 
                 if self.grouping == 'cardiac_panel':
-                    # Allow more variants for panel-level grouping
+                    # Allow more variants for panel-level grouping (4 large groups)
                     max_per_class = self.max_variants_per_gene * 10
                 else:
                     max_per_class = self.max_variants_per_gene // 2
@@ -832,7 +897,10 @@ class ClinVarGroupedDataWrapper:
                 selected = [(r, 0) for r in selected_benign] + [(r, 1) for r in selected_pathogenic]
             else:
                 all_variants = [(r, 0) for r in variants['benign']] + [(r, 1) for r in variants['pathogenic']]
-                max_variants = self.max_variants_per_gene * 10 if self.grouping == 'cardiac_panel' else self.max_variants_per_gene
+                if self.grouping == 'cardiac_panel':
+                    max_variants = self.max_variants_per_gene * 10  # Allow more for panel grouping
+                else:
+                    max_variants = self.max_variants_per_gene
                 if len(all_variants) > max_variants:
                     selected = random.sample(all_variants, max_variants)
                 else:
@@ -937,6 +1005,11 @@ class ClinVarGroupedDataWrapper:
 
             disease = self._parse_disease(record.get('CLNDN'))
             if disease is None:
+                continue
+
+            # Filter by review stars (default: 2+ = multiple submitters)
+            review_stars = self._get_review_stars(record.get('CLNREVSTAT'))
+            if review_stars < self.min_review_stars:
                 continue
 
             # Filter by disease subset if provided

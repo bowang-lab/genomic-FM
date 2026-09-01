@@ -30,7 +30,7 @@ wandb offline
 
 # Training parameters
 MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star
-BATCH_SIZE=64
+BATCH_SIZE=32
 
 # Pooling strategy for encoder models (ignored for decoder models)
 POOLING="mean"  # Options: cls, mean, last, cov
@@ -54,7 +54,7 @@ MAVES_REGULATORY_CHECKPOINT="root/models/pretrain_model_${MODEL}_MAVES_score_REG
 TASKS="CLNDN CLNSIG"
 
 # Thresholds to train
-THRESHOLDS="50.0 60.0 70.0 80.0"
+THRESHOLDS="60.0 65.0 70.0 75.0 80.0"
 
 echo "============================================"
 echo "Starting SMART Multi-Threshold Training from Checkpoints"

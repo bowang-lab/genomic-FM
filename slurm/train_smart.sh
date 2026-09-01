@@ -35,17 +35,17 @@ wandb offline
 # TRAINING PARAMETERS
 # ============================================
 
-MODEL="omni_dna_300m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone, ntv3*, omni_dna_300m, carbon, orthrus, aido_dna (*ntv3=gated, orthrus/aido_dna=custom API)
+MODEL="omni_dna_116m"  # Options: nt, omni_dna_116m, hyenadna, caduceus, gena-lm, dnabert2, gpn-star, lucaone, ntv3*, omni_dna_300m, carbon, orthrus, aido_dna (*ntv3=gated, orthrus/aido_dna=custom API)
 
 # Task to train on
 TASK="CLNDN"  # Options: CLNDN (disease), CLNSIG (pathogenicity)
 
 # Threshold for SMART score filtering
-THRESHOLD=70  # Options: 50, 60, 70, 80
+THRESHOLD=75  # Options: 50, 60, 70, 80
 
 # Training hyperparameters
 LEARNING_RATE=0.000005
-BATCH_SIZE=2                      # Per-device batch size (reduced for large models)
+BATCH_SIZE=32                     # Per-device batch size
 NUM_EPOCHS=10
 
 # Pooling strategy for encoder models (ignored for decoder models)
